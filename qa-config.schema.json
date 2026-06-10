@@ -1,0 +1,159 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "qa-config.schema.json",
+  "title": "QA Harness Configuration",
+  "type": "object",
+  "required": ["project", "ticketSource", "codeRepository", "environments", "productionProtection"],
+  "properties": {
+    "project": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string" },
+        "description": { "type": "string" }
+      }
+    },
+    "ticketSource": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "type": "string", "enum": ["jira", "clickup", "github", "gitlab", "bitbucket"] },
+        "jira": {
+          "type": "object",
+          "properties": {
+            "projectKey": { "type": "string" },
+            "testIssueType": { "type": "string", "default": "Test" },
+            "linkType": { "type": "string", "default": "is tested by" }
+          }
+        },
+        "clickup": {
+          "type": "object",
+          "properties": {
+            "workspaceId": { "type": "string" },
+            "listId": { "type": "string" },
+            "tokenEnvVar": { "type": "string", "default": "CLICKUP_TOKEN" }
+          }
+        },
+        "github": {
+          "type": "object",
+          "properties": {
+            "repo": { "type": "string", "description": "owner/repo format" },
+            "testLabelName": { "type": "string", "default": "test-case" }
+          }
+        },
+        "gitlab": {
+          "type": "object",
+          "properties": {
+            "projectId": { "type": "string" },
+            "tokenEnvVar": { "type": "string", "default": "GITLAB_TOKEN" },
+            "host": { "type": "string", "default": "https://gitlab.com" }
+          }
+        },
+        "bitbucket": {
+          "type": "object",
+          "properties": {
+            "workspace": { "type": "string" },
+            "repo": { "type": "string" },
+            "tokenEnvVar": { "type": "string", "default": "BITBUCKET_TOKEN" }
+          }
+        }
+      }
+    },
+    "codeRepository": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "type": "string", "enum": ["github", "gitlab", "bitbucket", "local"] },
+        "localPath": { "type": "string", "description": "Relative or absolute path to local repo clone" },
+        "github": {
+          "type": "object",
+          "properties": {
+            "repo": { "type": "string", "description": "owner/repo format" }
+          }
+        },
+        "gitlab": {
+          "type": "object",
+          "properties": {
+            "projectId": { "type": "string" },
+            "host": { "type": "string", "default": "https://gitlab.com" },
+            "tokenEnvVar": { "type": "string" }
+          }
+        },
+        "bitbucket": {
+          "type": "object",
+          "properties": {
+            "workspace": { "type": "string" },
+            "repo": { "type": "string" },
+            "tokenEnvVar": { "type": "string" }
+          }
+        }
+      }
+    },
+    "environments": {
+      "type": "object",
+      "required": ["testEnvironmentBaseUrl"],
+      "properties": {
+        "testEnvironmentBaseUrl": {
+          "type": "string",
+          "description": "Base URL for the test/staging environment. NEVER a production URL."
+        },
+        "testEnvironmentName": { "type": "string" },
+        "approvedEnvironments": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["staging", "dev", "qa", "test", "localhost"]
+        }
+      }
+    },
+    "productionProtection": {
+      "type": "object",
+      "required": ["prodUrlPatterns"],
+      "properties": {
+        "prodUrlPatterns": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Regex patterns that identify production URLs. Used by all 5 safety layers."
+        },
+        "prodEnvVarValues": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["production", "prod"]
+        },
+        "blockOnSuspiciousUrls": { "type": "boolean", "default": true }
+      }
+    },
+    "testFramework": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["playwright", "cypress", "selenium", "webdriverio", "jest", "pytest", "rspec", "other"]
+        },
+        "configPath": { "type": "string" },
+        "testDir": { "type": "string" }
+      }
+    },
+    "dataManagement": {
+      "type": "object",
+      "properties": {
+        "strategy": {
+          "type": "string",
+          "enum": ["factory", "seed-rollback", "snapshot-restore", "tag-cleanup", "api-teardown"],
+          "default": "factory"
+        },
+        "cleanupAfterEach": { "type": "boolean", "default": true },
+        "cleanupOnSessionEnd": { "type": "boolean", "default": true },
+        "dataFactoryPath": { "type": "string" }
+      }
+    },
+    "testOutput": {
+      "type": "object",
+      "properties": {
+        "testPlansDir": { "type": "string", "default": "./test-plans" },
+        "testCasesDir": { "type": "string", "default": "./test-cases" },
+        "analysisDir": { "type": "string", "default": "./analysis" },
+        "e2eTestsPath": { "type": "string" }
+      }
+    }
+  }
+}

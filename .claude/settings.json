@@ -1,0 +1,60 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash hooks/session-init.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash hooks/prod-guard.sh",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash hooks/env-detector.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "Bash(cat qa-config*)",
+      "Bash(jq *)",
+      "Bash(gh issue view *)",
+      "Bash(gh issue create *)",
+      "Bash(gh issue list *)",
+      "Bash(gh repo view *)",
+      "Bash(gh auth status)",
+      "Bash(gh api *)",
+      "Bash(curl -s -H *api.clickup.com*)",
+      "Bash(curl -s -H *gitlab.com/api*)",
+      "Bash(curl -s -H *api.bitbucket.org*)",
+      "Bash(npx playwright --version)",
+      "Bash(npx playwright test --list*)",
+      "Bash(npx cypress --version)",
+      "Bash(node --version)",
+      "Bash(npm --version)",
+      "Bash(python --version)",
+      "Bash(python3 --version)",
+      "Bash(bash scripts/check-prereqs.sh)"
+    ]
+  }
+}

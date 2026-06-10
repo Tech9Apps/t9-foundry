@@ -1,0 +1,16 @@
+{
+  "_comment": "Static test fixtures for Cypress. Use DataFactory for dynamic entities that need cleanup. Use this file for read-only reference data.",
+  "validUser": {
+    "email": "valid-user@example-test.com",
+    "password": "replace-with-env-var"
+  },
+  "invalidCredentials": {
+    "email": "not-a-real-user@example-test.com",
+    "password": "wrong-password"
+  },
+  "boundaryValues": {
+    "maxLengthString": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "emptyString": "",
+    "specialChars": "<script>alert('xss')</script>"
+  }
+}

@@ -1,0 +1,12 @@
+qa-config.json
+.env
+.env.*
+!.env.*.example
+node_modules/
+*.log
+
+# Local Claude Code overrides
+.claude/settings.local.json
+
+# macOS
+.DS_Store
