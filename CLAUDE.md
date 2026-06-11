@@ -17,6 +17,8 @@ You are an AI assistant for QA engineers. Your purpose is to help with the full 
 If it does not exist, stop and say:
 > "Your workspace is not configured. Run `/init` to set up this workspace — it asks about your project and configures everything in one guided session. (Or run `/connect-tickets` then `/connect-repo` individually to configure manually.)"
 
+`qa-config.json` is gitignored. When creating it for the first time, copy `qa-config.example.json` as the starting template, then update fields. Validate against `qa-config.schema.json` (required top-level keys: `project`, `ticketSource`, `codeRepository`, `environments`, `productionProtection`).
+
 If it exists but is missing required fields for the current task, prompt the engineer to run the relevant setup skill first.
 
 ---
@@ -109,6 +111,8 @@ The harness has no runtime of its own — it is a set of instructions and script
 
 **`.claude/skills/*.md`** — Each skill is a markdown file. Claude reads the file and executes its instructions when a trigger phrase matches. Skills reference `qa-config.json` for project-specific values. There is no "call skill and return" mechanism — multi-step flows inline the logic from multiple skills.
 
+To add a skill: create `.claude/skills/{name}.md` with a `## When to invoke` section listing trigger phrases and a `## Steps` section with numbered instructions. The trigger phrases are matched by Claude behaviorally — there is no registration step. When one skill needs to run another's logic, it reads and inlines the target file's steps directly.
+
 **`.claude/guides/*.md`** — Reference content imported into `CLAUDE.md` at runtime via `@filename` syntax (e.g., `@.claude/guides/integration-sources.md`). Guides cover: ticket source APIs, e2e authoring standards, and output path conventions.
 
 **`hooks/`** — Three bash scripts wired to Claude tool-use events in `.claude/settings.json`:
@@ -117,11 +121,23 @@ The harness has no runtime of its own — it is a set of instructions and script
 |------|-------|---------|
 | `session-init.sh` | SessionStart | Validates `qa-config.json` exists; blocks if `testEnvironmentBaseUrl` matches a prod pattern |
 | `prod-guard.sh` | PreToolUse Bash | Scans every shell command for production env vars and URLs |
-| `env-detector.sh` | PreToolUse Write\|Edit | Scans file content being written for production URLs and env var assignments |
+| `env-detector.sh` | PreToolUse Write\|Edit\|MultiEdit | Scans file content being written for production URLs and env var assignments |
 
 Hook contract: reads JSON from stdin. `exit 0` = allow. `exit 2` = block; stdout message is surfaced to Claude as the reason.
 
 **`templates/e2e/{framework}/`** — Scaffold files (playwright, cypress, webdriverio, pytest) copied into the user's app repo by `/setup-e2e-framework`. Each includes a Layer 5 production guard that runs before any test executes.
+
+**`templates/test-plan-template.md`** — Structure used by `/create-test-plan` to generate consistent test plans.
+
+**`templates/test-case-formats.md`** — Format reference (Jira-style, BDD/Gherkin, ClickUp, Robot Framework, plain markdown) used by `/write-test-cases`.
+
+**`docs/`** — Developer-facing reference for this harness:
+
+| File | Content |
+|------|---------|
+| `docs/prod-safety.md` | Detailed explanation of all 5 production safety layers |
+| `docs/integration-guide.md` | End-user setup instructions for each ticket source (mirrors `.claude/guides/integration-sources.md`) |
+| `docs/e2e-patterns.md` | Page object model, data factory, and teardown patterns |
 
 ### 5-layer production safety
 
