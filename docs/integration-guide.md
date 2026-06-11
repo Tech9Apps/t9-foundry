@@ -2,6 +2,8 @@
 
 Step-by-step setup for each supported ticket source and code repository.
 
+> **Maintenance note:** When adding a new ticket source or changing an API method, also update `.claude/guides/integration-sources.md` — it contains the reference table Claude uses at runtime to decide how to fetch and upload.
+
 ---
 
 ## Ticket Sources

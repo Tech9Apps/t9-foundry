@@ -1,5 +1,7 @@
 # Integration Source Reference
 
+> **Maintenance note:** When adding a new ticket source or changing an API method, also update `docs/integration-guide.md` — it contains the corresponding end-user setup instructions for the same sources.
+
 ## Fetching Tickets
 
 | Source | Method |

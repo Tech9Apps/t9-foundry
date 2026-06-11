@@ -25,7 +25,13 @@ Production indicators:
 - `NODE_ENV=production`, `RAILS_ENV=production`, `APP_ENV=prod`, `DJANGO_ENV=production`, `--env=prod`, `--environment=production`
 - Database connection strings pointing to production hosts
 
-If anything targets production: **STOP**, identify the violation, explain it, and suggest the correct staging environment from `qa-config.json`. The hooks and framework templates enforce this at additional layers — your behavioral compliance is Layer 1.
+If anything targets production:
+1. **STOP immediately** — do not generate or execute the action
+2. Identify the specific production indicator
+3. Explain the violation clearly
+4. Suggest the correct staging environment from `qa-config.json`
+
+The hooks and framework templates enforce this at additional layers — your behavioral compliance is Layer 1.
 
 ---
 

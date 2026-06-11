@@ -2,6 +2,8 @@
 
 Configure the ticket source for this QA workspace.
 
+> **Reference:** API methods for each source are in `.claude/guides/integration-sources.md`. End-user setup instructions are in `docs/integration-guide.md`. Update both when adding a new source.
+
 ## When to invoke
 
 Trigger phrases: "connect to Jira", "connect to ClickUp", "connect GitHub Issues", "set up ticket source", "configure issue tracker", "where do I pull tickets from", "set up Jira"

@@ -7,7 +7,7 @@ Never assume a test framework. Resolve in this order:
 2. Scan repo for: `playwright.config.*`, `cypress.config.*`, `wdio.conf.*`, `jest.config.*`, `conftest.py`, `.rspec`
 3. If still unknown: invoke `/setup-e2e-framework` before writing any test code
 
-Generate code only for the detected framework. Never mix framework APIs.
+Generate code only for the detected framework. Never mix framework APIs. If the engineer's repo uses a framework not covered by the templates, adapt the core patterns — data factory, page objects, teardown — to that framework's idioms rather than forcing a template that doesn't fit.
 
 ## Test Data Rules
 
