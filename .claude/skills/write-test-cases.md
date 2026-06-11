@@ -8,9 +8,8 @@ Trigger phrases: "write test cases", "create test cases", "generate test cases f
 
 ## Arguments
 
-Required: `TICKET-ID`
-
-Example: `/write-test-cases JIRA-123`
+- With ticket source configured: `TICKET-ID` (e.g., `/write-test-cases JIRA-123`)
+- Without ticket source (`ticketSource.type = "none"`): the feature name used in `/create-test-plan` (e.g., `/write-test-cases user-checkout`)
 
 ## Steps
 

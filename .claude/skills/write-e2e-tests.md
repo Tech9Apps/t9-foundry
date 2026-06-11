@@ -8,11 +8,10 @@ Trigger phrases: "write e2e tests", "write end-to-end tests", "create Playwright
 
 ## Arguments
 
-Required: `TICKET-ID`
+- With ticket source configured: `TICKET-ID` (e.g., `/write-e2e-tests JIRA-123`)
+- Without ticket source (`ticketSource.type = "none"`): the feature name used in `/create-test-plan` (e.g., `/write-e2e-tests user-checkout`)
 
 Optional: `--cases TC-001,TC-003` — limit to specific test case IDs from the test cases file
-
-Example: `/write-e2e-tests JIRA-123`
 
 ## Steps
 

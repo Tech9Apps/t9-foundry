@@ -2,6 +2,8 @@
 
 Upload written test cases to the configured ticket management system (Jira, ClickUp, or GitHub Issues). When no ticket system is configured, saves test cases as formatted markdown files only.
 
+> **Reference:** API methods and upload targets are in `.claude/guides/integration-sources.md`. Update that file when adding a new upload target.
+
 ## When to invoke
 
 Trigger phrases: "upload test cases", "push test cases to Jira", "upload to ClickUp", "sync test cases", "create test cases in Jira", "publish test cases", "send test cases to the tracker"
