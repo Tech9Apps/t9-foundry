@@ -1,0 +1,7 @@
+{
+  "project": { "description": "A project with no name field" },
+  "ticketSource": { "type": "github" },
+  "codeRepository": { "type": "github" },
+  "environments": { "testEnvironmentBaseUrl": "https://staging.test.internal" },
+  "productionProtection": { "prodUrlPatterns": [] }
+}

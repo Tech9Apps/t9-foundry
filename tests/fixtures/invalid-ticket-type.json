@@ -1,0 +1,7 @@
+{
+  "project": { "name": "Test" },
+  "ticketSource": { "type": "invalid-source" },
+  "codeRepository": { "type": "github" },
+  "environments": { "testEnvironmentBaseUrl": "https://staging.test.internal" },
+  "productionProtection": { "prodUrlPatterns": [] }
+}

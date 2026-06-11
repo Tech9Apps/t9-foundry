@@ -1,0 +1,10 @@
+{
+  "project": { "name": "MyApp" },
+  "ticketSource": { "type": "none" },
+  "codeRepository": { "type": "local", "localPath": "../myapp" },
+  "environments": { "testEnvironmentBaseUrl": "https://staging.myapp.example.com" },
+  "productionProtection": {
+    "prodUrlPatterns": ["://myapp\\.example\\.com/", "://app\\.myapp\\.example\\.com/"],
+    "blockOnSuspiciousUrls": true
+  }
+}

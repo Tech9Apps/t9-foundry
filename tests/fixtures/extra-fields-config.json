@@ -1,0 +1,9 @@
+{
+  "project": { "name": "Test With Extras" },
+  "ticketSource": { "type": "none" },
+  "codeRepository": { "type": "local" },
+  "environments": { "testEnvironmentBaseUrl": "https://staging.test.internal" },
+  "productionProtection": { "prodUrlPatterns": [] },
+  "customExtensionField": "extra fields are allowed by schema",
+  "internalMetadata": { "team": "qa", "project_code": "T9-42" }
+}

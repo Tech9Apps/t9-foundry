@@ -1,0 +1,31 @@
+{
+  "project": { "name": "Test App", "description": "A staging application for harness tests" },
+  "ticketSource": {
+    "type": "github",
+    "github": { "repo": "owner/test-app", "testLabelName": "test-case" }
+  },
+  "codeRepository": {
+    "type": "github",
+    "localPath": "../test-app",
+    "github": { "repo": "owner/test-app" }
+  },
+  "environments": {
+    "testEnvironmentBaseUrl": "https://staging.testapp.example.com",
+    "approvedEnvironments": ["staging", "dev", "qa", "test", "localhost"]
+  },
+  "productionProtection": {
+    "prodUrlPatterns": ["://testapp\\.example\\.com/", "://app\\.testapp\\.example\\.com/"],
+    "blockOnSuspiciousUrls": true
+  },
+  "testFramework": {
+    "type": "playwright",
+    "configPath": "../test-app/playwright.config.ts",
+    "testDir": "../test-app/e2e"
+  },
+  "dataManagement": { "strategy": "factory", "cleanupAfterEach": true },
+  "testOutput": {
+    "testPlansDir": "./test-plans",
+    "testCasesDir": "./test-cases",
+    "analysisDir": "./analysis"
+  }
+}

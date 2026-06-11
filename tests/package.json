@@ -1,0 +1,11 @@
+{
+  "name": "tech9foundry-tests",
+  "private": true,
+  "description": "Test dependencies for the Tech9 QA Harness",
+  "scripts": {
+    "test": "bats ./*.bats"
+  },
+  "devDependencies": {
+    "ajv": "^8.17.1"
+  }
+}

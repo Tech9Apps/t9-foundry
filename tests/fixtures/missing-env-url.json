@@ -1,0 +1,7 @@
+{
+  "project": { "name": "Test" },
+  "ticketSource": { "type": "none" },
+  "codeRepository": { "type": "local" },
+  "environments": { "approvedEnvironments": ["staging"] },
+  "productionProtection": { "prodUrlPatterns": [] }
+}

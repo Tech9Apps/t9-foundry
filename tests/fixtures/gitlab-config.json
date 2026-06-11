@@ -1,0 +1,10 @@
+{
+  "project": { "name": "GitLab Project" },
+  "ticketSource": {
+    "type": "gitlab",
+    "gitlab": { "projectId": "42", "host": "https://gitlab.com", "tokenEnvVar": "GITLAB_TOKEN" }
+  },
+  "codeRepository": { "type": "gitlab", "gitlab": { "projectId": "42", "host": "https://gitlab.com" } },
+  "environments": { "testEnvironmentBaseUrl": "https://staging.app.internal" },
+  "productionProtection": { "prodUrlPatterns": [], "blockOnSuspiciousUrls": false }
+}
