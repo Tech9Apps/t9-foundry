@@ -6,8 +6,9 @@ An AI-powered QA workspace for Claude Code. Helps QA engineers go from a ticket 
 
 | Capability | Skill |
 |-----------|-------|
-| Connect to Jira, ClickUp, or GitHub Issues | `/connect-tickets` |
-| Connect to GitHub, GitLab, or Bitbucket | `/connect-repo` |
+| Guided workspace setup (one command) | `/init` |
+| Reconfigure ticket source | `/connect-tickets` |
+| Reconfigure code repository | `/connect-repo` |
 | Analyze codebase for QA context | `/analyze-codebase [TICKET-ID]` |
 | Generate a structured test plan | `/create-test-plan TICKET-ID` |
 | Write individual test cases | `/write-test-cases TICKET-ID` |
@@ -47,23 +48,21 @@ cd ~/qa-workspace   # wherever you cloned this repo
 claude
 ```
 
-### 2. Configure your ticket source
+### 2. Run `/init`
 
 ```
-/connect-tickets
+/init
 ```
 
-Claude will ask which ticket system you use, test connectivity, and write your configuration.
+The setup wizard asks about your project in one block of questions, then:
+- Generates a security and performance checklist tailored to your stack
+- Configures your ticket source (Jira, ClickUp, GitHub Issues, GitLab, Bitbucket, or none)
+- Configures your code repository and staging environment URL
+- Writes `qa-config.json` and validates it
 
-### 3. Configure your code repository
+To reconfigure a single piece later, run `/connect-tickets` or `/connect-repo` individually.
 
-```
-/connect-repo
-```
-
-Claude will ask for your repo details and your **staging/test environment URL**. It validates that the URL is not production before saving.
-
-### 4. (Optional) Scaffold your e2e framework
+### 3. (Optional) Scaffold your e2e framework
 
 ```
 /setup-e2e-framework
@@ -71,7 +70,7 @@ Claude will ask for your repo details and your **staging/test environment URL**.
 
 Copies the framework template into your app repo with production guards and a data factory pattern pre-wired.
 
-### 5. Start working on a ticket
+### 4. Start working on a ticket
 
 ```
 /create-test-plan JIRA-123
@@ -87,7 +86,7 @@ This fetches the ticket, analyzes the relevant code, and produces a test plan. F
 
 ## Configuration
 
-Copy the example config and fill in your values:
+`/init` creates `qa-config.json` for you. To configure manually or inspect the full schema, copy the example:
 
 ```bash
 cp qa-config.example.json qa-config.json
