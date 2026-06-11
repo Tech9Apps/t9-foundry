@@ -58,7 +58,7 @@ done < <(jq -r '.productionProtection.prodUrlPatterns[]? // empty' qa-config.jso
 if [ -n "$TEST_ENV_URL" ] && [ ${#PROD_PATTERNS[@]} -gt 0 ]; then
   for pattern in "${PROD_PATTERNS[@]}"; do
     if [ -z "$pattern" ]; then continue; fi
-    if echo "$TEST_ENV_URL" | grep -qE "$pattern"; then
+    if echo "$TEST_ENV_URL" | grep -qE -e "$pattern"; then
       echo -e "${RED}${BOLD}✗  CRITICAL: testEnvironmentBaseUrl matches a production pattern!${NC}"
       echo ""
       echo "  Configured URL:  $TEST_ENV_URL"

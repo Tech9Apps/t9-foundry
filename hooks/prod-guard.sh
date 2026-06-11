@@ -25,13 +25,13 @@ fi
 BLOCKED_ENV_PATTERNS=(
   "NODE_ENV=production"
   "RAILS_ENV=production"
-  "APP_ENV=prod[^a-z]"
+  "APP_ENV=prod([^a-z]|$)"
   "APP_ENV=production"
   "DJANGO_ENV=production"
   "DJANGO_SETTINGS_MODULE=.*production"
   "FLASK_ENV=production"
   "MIX_ENV=prod"
-  "--env=prod[^a-z]"
+  "--env=prod([^a-z]|$)"
   "--env=production"
   "--environment=production"
   "environment=production"
@@ -63,7 +63,7 @@ fi
 # Heuristic check: block bare apex domains and prod-named subdomains
 # (catches cases where prod patterns haven't been configured yet)
 SUSPICIOUS_PATTERNS=(
-  "https?://[a-z0-9-]+\.(com|io|app|dev|net|org)/[^s]"
+  "https?://[a-z0-9-]+\.(com|io|app|dev|net|org)/[^[:space:]]"
   "https?://prod\."
   "https?://production\."
   "https?://live\."
@@ -73,6 +73,9 @@ SUSPICIOUS_PATTERNS=(
 if [ "$(jq -r '.productionProtection.blockOnSuspiciousUrls // true' qa-config.json 2>/dev/null || echo 'true')" = "true" ]; then
   for pattern in "${SUSPICIOUS_PATTERNS[@]}"; do
     if echo "$COMMAND" | grep -qiE -e "$pattern"; then
+      if echo "$COMMAND" | grep -qiE "(staging|test|dev|qa|localhost|127\.0\.0\.1)"; then
+        continue
+      fi
       # Only warn (not block) on heuristic matches — they may be false positives
       # unless qa-config prodUrlPatterns are not yet configured
       if [ ${#PROD_PATTERNS[@]} -eq 0 ]; then

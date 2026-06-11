@@ -31,7 +31,7 @@ fi
 
 # Skip this hook for the hooks and config schema files themselves
 case "$FILE_PATH" in
-  *hooks/*.sh|*qa-config.schema.json|*qa-config.example.json|*prod-safety.md|*CLAUDE.md)
+  *hooks/*.sh|*qa-config.schema.json|*qa-config.example.json|*prod-safety.md|*/CLAUDE.md)
     exit 0
     ;;
 esac
@@ -67,6 +67,9 @@ PROD_ENV_PATTERNS=(
   "RAILS_ENV[[:space:]]*[=:][[:space:]]*['\"]?production"
   "APP_ENV[[:space:]]*[=:][[:space:]]*['\"]?production"
   "APP_ENV[[:space:]]*[=:][[:space:]]*['\"]?prod['\"]?"
+  "DJANGO_ENV[[:space:]]*[=:][[:space:]]*['\"]?production"
+  "FLASK_ENV[[:space:]]*[=:][[:space:]]*['\"]?production"
+  "MIX_ENV[[:space:]]*[=:][[:space:]]*['\"]?prod['\"]?"
 )
 
 for pattern in "${PROD_ENV_PATTERNS[@]}"; do

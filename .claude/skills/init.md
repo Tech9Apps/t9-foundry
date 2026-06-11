@@ -228,8 +228,13 @@ Frame: "Now I'll configure your code repository."
 
 Execute the `connect-repo.md` configuration logic directly — the repo location and remote identifier are known from Phase 1 answers. Use them to pre-fill; only ask for missing details:
 
+- Write `project.name` from the application name given in Phase 1
 - Confirm or ask for the remote repo type (GitHub / GitLab / Bitbucket / local only)
 - Set `codeRepository.localPath` from the Phase 1 local path answer
+- Write the repo-type-specific sub-fields:
+  - GitHub: `codeRepository.github.repo` (owner/repo format)
+  - GitLab: `codeRepository.gitlab.projectId` (numeric ID or namespace/path) and `codeRepository.gitlab.host` (default: `https://gitlab.com`)
+  - Bitbucket: `codeRepository.bitbucket.workspace` and `codeRepository.bitbucket.repo`
 - Ask for the staging environment URL (`testEnvironmentBaseUrl`)
 - Ask for production URL patterns to block (`prodUrlPatterns`) — suggest reasonable defaults based on the staging URL (e.g., if staging is `staging.myapp.com`, suggest `myapp.com$` and `app.myapp.com`)
 - Validate the staging URL does not match any of the prod patterns before writing to config (same check as `session-init.sh`). If it matches, stop and ask the engineer to correct it.
@@ -253,6 +258,7 @@ After ticket source and repo are configured, write the remaining fields from Pha
 - Web SPA → `"factory"`
 - Full-stack monolith → `"factory"` (mention `"seed-rollback"` if Docker is available)
 - Microservices → `"tag-cleanup"`
+- GraphQL API → `"factory"`
 
 **testOutput** — always set these defaults:
 - `testPlansDir: "./test-plans"`
