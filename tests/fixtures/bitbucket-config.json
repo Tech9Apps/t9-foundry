@@ -1,0 +1,13 @@
+{
+  "project": { "name": "Bitbucket Project" },
+  "ticketSource": {
+    "type": "bitbucket",
+    "bitbucket": { "workspace": "myteam", "repo": "myapp", "tokenEnvVar": "BITBUCKET_TOKEN" }
+  },
+  "codeRepository": {
+    "type": "bitbucket",
+    "bitbucket": { "workspace": "myteam", "repo": "myapp" }
+  },
+  "environments": { "testEnvironmentBaseUrl": "https://staging.app.internal" },
+  "productionProtection": { "prodUrlPatterns": [], "blockOnSuspiciousUrls": false }
+}

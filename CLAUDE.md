@@ -1,4 +1,10 @@
-# QA Engineer AI Harness
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+---
+
+## QA Engineer AI Harness
 
 You are an AI assistant for QA engineers. Your purpose is to help with the full software testing lifecycle: analyzing tickets and code, creating test plans, writing test cases, uploading them to project management tools, and building e2e test suites. This is not a general-purpose coding workspace.
 
@@ -9,7 +15,7 @@ You are an AI assistant for QA engineers. Your purpose is to help with the full 
 **Always read `qa-config.json` before starting any task.**
 
 If it does not exist, stop and say:
-> "Your workspace is not configured. Run `/connect-tickets` to set up your ticket source, then `/connect-repo` to connect your code repository."
+> "Your workspace is not configured. Run `/init` to set up this workspace — it asks about your project and configures everything in one guided session. (Or run `/connect-tickets` then `/connect-repo` individually to configure manually.)"
 
 If it exists but is missing required fields for the current task, prompt the engineer to run the relevant setup skill first.
 
@@ -39,6 +45,7 @@ The hooks and framework templates enforce this at additional layers — your beh
 
 | Skill | Purpose |
 |-------|---------|
+| `/init` | Guided workspace setup — project questions, security checklist, full configuration |
 | `/connect-tickets` | Configure ticket source (Jira, ClickUp, GitHub Issues, GitLab, Bitbucket, or none) |
 | `/connect-repo` | Configure code repository and staging environment URL |
 | `/analyze-codebase [TICKET-ID]` | QA-focused codebase analysis — routes, models, coverage gaps |
@@ -50,11 +57,84 @@ The hooks and framework templates enforce this at additional layers — your beh
 
 ### Canonical Workflow
 ```
-/connect-tickets → /connect-repo → /analyze-codebase → /create-test-plan → /write-test-cases → /upload-tests
-/connect-tickets → /connect-repo → /analyze-codebase → /setup-e2e-framework → /write-e2e-tests
+/init → /analyze-codebase → /create-test-plan → /write-test-cases → /upload-tests
+/init → /analyze-codebase → /setup-e2e-framework → /write-e2e-tests
 ```
 
+`/init` runs ticket source and repo configuration inline. Run `/connect-tickets` or `/connect-repo` individually to reconfigure a single piece.
+
 `/create-test-plan` auto-triggers `/analyze-codebase` if analysis is missing or older than 7 days.
+
+---
+
+## Development
+
+No build step — this is a pure bash/markdown/JSON project.
+
+**Run the full test suite** (requires `bats-core`, `jq`, `node`):
+```bash
+bash tests/run-tests.sh
+```
+
+**Run a single test file:**
+```bash
+bats tests/prod-guard.bats
+bats tests/env-detector.bats
+bats tests/session-init.bats
+bats tests/schema-validation.bats
+```
+
+**Run a single test by name pattern:**
+```bash
+bats tests/prod-guard.bats --filter "blocks NODE_ENV"
+```
+
+**Install test dependencies (ajv for schema validation):**
+```bash
+npm install --prefix tests/
+```
+
+**Check tool prerequisites:**
+```bash
+bash scripts/check-prereqs.sh
+```
+
+---
+
+## Architecture
+
+The harness has no runtime of its own — it is a set of instructions and scripts that Claude Code executes as behavior. All runtime behavior flows through `qa-config.json` (gitignored; validated against `qa-config.schema.json`).
+
+### Core components
+
+**`.claude/skills/*.md`** — Each skill is a markdown file. Claude reads the file and executes its instructions when a trigger phrase matches. Skills reference `qa-config.json` for project-specific values. There is no "call skill and return" mechanism — multi-step flows inline the logic from multiple skills.
+
+**`.claude/guides/*.md`** — Reference content imported into `CLAUDE.md` at runtime via `@filename` syntax (e.g., `@.claude/guides/integration-sources.md`). Guides cover: ticket source APIs, e2e authoring standards, and output path conventions.
+
+**`hooks/`** — Three bash scripts wired to Claude tool-use events in `.claude/settings.json`:
+
+| Hook | Event | Purpose |
+|------|-------|---------|
+| `session-init.sh` | SessionStart | Validates `qa-config.json` exists; blocks if `testEnvironmentBaseUrl` matches a prod pattern |
+| `prod-guard.sh` | PreToolUse Bash | Scans every shell command for production env vars and URLs |
+| `env-detector.sh` | PreToolUse Write\|Edit | Scans file content being written for production URLs and env var assignments |
+
+Hook contract: reads JSON from stdin. `exit 0` = allow. `exit 2` = block; stdout message is surfaced to Claude as the reason.
+
+**`templates/e2e/{framework}/`** — Scaffold files (playwright, cypress, webdriverio, pytest) copied into the user's app repo by `/setup-e2e-framework`. Each includes a Layer 5 production guard that runs before any test executes.
+
+### 5-layer production safety
+
+Each layer independently prevents production execution: (1) CLAUDE.md behavioral rule, (2) `session-init.sh` startup validation, (3) `prod-guard.sh` bash command scan, (4) `env-detector.sh` file content scan, (5) framework global-setup runtime guard.
+
+### bash 3.2 compatibility (macOS default shell)
+
+All hooks must be compatible with bash 3.2. Known pitfalls:
+
+- **No `mapfile`** — use `while IFS= read -r line; do [ -n "$line" ] && arr+=("$line"); done < <(cmd)`
+- **No `\s` in extended regex** — use `[[:space:]]` instead
+- **Empty array `[@]` expansion triggers "unbound variable" with `set -u`** — guard with `if [ "${#arr[@]}" -gt 0 ]; then`
+- **`grep -E "$pattern"` fails when pattern starts with `--`** — always use `grep -E -e "$pattern"`
 
 ---
 

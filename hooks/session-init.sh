@@ -18,12 +18,16 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 
 # Check for qa-config.json
 if [ ! -f "qa-config.json" ]; then
-  echo -e "${YELLOW}⚠  WARNING: qa-config.json not found.${NC}"
+  echo -e "${YELLOW}⚠  Workspace not configured.${NC}"
   echo ""
-  echo "This workspace is not configured for a project yet."
-  echo "Run the following to get started:"
-  echo "  /connect-tickets  — configure your ticket source (Jira, ClickUp, GitHub Issues)"
-  echo "  /connect-repo     — configure your code repository and staging environment"
+  echo "  Run /init to set up this workspace in one guided step."
+  echo ""
+  echo "    /init will:"
+  echo "      • Ask about your project, stack, and ticket system"
+  echo "      • Configure your ticket source and code repository"
+  echo "      • Generate security and performance checklists"
+  echo ""
+  echo "  (Or run /connect-tickets then /connect-repo manually.)"
   echo ""
   exit 0
 fi
@@ -47,7 +51,9 @@ echo ""
 
 # Validate testEnvironmentBaseUrl against production patterns
 PROD_PATTERNS=()
-mapfile -t PROD_PATTERNS < <(jq -r '.productionProtection.prodUrlPatterns[]? // empty' qa-config.json 2>/dev/null || true)
+while IFS= read -r line; do
+  [ -n "$line" ] && PROD_PATTERNS+=("$line")
+done < <(jq -r '.productionProtection.prodUrlPatterns[]? // empty' qa-config.json 2>/dev/null || true)
 
 if [ -n "$TEST_ENV_URL" ] && [ ${#PROD_PATTERNS[@]} -gt 0 ]; then
   for pattern in "${PROD_PATTERNS[@]}"; do

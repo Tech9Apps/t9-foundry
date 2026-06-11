@@ -1,0 +1,10 @@
+{
+  "project": { "name": "Misconfigured App" },
+  "ticketSource": { "type": "none" },
+  "codeRepository": { "type": "local" },
+  "environments": { "testEnvironmentBaseUrl": "https://myapp.example.com" },
+  "productionProtection": {
+    "prodUrlPatterns": ["myapp\\.example\\.com"],
+    "blockOnSuspiciousUrls": true
+  }
+}

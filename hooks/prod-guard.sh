@@ -16,7 +16,9 @@ fi
 # Load production URL patterns from qa-config.json if available
 PROD_PATTERNS=()
 if [ -f "qa-config.json" ]; then
-  mapfile -t PROD_PATTERNS < <(jq -r '.productionProtection.prodUrlPatterns[]? // empty' qa-config.json 2>/dev/null || true)
+  while IFS= read -r line; do
+    [ -n "$line" ] && PROD_PATTERNS+=("$line")
+  done < <(jq -r '.productionProtection.prodUrlPatterns[]? // empty' qa-config.json 2>/dev/null || true)
 fi
 
 # Always block common production environment variable patterns
@@ -36,7 +38,7 @@ BLOCKED_ENV_PATTERNS=(
 )
 
 for pattern in "${BLOCKED_ENV_PATTERNS[@]}"; do
-  if echo "$COMMAND" | grep -qiE "$pattern"; then
+  if echo "$COMMAND" | grep -qiE -e "$pattern"; then
     echo "BLOCKED: Command sets a production environment variable."
     echo "Pattern matched: $pattern"
     echo "Tests must never run against production. Check your environment configuration."
@@ -46,15 +48,17 @@ for pattern in "${BLOCKED_ENV_PATTERNS[@]}"; do
 done
 
 # Check command against configured production URL patterns
-for pattern in "${PROD_PATTERNS[@]}"; do
-  if [ -z "$pattern" ]; then continue; fi
-  if echo "$COMMAND" | grep -qE "$pattern"; then
-    echo "BLOCKED: Command contains a production URL matching pattern: $pattern"
-    echo "Tests must never run against production environments."
-    echo "Your configured test environment is: $(jq -r '.environments.testEnvironmentBaseUrl // "not set"' qa-config.json 2>/dev/null || echo 'not set')"
-    exit 2
-  fi
-done
+if [ "${#PROD_PATTERNS[@]}" -gt 0 ]; then
+  for pattern in "${PROD_PATTERNS[@]}"; do
+    if [ -z "$pattern" ]; then continue; fi
+    if echo "$COMMAND" | grep -qE -e "$pattern"; then
+      echo "BLOCKED: Command contains a production URL matching pattern: $pattern"
+      echo "Tests must never run against production environments."
+      echo "Your configured test environment is: $(jq -r '.environments.testEnvironmentBaseUrl // "not set"' qa-config.json 2>/dev/null || echo 'not set')"
+      exit 2
+    fi
+  done
+fi
 
 # Heuristic check: block bare apex domains and prod-named subdomains
 # (catches cases where prod patterns haven't been configured yet)
@@ -68,7 +72,7 @@ SUSPICIOUS_PATTERNS=(
 
 if [ "$(jq -r '.productionProtection.blockOnSuspiciousUrls // true' qa-config.json 2>/dev/null || echo 'true')" = "true" ]; then
   for pattern in "${SUSPICIOUS_PATTERNS[@]}"; do
-    if echo "$COMMAND" | grep -qiE "$pattern"; then
+    if echo "$COMMAND" | grep -qiE -e "$pattern"; then
       # Only warn (not block) on heuristic matches — they may be false positives
       # unless qa-config prodUrlPatterns are not yet configured
       if [ ${#PROD_PATTERNS[@]} -eq 0 ]; then
