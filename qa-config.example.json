@@ -6,6 +6,7 @@
   },
   "ticketSource": {
     "type": "jira",
+    "_typeOptions": "jira | clickup | github | gitlab | bitbucket | none",
     "jira": {
       "projectKey": "MYAPP",
       "testIssueType": "Test",

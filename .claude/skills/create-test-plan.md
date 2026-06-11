@@ -8,16 +8,15 @@ Trigger phrases: "create a test plan", "generate test plan", "make a test plan f
 
 ## Arguments
 
-Required: `TICKET-ID` — the ticket/issue identifier.
-
-Example: `/create-test-plan JIRA-123`
+- With ticket source configured: `TICKET-ID` (e.g., `/create-test-plan JIRA-123`)
+- Without ticket source (`ticketSource.type = "none"`): a short feature name used as the plan filename (e.g., `/create-test-plan user-checkout`)
 
 ## Steps
 
 1. **Read qa-config.json**
    Get `ticketSource`, `environments`, `productionProtection`, and `testOutput.testPlansDir`. Stop if config is missing.
 
-2. **Fetch the ticket**
+2. **Fetch the ticket or collect requirements**
 
    **Jira:**
    ```
@@ -39,6 +38,13 @@ Example: `/create-test-plan JIRA-123`
    ```
    curl -s -H "PRIVATE-TOKEN: $GITLAB_TOKEN" "{host}/api/v4/projects/{id}/issues/{iid}"
    ```
+
+   **No ticket system (`ticketSource.type = "none"`):**
+   Ask the engineer to describe the feature. Prompt with:
+   - "What is the feature or user story being tested? (describe what it does)"
+   - "What are the acceptance criteria or expected behaviors?"
+   - "Are there any known edge cases or risk areas?"
+   Use the argument as the plan's identifier/filename (e.g., `user-checkout`).
 
 3. **Check for existing codebase analysis**
    Look for `{analysisDir}/{ticket-id}-analysis.md` or `{analysisDir}/latest-analysis.md`.

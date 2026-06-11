@@ -81,11 +81,13 @@ When writing tests, generate code for the detected framework. Never mix framewor
 3. **GitHub Issues** → Use `gh issue view {number} --repo owner/repo --json title,body,labels,milestone`
 4. **GitLab Issues** → Use `curl -H "PRIVATE-TOKEN: $GITLAB_TOKEN" https://gitlab.com/api/v4/projects/{id}/issues/{iid}`
 5. **Bitbucket** → Use `curl` with `$BITBUCKET_TOKEN`
+6. **None** → Ask the engineer to describe the feature and acceptance criteria directly. Use their input as the requirements source for all downstream skills.
 
 ### Uploading Test Cases
 1. **Jira** → `createJiraIssue` (MCP), then `createIssueLink` to parent ticket. Check for "Test" issue type via `getJiraProjectIssueTypesMetadata`; fall back to "Task" if unavailable.
 2. **ClickUp** → `POST https://api.clickup.com/api/v2/list/{list_id}/task`, then add checklist for steps
 3. **GitHub Issues** → `gh issue create --label test-case`
+4. **None** → Save formatted markdown to `{testCasesDir}/` only. Report the file path.
 
 ### Codebase Analysis
 - **Local clone present** (`qa-config.json > codeRepository.localPath`): Use Read and Bash tools directly. Fastest.

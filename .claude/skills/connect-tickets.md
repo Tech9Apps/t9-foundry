@@ -18,6 +18,7 @@ Trigger phrases: "connect to Jira", "connect to ClickUp", "connect GitHub Issues
    - GitHub Issues
    - GitLab Issues
    - Bitbucket Issues
+   - No ticket system (describe requirements directly in the harness)
 
 3. **Configure the selected source**
 
@@ -58,11 +59,18 @@ Trigger phrases: "connect to Jira", "connect to ClickUp", "connect GitHub Issues
    - Test connectivity using the REST API
    - Write to `qa-config.json`
 
+   ### No ticket system
+   - Write `ticketSource.type = "none"` to `qa-config.json`
+   - No connectivity check needed
+   - When this mode is active, `/create-test-plan` will prompt the engineer to describe the feature and requirements directly instead of fetching a ticket. `/upload-tests` will save test cases to markdown files only.
+
 4. **Verify by fetching a real ticket**
    After writing config, fetch one real ticket from the configured source to confirm end-to-end connectivity. Display the ticket title and ID.
+   Skip this step if `ticketSource.type = "none"`.
 
 5. **Confirm success**
-   Report: "Ticket source configured: {type} / {project-or-repo}. You can now run `/connect-repo` to configure your code repository."
+   - If a ticket source was configured: "Ticket source configured: {type} / {project-or-repo}. You can now run `/connect-repo` to configure your code repository."
+   - If no ticket system: "No ticket system configured. When you run `/create-test-plan`, you'll describe the feature requirements directly. You can now run `/connect-repo` to configure your code repository."
 
 ## Config file handling
 If `qa-config.json` does not exist, create it from `qa-config.example.json` first, then update the relevant fields.
