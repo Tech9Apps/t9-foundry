@@ -56,16 +56,21 @@ The hooks and framework templates enforce this at additional layers — your beh
 | `/upload-tests TICKET-ID` | Push test cases to configured ticket system |
 | `/setup-e2e-framework` | Scaffold e2e framework with data factory and production guards |
 | `/write-e2e-tests TICKET-ID` | Generate runnable e2e tests from test cases and codebase analysis |
+| `/reconfigure` | Update a single config value (staging URL, ticket source, framework, prod patterns, etc.) |
+| `/run-tests` | Execute the configured test suite against staging and report pass/fail results |
+| `/troubleshoot` | Diagnose harness issues — config validity, ticket source connectivity, prod guard conflicts |
 
 ### Canonical Workflow
 ```
 /init → /analyze-codebase → /create-test-plan → /write-test-cases → /upload-tests
-/init → /analyze-codebase → /setup-e2e-framework → /write-e2e-tests
+/init → /analyze-codebase → /setup-e2e-framework → /write-e2e-tests → /run-tests
 ```
 
-`/init` runs ticket source and repo configuration inline. Run `/connect-tickets` or `/connect-repo` individually to reconfigure a single piece.
+`/init` runs ticket source and repo configuration inline. Run `/connect-tickets` or `/connect-repo` individually to reconfigure a single piece. Use `/reconfigure` to update any single config value after initial setup.
 
 `/create-test-plan` auto-triggers `/analyze-codebase` if analysis is missing or older than 7 days.
+
+If something isn't working, run `/troubleshoot` for a guided diagnostic.
 
 ---
 
