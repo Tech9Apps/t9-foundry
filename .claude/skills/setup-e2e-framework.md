@@ -29,13 +29,17 @@ Trigger phrases: "set up e2e framework", "scaffold playwright", "set up cypress"
    If no framework found: ask which to use:
    1. **Playwright** (recommended — built-in parallelism, multiple browsers, excellent DX)
    2. **Cypress** (great for component testing and visual debugging)
-   3. **Selenium / WebDriver** (needed for legacy browsers or specific corporate requirements)
-   4. **WebDriverIO** (flexible, supports both WebDriver and DevTools protocols)
+   3. **pytest** (Python apps — also works with pytest-playwright for browser tests)
+   4. **RSpec** (Ruby on Rails apps — pairs with Faraday for API tests)
+   5. **Selenium / WebDriver** (needed for legacy browsers or specific corporate requirements)
+   6. **WebDriverIO** (flexible, supports both WebDriver and DevTools protocols)
 
 4. **Install the framework if needed**
-   If the framework package is not in `{localPath}/package.json`, show the install command but ask before running:
+   If the framework package is not already installed, show the install command but ask before running:
    - Playwright: `npm install -D @playwright/test && npx playwright install chromium`
    - Cypress: `npm install -D cypress`
+   - pytest: `pip install pytest requests python-dotenv` (add `pytest-playwright` for browser tests)
+   - RSpec: add `gem 'rspec', 'faraday', 'faraday-json', 'dotenv'` to Gemfile then `bundle install`
    - WebDriverIO: `npm install -D @wdio/cli && npx wdio config`
 
 5. **Copy and configure the template**
