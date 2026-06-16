@@ -133,3 +133,34 @@ edit_input() {
   run bash -c "cd '$TEST_TMP' && bash '$DETECTOR' < input.json"
   [ "$status" -eq 0 ]
 }
+
+# ── Claude Code internal file allowlist ───────────────────────────────────────
+
+@test "skips Write to a file in Claude Code's internal plans directory" {
+  # Prod URL as content trigger (avoids literal prod env var strings in this source file)
+  write_input "$HOME/.claude/plans/some-plan.md" "const base = 'https://myapp.example.com/';" "prod-url-config.json"
+  run bash -c "cd '$TEST_TMP' && bash '$DETECTOR' < input.json"
+  [ "$status" -eq 0 ]
+}
+
+@test "skips Write to a file in Claude Code's memory directory" {
+  write_input "$HOME/.claude/memory/feedback.md" "const base = 'https://myapp.example.com/';" "prod-url-config.json"
+  run bash -c "cd '$TEST_TMP' && bash '$DETECTOR' < input.json"
+  [ "$status" -eq 0 ]
+}
+
+# ── Invalid regex patterns ────────────────────────────────────────────────────
+
+@test "skips invalid regex pattern and emits a warning instead of blocking" {
+  # Content that does not match the valid pattern — verifies invalid pattern is warned not crashed
+  write_input "/project/e2e/config.ts" "const url = process.env.BASE_URL;" "invalid-regex-config.json"
+  run bash -c "cd '$TEST_TMP' && bash '$DETECTOR' < input.json"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "WARNING" ]]
+}
+
+@test "still blocks on valid pattern when config also contains an invalid pattern" {
+  write_input "/project/e2e/config.ts" "const url = 'https://testapp.example.com/';" "invalid-regex-config.json"
+  run bash -c "cd '$TEST_TMP' && bash '$DETECTOR' < input.json"
+  [ "$status" -eq 2 ]
+}

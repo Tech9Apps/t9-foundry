@@ -51,6 +51,14 @@ done
 if [ "${#PROD_PATTERNS[@]}" -gt 0 ]; then
   for pattern in "${PROD_PATTERNS[@]}"; do
     if [ -z "$pattern" ]; then continue; fi
+    # Pre-validate regex — grep exits 2 on invalid pattern, 1 on no match, 0 on match
+    grep_rc=0
+    echo "" | grep -qE -e "$pattern" 2>/dev/null || grep_rc=$?
+    if [ "$grep_rc" -eq 2 ]; then
+      echo "WARNING: Skipping invalid production URL pattern: $pattern"
+      echo "Fix productionProtection.prodUrlPatterns in qa-config.json to use valid regex."
+      continue
+    fi
     if echo "$COMMAND" | grep -qE -e "$pattern"; then
       echo "BLOCKED: Command contains a production URL matching pattern: $pattern"
       echo "Tests must never run against production environments."

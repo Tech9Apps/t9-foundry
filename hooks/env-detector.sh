@@ -36,6 +36,14 @@ case "$FILE_PATH" in
     ;;
 esac
 
+# Skip Claude Code's own internal files (plans, memory) — those files document
+# production env var names in a non-executable context and are not test artifacts.
+case "$FILE_PATH" in
+  $HOME/.claude/*)
+    exit 0
+    ;;
+esac
+
 # Load production URL patterns from qa-config.json
 PROD_PATTERNS=()
 if [ -f "qa-config.json" ]; then
@@ -48,6 +56,14 @@ fi
 if [ "${#PROD_PATTERNS[@]}" -gt 0 ]; then
   for pattern in "${PROD_PATTERNS[@]}"; do
     if [ -z "$pattern" ]; then continue; fi
+    # Pre-validate regex — grep exits 2 on invalid pattern, 1 on no match, 0 on match
+    grep_rc=0
+    echo "" | grep -qE -e "$pattern" 2>/dev/null || grep_rc=$?
+    if [ "$grep_rc" -eq 2 ]; then
+      echo "WARNING: Skipping invalid production URL pattern: $pattern"
+      echo "Fix productionProtection.prodUrlPatterns in qa-config.json to use valid regex."
+      continue
+    fi
     if echo "$CONTENT" | grep -qE -e "$pattern"; then
       MATCHED_LINE=$(echo "$CONTENT" | grep -nE -e "$pattern" | head -5)
       echo "BLOCKED: File content contains a production URL matching pattern: $pattern"

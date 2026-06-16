@@ -130,3 +130,19 @@ guard_input() {
   run bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json"
   [ "$status" -eq 0 ]
 }
+
+# ── Invalid regex patterns ────────────────────────────────────────────────────
+
+@test "skips invalid regex pattern in prod patterns and emits a warning" {
+  # Staging URL — should not be blocked; invalid pattern should warn, not crash
+  guard_input "curl https://staging.testapp.example.com/health" "invalid-regex-config.json"
+  run bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "WARNING" ]]
+}
+
+@test "still blocks on valid pattern when config also contains an invalid pattern" {
+  guard_input "curl https://testapp.example.com/" "invalid-regex-config.json"
+  run bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json"
+  [ "$status" -eq 2 ]
+}

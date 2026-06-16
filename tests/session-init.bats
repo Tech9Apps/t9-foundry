@@ -97,3 +97,18 @@ teardown() {
   [ "$status" -eq 0 ]
   [[ "$output" =~ "BITBUCKET_TOKEN" ]]
 }
+
+# ── Empty production patterns ─────────────────────────────────────────────────
+
+@test "warns when prodUrlPatterns is empty" {
+  cp "$FIXTURES/empty-patterns-config.json" "$TEST_TMP/qa-config.json"
+  run bash -c "cd '$TEST_TMP' && bash '$INIT_HOOK'"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "prodUrlPatterns" ]]
+}
+
+@test "exits 0 (does not block) when prodUrlPatterns is empty" {
+  cp "$FIXTURES/empty-patterns-config.json" "$TEST_TMP/qa-config.json"
+  run bash -c "cd '$TEST_TMP' && bash '$INIT_HOOK'"
+  [ "$status" -eq 0 ]
+}

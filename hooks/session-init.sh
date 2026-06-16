@@ -55,6 +55,13 @@ while IFS= read -r line; do
   [ -n "$line" ] && PROD_PATTERNS+=("$line")
 done < <(jq -r '.productionProtection.prodUrlPatterns[]? // empty' qa-config.json 2>/dev/null || true)
 
+# Warn if no production URL patterns are configured (blocking is disabled)
+if [ "${#PROD_PATTERNS[@]}" -eq 0 ]; then
+  echo -e "${YELLOW}⚠  productionProtection.prodUrlPatterns is empty — production URL blocking is disabled.${NC}"
+  echo "  Add patterns with /reconfigure to enable strict URL blocking."
+  echo ""
+fi
+
 if [ -n "$TEST_ENV_URL" ] && [ ${#PROD_PATTERNS[@]} -gt 0 ]; then
   for pattern in "${PROD_PATTERNS[@]}"; do
     if [ -z "$pattern" ]; then continue; fi
