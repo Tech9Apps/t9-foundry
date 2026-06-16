@@ -10,29 +10,42 @@ Trigger phrases: "set up this workspace", "initialize", "get started", "configur
 
 ### Phase 1 — Diagnostic Questions
 
-Open with: "Welcome to the Tech9 QA Harness. I'll walk you through workspace setup. I have a few questions about your project — then I'll configure everything and generate security and performance checklists tailored to your stack."
+Open with: "Welcome to the Tech9 QA Harness. I'll walk you through workspace setup — 7 quick questions about your project, then I'll configure everything and generate security and performance checklists tailored to your stack."
 
-Present all questions together so the engineer can answer in one reply:
+Ask one question at a time. After presenting a question and its options, stop and wait for the user's response before asking the next question. Do not present multiple questions in one message. As you receive each answer, remember it for use in later phases.
+
+Format each question header as **Question N of 7 — \<topic\>**. List every option on its own line with a short bold label and a brief note about any prerequisite (token, CLI, MCP connection, etc.).
 
 ---
 
-**1. Ticket system**
+**Question 1 of 7 — Ticket system**
 What ticket system does your team use for this project?
 
-- **Jira** — do you have the Atlassian MCP connected? (claude.ai → Integrations → Atlassian)
-- **ClickUp** — do you have `CLICKUP_TOKEN` set in your shell profile?
-- **GitHub Issues** — is the GitHub CLI installed and authenticated? (`gh auth login`)
-- **GitLab Issues** — do you have `GITLAB_TOKEN` set in your shell profile?
-- **Bitbucket Issues** — do you have `BITBUCKET_TOKEN` set in your shell profile?
-- **No ticket system** — I'll collect requirements directly in the harness
+- **Jira** — requires Atlassian MCP connected (claude.ai → Integrations → Atlassian)
+- **ClickUp** — requires `CLICKUP_TOKEN` set in your shell profile
+- **GitHub Issues** — requires GitHub CLI installed and authenticated (`gh auth login`)
+- **GitLab Issues** — requires `GITLAB_TOKEN` set in your shell profile
+- **Bitbucket Issues** — requires `BITBUCKET_TOKEN` set in your shell profile
+- **No ticket system** — I'll collect requirements directly in the session
 
-**2. Application repo**
+Wait for the answer, then ask:
+
+---
+
+**Question 2 of 7 — Application repo**
 What is the application you're testing, and where is the code?
-- Local path to your app repo (if you have a clone, e.g., `../my-app`)
-- Remote identifier (e.g., `owner/repo` for GitHub, project ID for GitLab)
 
-**3. Application type**
+- **Local path** — provide the path to your app repo clone (e.g., `../my-app`)
+- **Remote only** — provide the remote identifier (e.g., `owner/repo` for GitHub, project ID for GitLab)
+- **Both** — provide both the local path and the remote identifier
+
+Wait for the answer, then ask:
+
+---
+
+**Question 3 of 7 — Application type**
 What kind of application is it?
+
 1. Web SPA (React, Vue, Angular, Svelte)
 2. REST API (Node.js, Python, Rails, Java, Go)
 3. Full-stack monolith (Rails MVC, Django, Laravel, Next.js SSR)
@@ -40,27 +53,48 @@ What kind of application is it?
 5. Mobile web (responsive / React Native Web)
 6. GraphQL API
 
-**4. Primary tech stack**
-What's the primary tech stack? (e.g., React + Node.js, Python/FastAPI, Ruby on Rails, Java/Spring Boot)
+Wait for the answer, then ask:
 
-**5. Test framework**
+---
+
+**Question 4 of 7 — Primary tech stack**
+What's the primary tech stack?
+
+Examples: React + Node.js, Python/FastAPI, Ruby on Rails, Java/Spring Boot, Go + Postgres. Describe what you know — any detail helps.
+
+Wait for the answer, then ask:
+
+---
+
+**Question 5 of 7 — Test framework**
 Do you have an existing test framework in the app repo, or will you be setting one up?
-- **Playwright** — approximately where is `playwright.config.ts`?
-- **Cypress** — approximately where is `cypress.config.ts`?
+
+- **Playwright** — where is `playwright.config.ts`? (approximate path is fine)
+- **Cypress** — where is `cypress.config.ts`?
 - **pytest** — is there a `conftest.py` at the project root?
-- **WebDriverIO, RSpec, Jest, or other** — which and where?
-- **Not yet** — I'll recommend one based on your stack
+- **WebDriverIO, RSpec, Jest, or other** — which framework, and where is its config?
+- **Not yet** — I'll recommend one based on your stack after setup
 
-**6. Sensitive data**
+Wait for the answer, then ask:
+
+---
+
+**Question 6 of 7 — Sensitive data**
 Does this application handle any of the following? (select all that apply)
-- Personal Identifiable Information (PII) — names, emails, addresses
-- Financial data — credit cards, transactions, bank accounts
-- Healthcare data — medical records, diagnoses (HIPAA)
-- Authentication credentials or secrets (OAuth tokens, API keys stored in the app)
-- None of the above
 
-**7. Team context**
+- **PII** — names, emails, addresses, or other personally identifiable information
+- **Financial** — credit cards, transactions, or bank account data
+- **Healthcare** — medical records, diagnoses, or other PHI (HIPAA)
+- **Auth secrets** — OAuth tokens, API keys, or credentials stored in the app
+- **None of the above**
+
+Wait for the answer, then ask:
+
+---
+
+**Question 7 of 7 — Team context**
 What's the team size and QA model?
+
 - Solo developer, self-testing
 - Small team (2–5 devs), 1 dedicated QA
 - Medium team (6–15 devs), 1–2 QA
@@ -68,7 +102,7 @@ What's the team size and QA model?
 
 ---
 
-After receiving answers, read `qa-config.json` if it exists. If both `ticketSource.type` and `codeRepository.type` are already set, pause and ask: "Your workspace is already configured (ticket source: {type}, repository: {type}). Do you want to (1) reconfigure from scratch, or (2) continue and fill in any missing fields?"
+After receiving the answer to Question 7, read `qa-config.json` if it exists. If both `ticketSource.type` and `codeRepository.type` are already set, pause and ask: "Your workspace is already configured (ticket source: {type}, repository: {type}). Do you want to (1) reconfigure from scratch, or (2) continue and fill in any missing fields?"
 
 ### Phase 2 — Acknowledge and Confirm Understanding
 
