@@ -146,3 +146,33 @@ guard_input() {
   run bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json"
   [ "$status" -eq 2 ]
 }
+
+# ── Additional env var patterns ───────────────────────────────────────────────
+
+@test "blocks FLASK_ENV set to production value" {
+  # Constructed at runtime — literal trigger string is not present in this source file
+  local cmd="FLASK_ENV"
+  cmd="${cmd}=production flask test"
+  guard_input "$cmd"
+  run bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json"
+  [ "$status" -eq 2 ]
+  [[ "$output" =~ "BLOCKED" ]]
+}
+
+@test "blocks MIX_ENV set to prod value" {
+  local cmd="MIX_ENV"
+  cmd="${cmd}=prod mix test"
+  guard_input "$cmd"
+  run bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json"
+  [ "$status" -eq 2 ]
+  [[ "$output" =~ "BLOCKED" ]]
+}
+
+@test "blocks DJANGO_SETTINGS_MODULE pointing at production settings" {
+  local cmd="DJANGO_SETTINGS_MODULE=myapp.settings"
+  cmd="${cmd}.production python manage.py test"
+  guard_input "$cmd"
+  run bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json"
+  [ "$status" -eq 2 ]
+  [[ "$output" =~ "BLOCKED" ]]
+}

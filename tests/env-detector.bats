@@ -164,3 +164,24 @@ edit_input() {
   run bash -c "cd '$TEST_TMP' && bash '$DETECTOR' < input.json"
   [ "$status" -eq 2 ]
 }
+
+# ── Additional env var patterns ───────────────────────────────────────────────
+
+@test "blocks Write containing FLASK_ENV set to production value" {
+  # Trigger string is constructed at runtime — not present as a literal in this source file
+  local content="export FLASK_ENV"
+  content="${content}=production"
+  write_input "/project/tests/test_app.py" "$content"
+  run bash -c "cd '$TEST_TMP' && bash '$DETECTOR' < input.json"
+  [ "$status" -eq 2 ]
+  [[ "$output" =~ "BLOCKED" ]]
+}
+
+@test "blocks Write containing MIX_ENV set to prod value" {
+  local content="MIX_ENV"
+  content="${content}=prod mix test"
+  write_input "/project/test/test_helper.exs" "$content"
+  run bash -c "cd '$TEST_TMP' && bash '$DETECTOR' < input.json"
+  [ "$status" -eq 2 ]
+  [[ "$output" =~ "BLOCKED" ]]
+}
