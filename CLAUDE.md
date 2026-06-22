@@ -59,12 +59,14 @@ The hooks and framework templates enforce this at additional layers — your beh
 | `/reconfigure` | Update a single config value (staging URL, ticket source, framework, prod patterns, etc.) |
 | `/run-tests` | Execute the configured test suite against staging and report pass/fail results |
 | `/setup-ci` | Generate or extend a CI workflow to run e2e tests on push/PR |
+| `/catchup-e2e` | Audit existing e2e coverage, find gaps, and generate tests — no ticket required |
 | `/troubleshoot` | Diagnose harness issues — config validity, ticket source connectivity, prod guard conflicts |
 
 ### Canonical Workflow
 ```
 /init → /analyze-codebase → /create-test-plan → /write-test-cases → /upload-tests
 /init → /analyze-codebase → /setup-e2e-framework → /write-e2e-tests → /setup-ci → /run-tests
+/init → /catchup-e2e → /setup-ci → /run-tests   ← for existing projects
 ```
 
 `/init` runs ticket source and repo configuration inline. Run `/connect-tickets` or `/connect-repo` individually to reconfigure a single piece. Use `/reconfigure` to update any single config value after initial setup.

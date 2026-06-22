@@ -158,6 +158,7 @@ Executes the test suite against your staging environment and reports a pass/fail
 | `/write-e2e-tests TICKET-ID` | Generate runnable e2e tests from test cases |
 | `/run-tests` | Execute the test suite against staging and report results |
 | `/setup-ci` | Generate or extend a CI workflow (GitHub Actions, GitLab CI, Bitbucket) |
+| `/catchup-e2e` | Audit existing e2e coverage, find gaps, and generate tests — no ticket required |
 | `/reconfigure` | Update a single config value (staging URL, ticket source, framework, etc.) |
 | `/connect-tickets` | Reconfigure ticket source only |
 | `/connect-repo` | Reconfigure code repository only |
@@ -167,6 +168,7 @@ Executes the test suite against your staging environment and reports a pass/fail
 ```
 /init → /analyze-codebase → /create-test-plan → /write-test-cases → /upload-tests
 /init → /analyze-codebase → /setup-e2e-framework → /write-e2e-tests → /setup-ci → /run-tests
+/init → /catchup-e2e → /setup-ci → /run-tests   ← for existing projects without tickets
 ```
 
 ---
