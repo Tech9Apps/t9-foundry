@@ -39,7 +39,7 @@ Trigger phrases: "run tests", "run my tests", "execute tests", "run the test sui
 4. **Build and run the test command**
 
    Set the base URL as an environment variable before the command.
-   Use `TEST_BASE_URL` as the variable name in the shell invocation; frameworks read it
+   Use `BASE_URL` as the variable name in the shell invocation; frameworks read it
    via their own config (see per-framework notes below). Never hardcode the URL in the
    command string itself.
 
@@ -47,37 +47,37 @@ Trigger phrases: "run tests", "run my tests", "execute tests", "run the test sui
 
    ### Playwright
    ```
-   TEST_BASE_URL="{testEnvironmentBaseUrl}" npx playwright test
+   BASE_URL="{testEnvironmentBaseUrl}" npx playwright test
    ```
-   Playwright picks up `TEST_BASE_URL` via `process.env` in `playwright.config.ts`.
+   Playwright picks up `BASE_URL` via `process.env` in `playwright.config.ts`.
    If `testFramework.configPath` is set, add `--config {configPath}`.
    Add `--reporter=list` for readable per-test output.
 
    ### Cypress
    ```
-   TEST_BASE_URL="{testEnvironmentBaseUrl}" npx cypress run
+   BASE_URL="{testEnvironmentBaseUrl}" npx cypress run
    ```
-   Cypress reads the URL from `process.env.TEST_BASE_URL` in its config or support file.
+   Cypress reads the URL from `process.env.BASE_URL` in its config or support file.
    If a `testFramework.configPath` is set, add `--config-file {configPath}`.
 
    ### pytest
    ```
-   TEST_BASE_URL="{testEnvironmentBaseUrl}" python -m pytest {testFramework.testDir} -v
+   BASE_URL="{testEnvironmentBaseUrl}" python -m pytest {testFramework.testDir} -v
    ```
 
    ### RSpec
    ```
-   TEST_BASE_URL="{testEnvironmentBaseUrl}" bundle exec rspec {testFramework.testDir}
+   BASE_URL="{testEnvironmentBaseUrl}" bundle exec rspec {testFramework.testDir}
    ```
 
    ### Jest
    ```
-   TEST_BASE_URL="{testEnvironmentBaseUrl}" npx jest {testFramework.testDir} --verbose
+   BASE_URL="{testEnvironmentBaseUrl}" npx jest {testFramework.testDir} --verbose
    ```
 
    ### WebDriverIO
    ```
-   TEST_BASE_URL="{testEnvironmentBaseUrl}" npx wdio {testFramework.configPath}
+   BASE_URL="{testEnvironmentBaseUrl}" npx wdio {testFramework.configPath}
    ```
 
 5. **Parse the output**

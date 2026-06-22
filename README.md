@@ -4,6 +4,8 @@ An AI-powered QA workspace for Claude Code. You open this repo in Claude Code, p
 
 > **Two repos, not one.** This repo is the QA workspace. Your application lives in a separate repo. You run Claude Code *here*, and the harness reads and writes *there*.
 
+> **Want to see it in action first?** The [`examples/`](examples/) folder has a demo ticket and pre-generated outputs — no Jira or ticket system needed. Follow [`examples/README.md`](examples/README.md) to run the full workflow in ~15 minutes.
+
 ---
 
 ## Before You Begin
@@ -155,6 +157,7 @@ Executes the test suite against your staging environment and reports a pass/fail
 | `/setup-e2e-framework` | Scaffold Playwright / Cypress / pytest / RSpec in your app repo |
 | `/write-e2e-tests TICKET-ID` | Generate runnable e2e tests from test cases |
 | `/run-tests` | Execute the test suite against staging and report results |
+| `/setup-ci` | Generate or extend a CI workflow (GitHub Actions, GitLab CI, Bitbucket) |
 | `/reconfigure` | Update a single config value (staging URL, ticket source, framework, etc.) |
 | `/connect-tickets` | Reconfigure ticket source only |
 | `/connect-repo` | Reconfigure code repository only |
@@ -163,7 +166,7 @@ Executes the test suite against your staging environment and reports a pass/fail
 **Canonical workflow:**
 ```
 /init → /analyze-codebase → /create-test-plan → /write-test-cases → /upload-tests
-/init → /analyze-codebase → /setup-e2e-framework → /write-e2e-tests → /run-tests
+/init → /analyze-codebase → /setup-e2e-framework → /write-e2e-tests → /setup-ci → /run-tests
 ```
 
 ---

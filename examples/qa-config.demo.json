@@ -1,0 +1,35 @@
+{
+  "project": {
+    "name": "Demo Project"
+  },
+  "ticketSource": {
+    "type": "none"
+  },
+  "codeRepository": {
+    "type": "none",
+    "localPath": ""
+  },
+  "environments": {
+    "testEnvironmentBaseUrl": "https://staging.yourapp.com"
+  },
+  "productionProtection": {
+    "prodUrlPatterns": [
+      "yourapp\\.com$",
+      "app\\.yourapp\\.com"
+    ]
+  },
+  "testFramework": {
+    "type": "playwright",
+    "configPath": "../your-app/playwright.config.ts",
+    "testDir": "../your-app/e2e"
+  },
+  "dataManagement": {
+    "strategy": "factory"
+  },
+  "testOutput": {
+    "testPlansDir": "./test-plans",
+    "testCasesDir": "./test-cases",
+    "analysisDir": "./analysis",
+    "e2eTestsPath": "../your-app/e2e"
+  }
+}

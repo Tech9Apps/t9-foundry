@@ -1,0 +1,32 @@
+name: Test Suite
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  bats:
+    name: Bats tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bats-core
+        run: sudo apt-get install -y bats
+
+      - name: Install jq
+        run: sudo apt-get install -y jq
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install npm test dependencies
+        run: npm install --prefix tests/
+
+      - name: Run test suite
+        run: bash tests/run-tests.sh

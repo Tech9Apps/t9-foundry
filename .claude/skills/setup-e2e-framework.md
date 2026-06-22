@@ -40,7 +40,8 @@ Trigger phrases: "set up e2e framework", "scaffold playwright", "set up cypress"
    - Cypress: `npm install -D cypress`
    - pytest: `pip install pytest requests python-dotenv` (add `pytest-playwright` for browser tests)
    - RSpec: add `gem 'rspec', 'faraday', 'faraday-json', 'dotenv'` to Gemfile then `bundle install`
-   - WebDriverIO: `npm install -D @wdio/cli && npx wdio config`
+   - WebDriverIO: `npm install -D @wdio/cli @wdio/local-runner @wdio/mocha-framework @wdio/spec-reporter node-fetch ts-node typescript && npx wdio config`
+   - Selenium: `pip install selenium webdriver-manager pytest requests python-dotenv`
 
 5. **Copy and configure the template**
    Copy the matching template from `templates/e2e/{framework}/` into the app repo.
