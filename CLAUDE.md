@@ -162,6 +162,18 @@ All hooks must be compatible with bash 3.2. Known pitfalls:
 
 ---
 
+---
+
+## Test-Case Rules (Memory)
+
+`.claude/memory/` holds binding rules for any task that creates, edits, runs, or
+uploads **manual or automated test cases**. Read `ai-usage-rules.md` at the
+start of every such task, then the manual or automated file as appropriate.
+These rules have the same authority as this file.
+
 @.claude/guides/integration-sources.md
 @.claude/guides/e2e-practices.md
 @.claude/guides/output-conventions.md
+@.claude/memory/ai-usage-rules.md
+@.claude/memory/manual-test-rules.md
+@.claude/memory/automated-test-rules.md
