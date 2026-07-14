@@ -3,7 +3,7 @@
 You are given a Jira ticket ID: **$ARGUMENTS**
 
 **If `$ARGUMENTS` is empty, blank, or not provided, stop immediately and tell the user:**
-> "A Jira ticket ID is required. Usage: `/fetch-ticket <TICKET-ID>` (e.g. `/fetch-ticket DGSSMART-12345`)"
+> "A Jira ticket ID is required. Usage: `/fetch-ticket <TICKET-ID>` (e.g. `/fetch-ticket ABCD-12345`)"
 **Do not proceed with any further steps.**
 
 ## Prerequisites
