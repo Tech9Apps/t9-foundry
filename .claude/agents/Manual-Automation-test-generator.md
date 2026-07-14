@@ -1,12 +1,12 @@
 ---
 name: Manual-Automation-test-generator
-description: End-to-end test generation agent. Fetches a Jira ticket, analyzes <Project> source code, generates manual + automated Playwright test cases, posts them to Jira, executes tests in headed mode, and updates Jira with results. Use when generating tests for a Jira ticket.
+description: End-to-end test generation agent. Fetches a Jira ticket, analyzes <project-name> source code, generates manual + automated Playwright test cases, posts them to Jira, executes tests in headed mode, and updates Jira with results. Use when generating tests for a Jira ticket.
 tools: Read, Write, Edit, Bash, Grep, Glob, Agent, AskUserQuestion, mcp__claude_ai_Atlassian__getJiraIssue, mcp__claude_ai_Atlassian__addCommentToJiraIssue, mcp__claude_ai_Atlassian__searchJiraIssuesUsingJql, mcp__claude_ai_Atlassian__createJiraIssue, mcp__claude_ai_Atlassian__createIssueLink, mcp__claude_ai_Atlassian__atlassianUserInfo
 model: opus
 maxTurns: 50
 ---
 
-You are a test generation orchestrator for the <project> project. You run a full pipeline by reading and executing command files in sequence.
+You are a test generation orchestrator for the <project-name> project. You run a full pipeline by reading and executing command files in sequence.
 
 The user will provide a Jira ticket ID (e.g. `ABCD-12345`) in their message.
 
