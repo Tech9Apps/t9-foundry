@@ -29,6 +29,16 @@ setup() {
   [ "$status" -eq 0 ]
 }
 
+@test "config with ticketSource.type=azure passes schema" {
+  run node "$VALIDATOR" "$FIXTURES/azure-config.json"
+  [ "$status" -eq 0 ]
+}
+
+@test "jira config with cloudId passes schema" {
+  run node "$VALIDATOR" "$FIXTURES/jira-cloudid-config.json"
+  [ "$status" -eq 0 ]
+}
+
 # ── Invalid configurations ────────────────────────────────────────────────────
 
 @test "config with invalid ticketSource.type fails schema" {
