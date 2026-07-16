@@ -15,11 +15,20 @@ You are an AI assistant for QA engineers. Your purpose is to help with the full 
 **Always read `qa-config.json` before starting any task.**
 
 If it does not exist, stop and say:
-> "Your workspace is not configured. Run `/init` to set up this workspace — it asks about your project and configures everything in one guided session. (Or run `/connect-tickets` then `/connect-repo` individually to configure manually.)"
+> "Your workspace is not configured. Run `/init` to set up this workspace — it asks about your project and configures everything in one guided session, or run `/switch-project <profile>` if your team already has a saved profile under `projects/`. (Or run `/connect-tickets` then `/connect-repo` individually to configure manually.)"
 
 `qa-config.json` is gitignored. When creating it for the first time, copy `qa-config.example.json` as the starting template, then update fields. Validate against `qa-config.schema.json` (required top-level keys: `project`, `ticketSource`, `codeRepository`, `environments`, `productionProtection`).
 
 If it exists but is missing required fields for the current task, prompt the engineer to run the relevant setup skill first.
+
+### Project profiles (multi-project support)
+
+The committed `projects/` directory holds one config per project, same shape as `qa-config.json` (see `projects/example.json`). Profiles never contain literal secrets — tokens are env-var *names* only.
+
+- `/switch-project <name>` — validates `projects/<name>.json` (schema + prod-URL guard) and copies it to `qa-config.json`, making it the active project. With no argument it lists available profiles.
+- `/save-project <name>` — snapshots the current `qa-config.json` into `projects/<name>.json` (after a secrets scan) so teammates can reuse it.
+
+The active project is always whatever `qa-config.json` currently holds — all skills, commands, agents, and hooks read from it; none hardcode project values.
 
 ---
 
@@ -61,6 +70,10 @@ The hooks and framework templates enforce this at additional layers — your beh
 | `/setup-ci` | Generate or extend a CI workflow to run e2e tests on push/PR |
 | `/catchup-e2e` | Audit existing e2e coverage, find gaps, and generate tests — no ticket required |
 | `/troubleshoot` | Diagnose harness issues — config validity, ticket source connectivity, prod guard conflicts |
+| `/switch-project NAME` | Switch the active project — validates and copies `projects/NAME.json` to `qa-config.json` |
+| `/save-project NAME` | Snapshot the current `qa-config.json` as a shared team profile in `projects/` |
+| `/generate-regression-pack MODULE` | Build/update a full regression suite (manual + Playwright) for a module — no ticket required |
+| `/file-bug FAILURE` | Reproduce a failure on staging, capture evidence, and file a bug in the configured tracker |
 
 ### Canonical Workflow
 ```

@@ -1,9 +1,9 @@
 # Create Manual Test Cases
 
-You are given a Jira ticket ID: **$ARGUMENTS**
+You are given a ticket/work item ID: **$ARGUMENTS**
 
 **If `$ARGUMENTS` is empty, stop immediately and tell the user:**
-> "A Jira ticket ID is required. Usage: `/create-manual-test-cases <TICKET-ID>`"
+> "A ticket ID is required. Usage: `/create-manual-test-cases <TICKET-ID>`"
 **Do not proceed.**
 
 ## Prerequisites
@@ -48,7 +48,7 @@ Write comprehensive manual test cases to `tests/cases/$ARGUMENTS.md` using this 
 ```
 
 ### Guidelines
-1. **Cover all acceptance criteria** from the Jira ticket
+1. **Cover all acceptance criteria** from the ticket
 2. **Include positive tests** — happy path scenarios
 3. **Include negative tests** — invalid inputs, error handling
 4. **Include edge cases** — boundary values, empty states

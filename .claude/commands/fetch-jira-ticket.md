@@ -10,12 +10,12 @@ You are given a Jira ticket ID: **$ARGUMENTS**
 
 Jira access is provided via the **Atlassian MCP server** (no credentials needed in `.env`).
 
-- **Cloud ID**: `technine.atlassian.net`
+- **Cloud ID**: read from `qa-config.json > ticketSource.jira.cloudId`. If `qa-config.json` is missing or the field is unset, stop and tell the user to run `/init` or `/switch-project <profile>` first.
 
 ## Fetch Issue Details
 
 Use the `mcp__claude_ai_Atlassian__getJiraIssue` tool:
-- `cloudId`: `technine.atlassian.net`
+- `cloudId`: `<cloudId from qa-config.json>`
 - `issueIdOrKey`: `$ARGUMENTS`
 - `expand`: `renderedFields`
 - `responseContentFormat`: `markdown`

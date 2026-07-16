@@ -31,6 +31,30 @@ Step-by-step setup for each supported ticket source and code repository.
 
 ---
 
+### Azure DevOps
+
+**Prerequisites:** Azure DevOps account with access to the organization and project; a Personal Access Token (PAT) with Work Items read/write scope.
+
+1. Create a PAT: Azure DevOps → User settings → Personal access tokens → New Token (scope: Work Items, Read & write)
+2. Add to your shell profile: `export AZURE_DEVOPS_PAT=xxxxxxxx`
+3. Restart your terminal
+4. Find your organization and project names: they're in your Azure DevOps URL — `https://dev.azure.com/{organization}/{project}`
+5. Run `/switch-project <profile>` if a teammate already saved a profile for the project, or set the values via `/reconfigure` / `/init`
+
+**What gets configured in qa-config.json:**
+```json
+{
+  "ticketSource": {
+    "type": "azure",
+    "azure": { "organization": "my-org", "project": "my-project", "tokenEnvVar": "AZURE_DEVOPS_PAT", "host": "https://dev.azure.com" }
+  }
+}
+```
+
+**Test case upload:** Creates "Test Case" work items (steps in `Microsoft.VSTS.TCM.Steps`) linked to the parent work item via a Tested By relation.
+
+---
+
 ### ClickUp
 
 **Prerequisites:** ClickUp account; API token; List ID where test cases will be created.

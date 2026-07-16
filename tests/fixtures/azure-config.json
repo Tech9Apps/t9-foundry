@@ -1,0 +1,10 @@
+{
+  "project": { "name": "Azure Project" },
+  "ticketSource": {
+    "type": "azure",
+    "azure": { "organization": "my-org", "project": "my-project", "tokenEnvVar": "AZURE_DEVOPS_PAT", "host": "https://dev.azure.com" }
+  },
+  "codeRepository": { "type": "local", "localPath": "../my-app" },
+  "environments": { "testEnvironmentBaseUrl": "https://staging.app.internal" },
+  "productionProtection": { "prodUrlPatterns": ["://app\\.internal/"], "blockOnSuspiciousUrls": false }
+}

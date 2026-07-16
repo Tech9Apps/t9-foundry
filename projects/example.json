@@ -1,0 +1,99 @@
+{
+  "$schema": "../qa-config.schema.json",
+  "project": {
+    "name": "My Application",
+    "description": "Short description of the application being tested"
+  },
+  "ticketSource": {
+    "type": "jira",
+    "_typeOptions": "jira | azure | clickup | github | gitlab | bitbucket | none",
+    "jira": {
+      "cloudId": "mycompany.atlassian.net",
+      "projectKey": "MYAPP",
+      "testIssueType": "Test",
+      "linkType": "is tested by"
+    },
+    "azure": {
+      "organization": "",
+      "project": "",
+      "tokenEnvVar": "AZURE_DEVOPS_PAT",
+      "host": "https://dev.azure.com"
+    },
+    "clickup": {
+      "workspaceId": "",
+      "listId": "",
+      "tokenEnvVar": "CLICKUP_TOKEN"
+    },
+    "github": {
+      "repo": "owner/repo-name",
+      "testLabelName": "test-case"
+    },
+    "gitlab": {
+      "projectId": "",
+      "tokenEnvVar": "GITLAB_TOKEN",
+      "host": "https://gitlab.com"
+    },
+    "bitbucket": {
+      "workspace": "",
+      "repo": "",
+      "tokenEnvVar": "BITBUCKET_TOKEN"
+    }
+  },
+  "codeRepository": {
+    "type": "github",
+    "localPath": "../my-app",
+    "sourceDirs": {
+      "frontendRoutes": "src/routes",
+      "components": "src/components",
+      "services": "src/services",
+      "backendHandlers": "server/handlers",
+      "constants": "src/constants"
+    },
+    "github": {
+      "repo": "owner/repo-name"
+    },
+    "gitlab": {
+      "projectId": "",
+      "host": "https://gitlab.com",
+      "tokenEnvVar": "GITLAB_TOKEN"
+    },
+    "bitbucket": {
+      "workspace": "",
+      "repo": "",
+      "tokenEnvVar": "BITBUCKET_TOKEN"
+    }
+  },
+  "environments": {
+    "testEnvironmentBaseUrl": "https://staging.myapp.com",
+    "testEnvironmentName": "staging",
+    "approvedEnvironments": ["staging", "dev", "qa", "test", "localhost"]
+  },
+  "productionProtection": {
+    "prodUrlPatterns": [
+      "myapp\\.com$",
+      "app\\.myapp\\.com",
+      "production\\.myapp\\.com",
+      "prod-api\\.myapp\\.com"
+    ],
+    "prodEnvVarValues": ["production", "prod"],
+    "blockOnSuspiciousUrls": true
+  },
+  "testFramework": {
+    "type": "playwright",
+    "configPath": "../my-app/playwright.config.ts",
+    "testDir": "../my-app/e2e"
+  },
+  "dataManagement": {
+    "strategy": "factory",
+    "cleanupAfterEach": true,
+    "cleanupOnSessionEnd": true,
+    "dataFactoryPath": "../my-app/e2e/support/data-factory.ts"
+  },
+  "testOutput": {
+    "testPlansDir": "./test-plans",
+    "testCasesDir": "./test-cases",
+    "analysisDir": "./analysis",
+    "ticketContextDir": "tests/cases/.ticket-context",
+    "e2eTestsPath": "../my-app/e2e/tests"
+  }
+}

@@ -10,7 +10,8 @@ This is an orchestrator command that runs the full test generation pipeline usin
 
 ## Prerequisites
 
-- Jira access via the **Atlassian MCP server** (Cloud ID: `technine.atlassian.net`)
+- Read `qa-config.json` first — it provides the Jira Cloud ID (`ticketSource.jira.cloudId`), the app source location (`codeRepository.localPath`), and source-dir hints (`codeRepository.sourceDirs`). If `qa-config.json` is missing, stop and tell the user to run `/init` or `/switch-project <profile>` first.
+- Jira access via the **Atlassian MCP server** (Cloud ID from config)
 
 ## Step 1: Fetch Ticket + Analyze Code (parallel)
 
@@ -18,13 +19,13 @@ Launch **two agents in parallel**:
 
 **Agent 1 — Fetch Ticket:**
 - Fetch the Jira ticket `$ARGUMENTS` using the Atlassian MCP tools:
-  - Use `mcp__claude_ai_Atlassian__getJiraIssue` with `cloudId: "technine.atlassian.net"`, `issueIdOrKey: "$ARGUMENTS"`, `expand: "renderedFields"`, `responseContentFormat: "markdown"`
+  - Use `mcp__claude_ai_Atlassian__getJiraIssue` with `cloudId: <ticketSource.jira.cloudId from qa-config.json>`, `issueIdOrKey: "$ARGUMENTS"`, `expand: "renderedFields"`, `responseContentFormat: "markdown"`
 - Extract: summary, description (markdown), issue type, status, priority, labels, acceptance criteria, attachments, comments, subtasks
 - Save extracted context to `tests/cases/.ticket-context/$ARGUMENTS.json`
 
 **Agent 2 — Analyze Code:**
-- Wait for Agent 1 to complete (needs ticket context), OR if you can determine the feature area from the ticket ID alone, start exploring the <Project> source code at `/Users/<user_name>/workspace/<Project>`
-- Search: frontend routes (`ui/src/routes/_protected/`), components (`ui/src/components/`), services (`ui/src/common/store/services/`), backend handlers (`services/functions/modules/`), constants (`ui/src/common/constants/`)
+- Wait for Agent 1 to complete (needs ticket context), OR if you can determine the feature area from the ticket ID alone, start exploring the app source code at `qa-config.json > codeRepository.localPath`
+- Search the locations from `codeRepository.sourceDirs` (frontend routes, components, services, backend handlers, constants); if `sourceDirs` is unset, discover the repo structure first
 - Identify: UI elements, selectors, validations, API endpoints, RBAC rules
 - Save analysis to `tests/cases/.ticket-context/$ARGUMENTS-analysis.md`
 
@@ -51,7 +52,7 @@ Using the ticket context and code analysis, generate:
 **Before executing tests**, post both manual and automated test cases to Jira:
 
 Use the `mcp__claude_ai_Atlassian__addCommentToJiraIssue` tool:
-- `cloudId`: `technine.atlassian.net`
+- `cloudId`: `<ticketSource.jira.cloudId from qa-config.json>`
 - `issueIdOrKey`: `$ARGUMENTS`
 - `contentFormat`: `markdown`
 - `commentBody`: markdown content with two sections:
@@ -80,7 +81,7 @@ Capture: total run, passed, failed, skipped, execution time, failure details.
 Post a **new follow-up comment** with execution results:
 
 Use the `mcp__claude_ai_Atlassian__addCommentToJiraIssue` tool:
-- `cloudId`: `technine.atlassian.net`
+- `cloudId`: `<ticketSource.jira.cloudId from qa-config.json>`
 - `issueIdOrKey`: `$ARGUMENTS`
 - `contentFormat`: `markdown`
 - `commentBody`: markdown content with:
