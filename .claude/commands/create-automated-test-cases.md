@@ -9,7 +9,7 @@ You are given a ticket/work item ID: **$ARGUMENTS**
 ## Prerequisites
 
 The following files must exist:
-- `tests/cases/.ticket-context/$ARGUMENTS.json` — ticket context (run the fetch command for your ticket source first)
+- `tests/cases/.ticket-context/$ARGUMENTS.json` — ticket context (run `/fetch-ticket` first)
 - `tests/cases/.ticket-context/$ARGUMENTS-analysis.md` — code analysis (run `/analyze-code` first)
 - `tests/cases/$ARGUMENTS.md` — manual test cases (run `/create-manual-test-cases` first); automated tests are derived from these
 

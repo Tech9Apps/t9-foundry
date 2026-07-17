@@ -28,7 +28,7 @@ Each step of the pipeline is defined in a command file under `.claude/commands/`
 Execute these steps **in order**:
 
 ### Step 1: Fetch Ticket
-Read and execute: `.claude/commands/fetch-jira-ticket.md`
+Read and execute: `.claude/commands/fetch-ticket.md`
 On completion, add this checkpoint to the final return message: `**✅ Jira ticket fetched successfully**`
 
 ### Step 2: Analyze Code
@@ -46,7 +46,7 @@ Read and execute: `.claude/commands/create-automated-test-cases.md`
 On completion, add this checkpoint to the final return message: `**✅ Automated test cases generated successfully**`
 
 ### Step 5: Post Tests to Jira
-Read and execute: `.claude/commands/post-tests-to-jira.md`
+Read and execute: `.claude/commands/post-tests.md`
 **Important:** This step includes a human review gate. Present the test cases table to the user and wait for their approval before creating any Jira issues. The user may ask to remove, update, or add test cases — handle all feedback before proceeding.
 **Review-gate return format:** If you pause and return to ask for approval, that return message MUST begin with all checkpoint lines accumulated so far (Steps 1–4, verbatim, in order), followed by the test cases summary table, then the approval request.
 On completion, add this checkpoint to the final return message: `**✅ Test cases added in Jira successfully**`

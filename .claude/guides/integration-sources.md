@@ -1,6 +1,6 @@
 # Integration Source Reference
 
-> **Maintenance note:** When adding a new ticket source or changing an API method, also update `docs/integration-guide.md` — it contains the corresponding end-user setup instructions for the same sources.
+> **Maintenance note:** When adding a new ticket source or changing an API method, also update `docs/integration-guide.md` — it contains the corresponding end-user setup instructions for the same sources. If the source is one the commands+agents pipeline covers (Jira, Azure, ClickUp, GitHub, none), also add the matching branch to `.claude/commands/fetch-ticket.md` and `.claude/commands/post-tests.md`.
 
 ## Fetching Tickets
 
