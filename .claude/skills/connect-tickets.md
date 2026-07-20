@@ -16,6 +16,7 @@ Trigger phrases: "connect to Jira", "connect to ClickUp", "connect GitHub Issues
 2. **Ask which ticket source**
    Present these options:
    - Jira (Atlassian)
+   - Azure DevOps
    - ClickUp
    - GitHub Issues
    - GitLab Issues
@@ -31,6 +32,14 @@ Trigger phrases: "connect to Jira", "connect to ClickUp", "connect GitHub Issues
    - Call `mcp__claude_ai_Atlassian__getVisibleJiraProjects` to confirm the project key exists
    - Call `mcp__claude_ai_Atlassian__getJiraProjectIssueTypesMetadata` with the project key to detect available issue types (look for "Test"; note if only "Task" is available)
    - Write to `qa-config.json`: `ticketSource.type = "jira"`, `ticketSource.jira.projectKey`, `ticketSource.jira.testIssueType` (set to "Test" or "Task" based on what's available)
+
+   ### Azure DevOps
+   - Ask for the token env var name to use (default `AZURE_DEVOPS_PAT`); check if it's set: `bash -c 'echo ${!VARNAME}'`
+   - If empty: "Create a Personal Access Token: Azure DevOps → User settings → Personal access tokens → New Token (scope: Work Items, Read & write). Set it with `export AZURE_DEVOPS_PAT=your_token_here` — add this to your shell profile, then restart your terminal and re-run /connect-tickets"
+   - Ask for the organization name and project name (both found in the Azure DevOps URL: `https://dev.azure.com/{organization}/{project}`)
+   - Ask for the host (default `https://dev.azure.com`; only differs for on-prem Azure DevOps Server installs)
+   - Test connectivity: `curl -s -u ":$AZURE_DEVOPS_PAT" "{host}/{organization}/_apis/projects/{project}?api-version=7.1"`
+   - Write to `qa-config.json`: `ticketSource.type = "azure"`, `ticketSource.azure.organization`, `ticketSource.azure.project`, `ticketSource.azure.tokenEnvVar`, `ticketSource.azure.host`
 
    ### ClickUp
    - Check if `$CLICKUP_TOKEN` is set: `bash -c 'echo $CLICKUP_TOKEN'`

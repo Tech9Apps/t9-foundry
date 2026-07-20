@@ -17,13 +17,23 @@
       "type": "object",
       "required": ["type"],
       "properties": {
-        "type": { "type": "string", "enum": ["jira", "clickup", "github", "gitlab", "bitbucket", "none"] },
+        "type": { "type": "string", "enum": ["jira", "azure", "clickup", "github", "gitlab", "bitbucket", "none"] },
         "jira": {
           "type": "object",
           "properties": {
+            "cloudId": { "type": "string", "description": "Atlassian Cloud ID or site hostname, e.g. mycompany.atlassian.net" },
             "projectKey": { "type": "string" },
             "testIssueType": { "type": "string", "default": "Test" },
             "linkType": { "type": "string", "default": "is tested by" }
+          }
+        },
+        "azure": {
+          "type": "object",
+          "properties": {
+            "organization": { "type": "string" },
+            "project": { "type": "string" },
+            "tokenEnvVar": { "type": "string", "default": "AZURE_DEVOPS_PAT" },
+            "host": { "type": "string", "default": "https://dev.azure.com" }
           }
         },
         "clickup": {
@@ -65,6 +75,18 @@
       "properties": {
         "type": { "type": "string", "enum": ["github", "gitlab", "bitbucket", "local"] },
         "localPath": { "type": "string", "description": "Relative or absolute path to local repo clone" },
+        "sourceDirs": {
+          "type": "object",
+          "description": "Optional per-project hints for where key source areas live, relative to localPath. Commands fall back to discovering the structure when unset.",
+          "properties": {
+            "frontendRoutes": { "type": "string" },
+            "components": { "type": "string" },
+            "services": { "type": "string" },
+            "backendHandlers": { "type": "string" },
+            "constants": { "type": "string" }
+          },
+          "additionalProperties": { "type": "string" }
+        },
         "github": {
           "type": "object",
           "properties": {
@@ -152,6 +174,7 @@
         "testPlansDir": { "type": "string", "default": "./test-plans" },
         "testCasesDir": { "type": "string", "default": "./test-cases" },
         "analysisDir": { "type": "string", "default": "./analysis" },
+        "ticketContextDir": { "type": "string", "default": "tests/cases/.ticket-context" },
         "e2eTestsPath": { "type": "string" }
       }
     }

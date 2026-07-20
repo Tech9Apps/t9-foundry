@@ -1,0 +1,10 @@
+{
+  "project": { "name": "Jira CloudId Project" },
+  "ticketSource": {
+    "type": "jira",
+    "jira": { "cloudId": "mycompany.atlassian.net", "projectKey": "MYAPP", "testIssueType": "Test" }
+  },
+  "codeRepository": { "type": "github", "github": { "repo": "owner/repo" } },
+  "environments": { "testEnvironmentBaseUrl": "https://staging.app.internal" },
+  "productionProtection": { "prodUrlPatterns": ["://app\\.internal/"], "blockOnSuspiciousUrls": false }
+}

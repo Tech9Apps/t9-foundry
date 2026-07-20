@@ -15,11 +15,20 @@ You are an AI assistant for QA engineers. Your purpose is to help with the full 
 **Always read `qa-config.json` before starting any task.**
 
 If it does not exist, stop and say:
-> "Your workspace is not configured. Run `/init` to set up this workspace — it asks about your project and configures everything in one guided session. (Or run `/connect-tickets` then `/connect-repo` individually to configure manually.)"
+> "Your workspace is not configured. Run `/init` to set up this workspace — it asks about your project and configures everything in one guided session, or run `/switch-project <profile>` if your team already has a saved profile under `projects/`. (Or run `/connect-tickets` then `/connect-repo` individually to configure manually.)"
 
 `qa-config.json` is gitignored. When creating it for the first time, copy `qa-config.example.json` as the starting template, then update fields. Validate against `qa-config.schema.json` (required top-level keys: `project`, `ticketSource`, `codeRepository`, `environments`, `productionProtection`).
 
 If it exists but is missing required fields for the current task, prompt the engineer to run the relevant setup skill first.
+
+### Project profiles (multi-project support)
+
+The committed `projects/` directory holds one config per project, same shape as `qa-config.json` (see `projects/example.json`). Profiles never contain literal secrets — tokens are env-var *names* only.
+
+- `/switch-project <name>` — validates `projects/<name>.json` (schema + prod-URL guard) and copies it to `qa-config.json`, making it the active project. With no argument it lists available profiles.
+- `/save-project <name>` — snapshots the current `qa-config.json` into `projects/<name>.json` (after a secrets scan) so teammates can reuse it.
+
+The active project is always whatever `qa-config.json` currently holds — all skills, commands, agents, and hooks read from it; none hardcode project values.
 
 ---
 
@@ -61,6 +70,10 @@ The hooks and framework templates enforce this at additional layers — your beh
 | `/setup-ci` | Generate or extend a CI workflow to run e2e tests on push/PR |
 | `/catchup-e2e` | Audit existing e2e coverage, find gaps, and generate tests — no ticket required |
 | `/troubleshoot` | Diagnose harness issues — config validity, ticket source connectivity, prod guard conflicts |
+| `/switch-project NAME` | Switch the active project — validates and copies `projects/NAME.json` to `qa-config.json` |
+| `/save-project NAME` | Snapshot the current `qa-config.json` as a shared team profile in `projects/` |
+| `/generate-regression-pack MODULE` | Build/update a full regression suite (manual + Playwright) for a module — no ticket required |
+| `/file-bug FAILURE` | Reproduce a failure on staging, capture evidence, and file a bug in the configured tracker |
 
 ### Canonical Workflow
 ```
@@ -121,6 +134,10 @@ The harness has no runtime of its own — it is a set of instructions and script
 
 To add a skill: create `.claude/skills/{name}.md` with a `## When to invoke` section listing trigger phrases and a `## Steps` section with numbered instructions. The trigger phrases are matched by Claude behaviorally — there is no registration step. When one skill needs to run another's logic, it reads and inlines the target file's steps directly.
 
+**`.claude/commands/*.md` + `.claude/agents/*.md`** — the ticket-driven fast path for Jira/Azure DevOps/ClickUp/GitHub Issues/no-ticket-system. Commands are formally-registered slash commands (visible via the `Skill` tool), each covering one pipeline step (`fetch-ticket`, `analyze-code`, `create-manual-test-cases`, `create-automated-test-cases`, `post-tests`, `run-spec-tests`). Subagents (`Manual-test-generator`, `Manual-Automation-test-generator`, `Bug-reporter`, `Regression-pack-generator`) compose these steps into a pipeline: each step is "read the command file, execute its instructions, carry a checkpoint forward." This path runs fetch-ticket and analyze-code as parallel agents and isolates heavy read work in subagent context, so it is the faster option for the sources it covers. Per-ticket-source branching lives *inside* `fetch-ticket.md`/`post-tests.md` (one file, branch on `ticketSource.type`) — do not reintroduce per-source files (`fetch-jira-ticket.md` etc.); that pattern was consolidated on 2026-07-17 because it triplicated ~90% identical boilerplate across sources.
+
+This path is intentionally narrower than `.claude/skills/*.md`, which remains authoritative for: initial workspace setup/scaffolding (`/init`, `/connect-tickets`, `/connect-repo`, `/setup-e2e-framework`, `/setup-ci`), the structured test-plan artifact stage (`/create-test-plan`), multi-format test-case output (Gherkin/Robot Framework/ClickUp-checklist via `/write-test-cases`), multi-framework e2e authoring/execution (Cypress/pytest/RSpec/Jest/WebDriverIO via `/write-e2e-tests`/`/run-tests`), and GitLab/Bitbucket ticket + code access. Adding a ticket source to the commands path means updating both `.claude/guides/integration-sources.md` and the branches in `fetch-ticket.md`/`post-tests.md`.
+
 **`.claude/guides/*.md`** — Reference content imported into `CLAUDE.md` at runtime via `@filename` syntax (e.g., `@.claude/guides/integration-sources.md`). Guides cover: ticket source APIs, e2e authoring standards, and output path conventions.
 
 **`hooks/`** — Three bash scripts wired to Claude tool-use events in `.claude/settings.json`:
@@ -162,6 +179,18 @@ All hooks must be compatible with bash 3.2. Known pitfalls:
 
 ---
 
+---
+
+## Test-Case Rules (Memory)
+
+`.claude/memory/` holds binding rules for any task that creates, edits, runs, or
+uploads **manual or automated test cases**. Read `ai-usage-rules.md` at the
+start of every such task, then the manual or automated file as appropriate.
+These rules have the same authority as this file.
+
 @.claude/guides/integration-sources.md
 @.claude/guides/e2e-practices.md
 @.claude/guides/output-conventions.md
+@.claude/memory/ai-usage-rules.md
+@.claude/memory/manual-test-rules.md
+@.claude/memory/automated-test-rules.md

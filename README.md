@@ -37,6 +37,7 @@ Depending on what ticket tracker your team uses, you'll need one of these before
 | Ticket source | What you need | How to get it |
 |--------------|---------------|---------------|
 | **Jira** | Atlassian MCP connected | Sign in at claude.ai → Integrations → Atlassian |
+| **Azure DevOps** | `AZURE_DEVOPS_PAT` in your shell | Azure DevOps → User settings → Personal access tokens (scope: Work Items, Read & write) |
 | **ClickUp** | `CLICKUP_TOKEN` in your shell | ClickUp → Profile → Apps → API Token |
 | **GitHub Issues** | `gh` CLI authenticated | `brew install gh && gh auth login` |
 | **GitLab Issues** | `GITLAB_TOKEN` in your shell | GitLab → Preferences → Access Tokens (scope: `api`) |
@@ -85,7 +86,7 @@ This opens an AI session with all the QA skills pre-loaded. You'll see a welcome
 
 The setup wizard asks **7 questions, one at a time**:
 
-1. **Ticket system** — Jira, ClickUp, GitHub Issues, GitLab, Bitbucket, or none
+1. **Ticket system** — Jira, Azure DevOps, ClickUp, GitHub Issues, GitLab, Bitbucket, or none
 2. **App repo location** — local path to your app clone, remote repo identifier, or both
 3. **Application type** — web SPA, REST API, full-stack monolith, microservices, GraphQL
 4. **Tech stack** — describe what you know (e.g., "React + Node.js" or "Python/FastAPI")
@@ -101,6 +102,8 @@ After the 7 questions, `/init`:
 - Validates the config and confirms the setup is complete
 
 `qa-config.json` is gitignored — it stays on your machine only.
+
+**Already have a teammate's config?** Skip the wizard — run `/switch-project <name>` to load a saved profile from `projects/` instead (validated against the schema and the prod-URL guard before it becomes active). Use `/save-project <name>` to share your own setup with the team once it's dialed in.
 
 ### Step 4 — (Optional) Scaffold your e2e framework
 
@@ -143,6 +146,12 @@ Generates runnable e2e test files in your app repo, using the test cases as the 
 ```
 Executes the test suite against your staging environment and reports a pass/fail summary.
 
+**Faster path for Jira, Azure DevOps, ClickUp, or GitHub Issues tickets:**
+```
+/generate-tests JIRA-123
+```
+Runs fetch → analyze → generate manual + automated test cases → review gate → upload → execute → report results as one pipeline, with the ticket fetch and code analysis running in parallel. Same production guards and human-review-before-upload gate as the step-by-step flow above — just fewer commands to type. Falls back to the step-by-step commands above for GitLab/Bitbucket tickets or when you want manual review between each stage.
+
 ---
 
 ## Skills Reference
@@ -163,6 +172,10 @@ Executes the test suite against your staging environment and reports a pass/fail
 | `/connect-tickets` | Reconfigure ticket source only |
 | `/connect-repo` | Reconfigure code repository only |
 | `/troubleshoot` | Diagnose harness issues — config, connectivity, prod guard conflicts |
+| `/switch-project NAME` | Switch the active project to a saved profile under `projects/` |
+| `/save-project NAME` | Snapshot the current config as a shared team profile |
+| `/generate-regression-pack MODULE` | Build/update a full regression suite for a module — no ticket required |
+| `/file-bug FAILURE` | Reproduce a failure on staging and file a bug in the configured tracker |
 
 **Canonical workflow:**
 ```
@@ -170,6 +183,8 @@ Executes the test suite against your staging environment and reports a pass/fail
 /init → /analyze-codebase → /setup-e2e-framework → /write-e2e-tests → /setup-ci → /run-tests
 /init → /catchup-e2e → /setup-ci → /run-tests   ← for existing projects without tickets
 ```
+
+**Fast path (Jira / Azure DevOps / ClickUp / GitHub Issues, ticket-driven):** `/generate-tests TICKET-ID` runs the same fetch → analyze → generate → upload → execute pipeline as one command, via subagents that fetch the ticket and analyze code in parallel. Built from smaller pieces in `.claude/commands/` (`fetch-ticket`, `analyze-code`, `create-manual-test-cases`, `create-automated-test-cases`, `post-tests`, `run-spec-tests`) composed by agents in `.claude/agents/`. Use this when you want speed on a supported source; use the step-by-step skills above for GitLab/Bitbucket, other e2e frameworks, or when you want to review between stages.
 
 ---
 
@@ -194,6 +209,7 @@ Any single layer independently blocks production execution. See [`docs/prod-safe
 | "Your workspace is not configured" | `qa-config.json` is missing | Run `/init` |
 | Hook blocks your staging URL | Staging URL accidentally matches a prod pattern | Run `/troubleshoot` to identify the conflicting pattern; use `/reconfigure` to fix it |
 | Jira fetch fails with an MCP error | Atlassian MCP not connected | claude.ai → Integrations → Atlassian → reconnect |
+| Azure DevOps returns 401/403 | `AZURE_DEVOPS_PAT` not set, expired, or missing Work Items scope | Regenerate the PAT with Work Items Read & write, `export AZURE_DEVOPS_PAT=...`, restart your terminal |
 | ClickUp returns 401 | `CLICKUP_TOKEN` not set or expired | `export CLICKUP_TOKEN=...` then restart your terminal |
 | GitLab / Bitbucket returns 403 | Token missing or lacks required scope | Check the token permissions — GitLab needs `api` scope, Bitbucket needs `issues:read` + `issues:write` |
 | e2e tests abort with "PRODUCTION ENVIRONMENT DETECTED" | `BASE_URL` or `testEnvironmentBaseUrl` points to production | Check `qa-config.json > environments.testEnvironmentBaseUrl` |
@@ -217,7 +233,7 @@ Key fields:
 | Field | What to set |
 |-------|-------------|
 | `project.name` | Your project name |
-| `ticketSource.type` | `jira`, `clickup`, `github`, `gitlab`, `bitbucket`, or `none` |
+| `ticketSource.type` | `jira`, `azure`, `clickup`, `github`, `gitlab`, `bitbucket`, or `none` |
 | `codeRepository.localPath` | Path to your local app repo clone |
 | `environments.testEnvironmentBaseUrl` | Your **staging** URL — never production |
 | `productionProtection.prodUrlPatterns` | Regex patterns matching your production URLs |
@@ -239,7 +255,11 @@ See [`docs/integration-guide.md`](docs/integration-guide.md) for per-source setu
 ├── qa-config.schema.json       # Config validation schema
 ├── .claude/
 │   ├── settings.json           # Hook wiring and permissions
-│   └── skills/                 # Slash command definitions
+│   ├── skills/                 # Step-by-step slash command definitions
+│   ├── commands/                # Ticket-driven fast-path pipeline steps (ticket-source-agnostic)
+│   ├── agents/                  # Subagents that compose commands/ into pipelines
+│   ├── guides/                  # Reference docs imported into CLAUDE.md
+│   └── memory/                  # Binding AI-usage rules for test-case work
 ├── hooks/                      # Production safety shell scripts
 │   ├── session-init.sh         # Runs on session start
 │   ├── prod-guard.sh           # Runs before every shell command
@@ -248,6 +268,7 @@ See [`docs/integration-guide.md`](docs/integration-guide.md) for per-source setu
 │   └── e2e/                    # Playwright, Cypress, pytest, RSpec scaffolds
 ├── scripts/
 │   └── check-prereqs.sh        # Verify your environment
+├── projects/                    # Saved team config profiles (/switch-project, /save-project)
 └── docs/
     ├── integration-guide.md    # Per-source setup instructions
     ├── prod-safety.md          # Production safety layer details
@@ -260,9 +281,9 @@ See [`docs/integration-guide.md`](docs/integration-guide.md) for per-source setu
 
 | Category | Supported |
 |----------|-----------|
-| Ticket sources | Jira, ClickUp, GitHub Issues, GitLab Issues, Bitbucket |
+| Ticket sources | Jira, Azure DevOps, ClickUp, GitHub Issues, GitLab Issues, Bitbucket |
 | Code repositories | GitHub, GitLab, Bitbucket, local filesystem |
-| Test case upload | Jira, ClickUp, GitHub Issues |
+| Test case upload | Jira, Azure DevOps, ClickUp, GitHub Issues |
 | E2e frameworks | Playwright, Cypress, pytest, RSpec, WebDriverIO |
 | App tech stacks | Node.js, Python, Ruby, Java, Go — framework agnostic |
 

@@ -22,6 +22,7 @@ Format each question header as **Question N of 7 — \<topic\>**. List every opt
 What ticket system does your team use for this project?
 
 - **Jira** — requires Atlassian MCP connected (claude.ai → Integrations → Atlassian)
+- **Azure DevOps** — requires a Personal Access Token (Work Items, Read & write) set in your shell profile
 - **ClickUp** — requires `CLICKUP_TOKEN` set in your shell profile
 - **GitHub Issues** — requires GitHub CLI installed and authenticated (`gh auth login`)
 - **GitLab Issues** — requires `GITLAB_TOKEN` set in your shell profile
@@ -248,6 +249,7 @@ Frame: "Now I'll configure your ticket source."
 Execute the `connect-tickets.md` configuration logic directly — the ticket system is already known from Phase 1, so skip the source-selection question and go straight to source-specific steps:
 
 - **Jira:** verify Atlassian MCP with `mcp__claude_ai_Atlassian__atlassianUserInfo`, ask for project key, confirm it via `getVisibleJiraProjects`, detect issue types, write config
+- **Azure DevOps:** check the PAT env var (default `AZURE_DEVOPS_PAT`), ask for organization and project, test connectivity, write config
 - **ClickUp:** check `$CLICKUP_TOKEN`, ask for Workspace ID and List ID, test connectivity, write config
 - **GitHub Issues:** run `gh auth status`, ask for `owner/repo`, test with `gh repo view`, ask for label name (default: `test-case`), write config
 - **GitLab Issues:** check `$GITLAB_TOKEN`, ask for project ID and host, test with curl, write config

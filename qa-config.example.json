@@ -6,11 +6,18 @@
   },
   "ticketSource": {
     "type": "jira",
-    "_typeOptions": "jira | clickup | github | gitlab | bitbucket | none",
+    "_typeOptions": "jira | azure | clickup | github | gitlab | bitbucket | none",
     "jira": {
+      "cloudId": "mycompany.atlassian.net",
       "projectKey": "MYAPP",
       "testIssueType": "Test",
       "linkType": "is tested by"
+    },
+    "azure": {
+      "organization": "",
+      "project": "",
+      "tokenEnvVar": "AZURE_DEVOPS_PAT",
+      "host": "https://dev.azure.com"
     },
     "clickup": {
       "workspaceId": "",
@@ -35,6 +42,13 @@
   "codeRepository": {
     "type": "github",
     "localPath": "../my-app",
+    "sourceDirs": {
+      "frontendRoutes": "src/routes",
+      "components": "src/components",
+      "services": "src/services",
+      "backendHandlers": "server/handlers",
+      "constants": "src/constants"
+    },
     "github": {
       "repo": "owner/repo-name"
     },
@@ -79,6 +93,7 @@
     "testPlansDir": "./test-plans",
     "testCasesDir": "./test-cases",
     "analysisDir": "./analysis",
+    "ticketContextDir": "tests/cases/.ticket-context",
     "e2eTestsPath": "../my-app/e2e/tests"
   }
 }
