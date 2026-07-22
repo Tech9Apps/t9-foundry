@@ -39,4 +39,6 @@ bats \
   tests/prod-guard.bats \
   tests/env-detector.bats \
   tests/session-init.bats \
-  tests/schema-validation.bats
+  tests/schema-validation.bats \
+  tests/wording-lint.bats \
+  tests/check-prereqs.bats

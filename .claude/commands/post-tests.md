@@ -66,6 +66,10 @@ After any remove/update/add action, re-display the updated table and ask for app
 
 ## Post, by ticket source
 
+**Every `curl` call below uses `-f` (fail on HTTP error status) and `--max-time 30` (bound the wait) — check the exit code after each one.** A non-zero exit means that call failed: do not add that test case to the "Save Created Test Keys" file as if it succeeded, and do not treat a failed create as eligible for linking. `gh` commands (GitHub branch) exit non-zero on failure the same way — check them too.
+
+**Idempotency check — before creating anything:** if `tests/cases/.ticket-context/$ARGUMENTS-test-keys.json` already exists from a prior run, read it first. For each TC-XXX already present with a remote ID recorded, skip re-creating it — show the user which TC-XXX already exist remotely and ask whether to skip them (default) or force-recreate. Only create/link test cases that are new or that the user explicitly asked to recreate. This avoids duplicate issues/tasks/work items when a prior run partially failed and is being re-run.
+
 ### jira
 
 Fetch the parent story/bug via `mcp__claude_ai_Atlassian__getJiraIssue`:
@@ -95,9 +99,9 @@ For **each** created Test issue, link it to the parent via `mcp__claude_ai_Atlas
 
 **Create links in parallel.** This populates the **Test Coverage** panel on the parent story/bug.
 
-Save keys to `tests/cases/.ticket-context/$ARGUMENTS-test-keys.json`:
+Save keys to `tests/cases/.ticket-context/$ARGUMENTS-test-keys.json`. Only include a test case here if its issue was actually created — a failed create has no `jiraKey` and isn't added. Record `linked: false` (not `true`) for a test case whose issue was created but whose link call failed, so a re-run can retry just the link instead of recreating the issue:
 ```json
-{ "parentTicket": "$ARGUMENTS", "tests": [{ "tcId": "TC-001", "jiraKey": "<PROJECT-KEY>-XXXXX", "summary": "..." }] }
+{ "parentTicket": "$ARGUMENTS", "tests": [{ "tcId": "TC-001", "jiraKey": "<PROJECT-KEY>-XXXXX", "summary": "...", "linked": true }] }
 ```
 
 ### azure
@@ -106,21 +110,21 @@ Read `ticketSource.azure` (organization, project, `tokenEnvVar` default `AZURE_D
 
 Fetch parent work item fields:
 ```bash
-curl -s -u ":$AZURE_DEVOPS_PAT" \
+curl -fsS --max-time 30 -u ":$AZURE_DEVOPS_PAT" \
   "https://dev.azure.com/{organization}/{project}/_apis/wit/workitems/$ARGUMENTS?api-version=7.1"
 ```
 Extract **Area Path** (`fields["System.AreaPath"]`) and **Iteration Path** (`fields["System.IterationPath"]`) — copied to each Test Case work item.
 
 Identify the assignee via the PAT's associated user:
 ```bash
-curl -s -u ":$AZURE_DEVOPS_PAT" \
+curl -fsS --max-time 30 -u ":$AZURE_DEVOPS_PAT" \
   "https://vssps.dev.azure.com/{organization}/_apis/profile/profiles/me?api-version=7.1"
 ```
 Extract `displayName`/`uniqueName` (email) to use as `System.AssignedTo`.
 
 For **each** manual test case, create an Azure DevOps **Test Case** work item:
 ```bash
-curl -s -X POST -u ":$AZURE_DEVOPS_PAT" \
+curl -fsS --max-time 30 -X POST -u ":$AZURE_DEVOPS_PAT" \
   -H "Content-Type: application/json-patch+json" \
   -d '[
     {"op": "add", "path": "/fields/System.Title", "value": "TC-XXX: <test case title>"},
@@ -151,29 +155,29 @@ Priority mapping: High→1, Medium→2, Low→3, unspecified→4. Steps go in `M
 
 For **each** created Test Case work item, add a relation:
 ```bash
-curl -s -X PATCH -u ":$AZURE_DEVOPS_PAT" \
+curl -fsS --max-time 30 -X PATCH -u ":$AZURE_DEVOPS_PAT" \
   -H "Content-Type: application/json-patch+json" \
   -d '[{"op": "add", "path": "/relations/-", "value": {"rel": "Microsoft.VSTS.Common.TestedBy-Reverse", "url": "https://dev.azure.com/{organization}/{project}/_apis/wit/workitems/$ARGUMENTS"}}]' \
   "https://dev.azure.com/{organization}/{project}/_apis/wit/workitems/<created-work-item-id>?api-version=7.1"
 ```
 **Create links in parallel.** This populates **Tested By / Tests** on the parent.
 
-Save keys to `tests/cases/.ticket-context/$ARGUMENTS-test-keys.json`:
+Save keys to `tests/cases/.ticket-context/$ARGUMENTS-test-keys.json`. Only include a test case here if its work item was actually created — a failed create has no `workItemId` and isn't added. Record `linked: false` (not `true`) for a test case whose work item was created but whose relation-add call failed, so a re-run can retry just the link instead of recreating the work item:
 ```json
-{ "parentWorkItem": "$ARGUMENTS", "tests": [{ "tcId": "TC-001", "workItemId": "XXXXX", "summary": "..." }] }
+{ "parentWorkItem": "$ARGUMENTS", "tests": [{ "tcId": "TC-001", "workItemId": "XXXXX", "summary": "...", "linked": true }] }
 ```
 
 ### clickup
 
 Read `ticketSource.clickup.tokenEnvVar` (default `CLICKUP_TOKEN`) and `ticketSource.clickup.listId`.
 
-Identify the assignee: `curl -s -H "Authorization: $CLICKUP_TOKEN" "https://api.clickup.com/api/v2/user"`, extract `user.id`.
+Identify the assignee: `curl -fsS --max-time 30 -H "Authorization: $CLICKUP_TOKEN" "https://api.clickup.com/api/v2/user"`, extract `user.id`.
 
 For **each** manual test case:
 
 a. Create the task:
 ```bash
-curl -s -X POST -H "Authorization: $CLICKUP_TOKEN" -H "Content-Type: application/json" \
+curl -fsS --max-time 30 -X POST -H "Authorization: $CLICKUP_TOKEN" -H "Content-Type: application/json" \
   -d '{"name": "TC-XXX: <test case title>", "description": "<preconditions + description>", "priority": <priority_num>, "assignees": [<user_id>]}' \
   "https://api.clickup.com/api/v2/list/{listId}/task"
 ```
@@ -181,13 +185,13 @@ Priority mapping: High→1, Medium→2, Low→3, unspecified→4
 
 b. Add test steps as a checklist:
 ```bash
-curl -s -X POST -H "Authorization: $CLICKUP_TOKEN" -H "Content-Type: application/json" \
+curl -fsS --max-time 30 -X POST -H "Authorization: $CLICKUP_TOKEN" -H "Content-Type: application/json" \
   -d '{"name": "Test Steps"}' \
   "https://api.clickup.com/api/v2/task/{task_id}/checklist"
 ```
 Then add each step as a checklist item:
 ```bash
-curl -s -X POST -H "Authorization: $CLICKUP_TOKEN" -H "Content-Type: application/json" \
+curl -fsS --max-time 30 -X POST -H "Authorization: $CLICKUP_TOKEN" -H "Content-Type: application/json" \
   -d '{"name": "<step text> — Expected: <expected result>"}' \
   "https://api.clickup.com/api/v2/checklist/{checklist_id}/checklist_item"
 ```
@@ -196,14 +200,14 @@ curl -s -X POST -H "Authorization: $CLICKUP_TOKEN" -H "Content-Type: application
 
 For **each** created test task, link it to the parent task:
 ```bash
-curl -s -X POST -H "Authorization: $CLICKUP_TOKEN" \
+curl -fsS --max-time 30 -X POST -H "Authorization: $CLICKUP_TOKEN" \
   "https://api.clickup.com/api/v2/task/{created_task_id}/link/$ARGUMENTS"
 ```
 **Create links in parallel.** This adds the parent task under **Linked Tasks**.
 
-Save keys to `tests/cases/.ticket-context/$ARGUMENTS-test-keys.json`:
+Save keys to `tests/cases/.ticket-context/$ARGUMENTS-test-keys.json`. Only include a test case here if its task was actually created — a failed create has no `clickupTaskId` and isn't added. Record `linked: false` (not `true`) for a test case whose task was created but whose link call failed, so a re-run can retry just the link instead of recreating the task:
 ```json
-{ "parentTask": "$ARGUMENTS", "tests": [{ "tcId": "TC-001", "clickupTaskId": "XXXXX", "summary": "..." }] }
+{ "parentTask": "$ARGUMENTS", "tests": [{ "tcId": "TC-001", "clickupTaskId": "XXXXX", "summary": "...", "linked": true }] }
 ```
 
 ### github
@@ -220,7 +224,7 @@ gh issue create --repo {ticketSource.github.repo} \
 ```
 GitHub Issues has no native issue-linking API via `gh issue create` — reference the parent in the body text (e.g. "Tests #$ARGUMENTS") instead of a structured link field.
 
-Save keys to `tests/cases/.ticket-context/$ARGUMENTS-test-keys.json`:
+Save keys to `tests/cases/.ticket-context/$ARGUMENTS-test-keys.json`. Only include a test case here if its issue was actually created — a failed `gh issue create` has no `githubIssueNumber` and isn't added:
 ```json
 { "parentIssue": "$ARGUMENTS", "tests": [{ "tcId": "TC-001", "githubIssueNumber": "XXXXX", "summary": "..." }] }
 ```

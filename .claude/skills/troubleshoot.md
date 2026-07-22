@@ -43,6 +43,18 @@ Read `ticketSource.type` from config.
 - Failure: ✗ `Jira (Atlassian MCP) — not responding`
   Fix: Go to claude.ai → Integrations → Atlassian and reconnect. Then re-run `/troubleshoot`.
 
+#### Azure DevOps
+- Check if `AZURE_DEVOPS_PAT` (or the var named by `ticketSource.azure.tokenEnvVar`) is set: `bash -c 'test -n "$AZURE_DEVOPS_PAT" && echo set || echo unset'`
+- If unset: ✗ `AZURE_DEVOPS_PAT is not set`
+  Fix: Create a PAT at Azure DevOps → User settings → Personal access tokens (scope: Work Items,
+  Read & write). Then `export AZURE_DEVOPS_PAT=your_token` and add to `~/.zshrc` or `~/.bashrc`,
+  then run `source ~/.zshrc` (or open a new terminal).
+- If set: test connectivity using `ticketSource.azure.organization`:
+  `curl -s -o /dev/null -w "%{http_code}" -u ":$AZURE_DEVOPS_PAT" "https://vssps.dev.azure.com/{organization}/_apis/profile/profiles/me?api-version=7.1"`
+  - 200: ✓ `Azure DevOps — authenticated`
+  - 401/203: ✗ `Azure DevOps — token rejected. Verify the PAT has Work Items Read & write scope and hasn't expired.`
+  - Other: ⚠ `Azure DevOps — unexpected status {code}. Check your network or Azure DevOps status page.`
+
 #### ClickUp
 - Check if `CLICKUP_TOKEN` is set: `bash -c 'test -n "$CLICKUP_TOKEN" && echo set || echo unset'`
 - If unset: ✗ `CLICKUP_TOKEN is not set`

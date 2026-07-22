@@ -147,6 +147,30 @@ guard_input() {
   [ "$status" -eq 2 ]
 }
 
+# ── Heuristic fallback stays on once prod patterns are configured ────────────
+
+@test "still warns on a suspicious URL outside the configured patterns, even when patterns exist" {
+  guard_input "curl https://otherapp.io/dashboard" "prod-url-config.json"
+  run bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "WARNING" ]]
+}
+
+# ── cwd-independent config resolution ─────────────────────────────────────────
+
+@test "resolves qa-config.json via CLAUDE_PROJECT_DIR when the tool's cwd has no config" {
+  # qa-config.json is gitignored repo-wide, so build the CLAUDE_PROJECT_DIR
+  # fixture at runtime (like guard_input does for cwd) instead of committing
+  # a file with that literal name under tests/fixtures/.
+  local project_dir="$(mktemp -d)"
+  cp "$FIXTURES/prod-url-config.json" "$project_dir/qa-config.json"
+  guard_input "curl https://myapp.example.com/api/health"
+  run env CLAUDE_PROJECT_DIR="$project_dir" bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json"
+  rm -rf "$project_dir"
+  [ "$status" -eq 2 ]
+  [[ "$output" =~ "BLOCKED" ]]
+}
+
 # ── Additional env var patterns ───────────────────────────────────────────────
 
 @test "blocks FLASK_ENV set to production value" {

@@ -36,6 +36,7 @@ export class DataFactory {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) throw new Error(`createUser failed: ${res.status} ${await res.text()}`);
     const user = (await res.json()) as Record<string, unknown>;
@@ -44,7 +45,10 @@ export class DataFactory {
       type: 'user',
       id: user['id'] as string,
       cleanup: async () => {
-        await fetch(`${baseURL}/api/users/${user['id']}`, { method: 'DELETE' });
+        await fetch(`${baseURL}/api/users/${user['id']}`, {
+          method: 'DELETE',
+          signal: AbortSignal.timeout(10_000),
+        });
       },
     });
     return user;

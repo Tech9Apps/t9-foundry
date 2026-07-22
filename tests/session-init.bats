@@ -70,6 +70,20 @@ teardown() {
 
 # ── Token warnings ────────────────────────────────────────────────────────────
 
+@test "warns about missing AZURE_DEVOPS_PAT when ticketSource is azure" {
+  cp "$FIXTURES/azure-config.json" "$TEST_TMP/qa-config.json"
+  run env -u AZURE_DEVOPS_PAT bash -c "cd '$TEST_TMP' && bash '$INIT_HOOK'"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "AZURE_DEVOPS_PAT" ]]
+}
+
+@test "does not warn about AZURE_DEVOPS_PAT when it is set" {
+  cp "$FIXTURES/azure-config.json" "$TEST_TMP/qa-config.json"
+  run env AZURE_DEVOPS_PAT=test_pat bash -c "cd '$TEST_TMP' && bash '$INIT_HOOK'"
+  [ "$status" -eq 0 ]
+  ! [[ "$output" =~ "AZURE_DEVOPS_PAT is not set" ]]
+}
+
 @test "warns about missing CLICKUP_TOKEN when ticketSource is clickup" {
   cp "$FIXTURES/clickup-config.json" "$TEST_TMP/qa-config.json"
   run env -u CLICKUP_TOKEN bash -c "cd '$TEST_TMP' && bash '$INIT_HOOK'"

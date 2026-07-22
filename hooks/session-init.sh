@@ -5,6 +5,8 @@
 
 set -euo pipefail
 
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/qa-config-path.sh"
+
 BOLD='\033[1m'
 RED='\033[0;31m'
 YELLOW='\033[1;33m'
@@ -16,8 +18,11 @@ echo ""
 echo -e "${CYAN}${BOLD}Tech9 QA Harness${NC}"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
+# Resolve qa-config.json independent of cwd (see lib/qa-config-path.sh)
+QA_CONFIG_PATH=$(resolve_qa_config || echo "")
+
 # Check for qa-config.json
-if [ ! -f "qa-config.json" ]; then
+if [ -z "$QA_CONFIG_PATH" ]; then
   echo -e "${YELLOW}⚠  Workspace not configured.${NC}"
   echo ""
   echo "  Run /init to set up this workspace in one guided step."
@@ -40,11 +45,11 @@ if ! command -v jq &>/dev/null; then
 fi
 
 # Read config values
-PROJECT_NAME=$(jq -r '.project.name // "Unnamed Project"' qa-config.json)
-TICKET_SOURCE=$(jq -r '.ticketSource.type // "not configured"' qa-config.json)
-REPO_TYPE=$(jq -r '.codeRepository.type // "not configured"' qa-config.json)
-TEST_ENV_URL=$(jq -r '.environments.testEnvironmentBaseUrl // ""' qa-config.json)
-TEST_FRAMEWORK=$(jq -r '.testFramework.type // "not configured"' qa-config.json)
+PROJECT_NAME=$(jq -r '.project.name // "Unnamed Project"' "$QA_CONFIG_PATH")
+TICKET_SOURCE=$(jq -r '.ticketSource.type // "not configured"' "$QA_CONFIG_PATH")
+REPO_TYPE=$(jq -r '.codeRepository.type // "not configured"' "$QA_CONFIG_PATH")
+TEST_ENV_URL=$(jq -r '.environments.testEnvironmentBaseUrl // ""' "$QA_CONFIG_PATH")
+TEST_FRAMEWORK=$(jq -r '.testFramework.type // "not configured"' "$QA_CONFIG_PATH")
 
 echo -e "Project: ${BOLD}$PROJECT_NAME${NC}"
 echo ""
@@ -53,7 +58,7 @@ echo ""
 PROD_PATTERNS=()
 while IFS= read -r line; do
   [ -n "$line" ] && PROD_PATTERNS+=("$line")
-done < <(jq -r '.productionProtection.prodUrlPatterns[]? // empty' qa-config.json 2>/dev/null || true)
+done < <(jq -r '.productionProtection.prodUrlPatterns[]? // empty' "$QA_CONFIG_PATH" 2>/dev/null || true)
 
 # Warn if no production URL patterns are configured (blocking is disabled)
 if [ "${#PROD_PATTERNS[@]}" -eq 0 ]; then
@@ -77,6 +82,14 @@ if [ -n "$TEST_ENV_URL" ] && [ ${#PROD_PATTERNS[@]} -gt 0 ]; then
       exit 2
     fi
   done
+fi
+
+# Check for Azure DevOps PAT if configured
+if [ "$TICKET_SOURCE" = "azure" ]; then
+  if [ -z "${AZURE_DEVOPS_PAT:-}" ]; then
+    echo -e "${YELLOW}⚠  AZURE_DEVOPS_PAT is not set.${NC}"
+    echo "  Add to your shell profile: export AZURE_DEVOPS_PAT=your_personal_access_token"
+  fi
 fi
 
 # Check for ClickUp token if configured

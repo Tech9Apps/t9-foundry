@@ -5,6 +5,8 @@
 
 set -euo pipefail
 
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/qa-config-path.sh"
+
 INPUT=$(cat)
 
 TOOL=$(echo "$INPUT" | jq -r '.tool_name // empty' 2>/dev/null || true)
@@ -44,12 +46,15 @@ case "$FILE_PATH" in
     ;;
 esac
 
+# Resolve qa-config.json independent of cwd (see lib/qa-config-path.sh)
+QA_CONFIG_PATH=$(resolve_qa_config || echo "qa-config.json")
+
 # Load production URL patterns from qa-config.json
 PROD_PATTERNS=()
-if [ -f "qa-config.json" ]; then
+if [ -f "$QA_CONFIG_PATH" ]; then
   while IFS= read -r line; do
     [ -n "$line" ] && PROD_PATTERNS+=("$line")
-  done < <(jq -r '.productionProtection.prodUrlPatterns[]? // empty' qa-config.json 2>/dev/null || true)
+  done < <(jq -r '.productionProtection.prodUrlPatterns[]? // empty' "$QA_CONFIG_PATH" 2>/dev/null || true)
 fi
 
 # Check against configured production URL patterns
@@ -98,13 +103,17 @@ for pattern in "${PROD_ENV_PATTERNS[@]}"; do
   fi
 done
 
-# Warn about hardcoded URLs (not configured prod patterns) — don't block, just warn
-if echo "$CONTENT" | grep -qE "https?://[a-z0-9.-]+\.(com|io|net|app|org)"; then
+# Warn about hardcoded URLs (not configured prod patterns) — don't block, just warn.
+# This heuristic always runs as an additional layer, even once prodUrlPatterns
+# is configured — a configured list only covers what's been typed in, and
+# should not disable the fallback check for everything else.
+if [ "$(jq -r '.productionProtection.blockOnSuspiciousUrls // true' "$QA_CONFIG_PATH" 2>/dev/null || echo 'true')" = "true" ] \
+  && echo "$CONTENT" | grep -qE "https?://[a-z0-9.-]+\.(com|io|net|app|org)"; then
   URLS=$(echo "$CONTENT" | grep -oE "https?://[a-z0-9.-]+\.(com|io|net|app|org)[^'\"[:space:]]*" | head -5 || true)
   if [ -n "$URLS" ]; then
-    # Only block bare non-localhost, non-staging URLs in test files
+    # Only warn on bare non-localhost, non-staging URLs in test files
     SUSPICIOUS=$(echo "$URLS" | grep -vE "(staging|test|dev|qa|localhost|127\.0\.0\.1|example\.com)" || true)
-    if [ -n "$SUSPICIOUS" ] && [ ${#PROD_PATTERNS[@]} -eq 0 ]; then
+    if [ -n "$SUSPICIOUS" ]; then
       echo "WARNING: File contains hardcoded URLs that may be production: $SUSPICIOUS"
       echo "Consider using process.env.BASE_URL and configuring productionProtection.prodUrlPatterns in qa-config.json."
     fi

@@ -105,6 +105,8 @@ bats tests/prod-guard.bats
 bats tests/env-detector.bats
 bats tests/session-init.bats
 bats tests/schema-validation.bats
+bats tests/wording-lint.bats
+bats tests/check-prereqs.bats
 ```
 
 **Run a single test by name pattern:**
@@ -150,7 +152,7 @@ This path is intentionally narrower than `.claude/skills/*.md`, which remains au
 
 Hook contract: reads JSON from stdin. `exit 0` = allow. `exit 2` = block; stdout message is surfaced to Claude as the reason.
 
-**`templates/e2e/{framework}/`** — Scaffold files (playwright, cypress, webdriverio, pytest) copied into the user's app repo by `/setup-e2e-framework`. Each includes a Layer 5 production guard that runs before any test executes.
+**`templates/e2e/{framework}/`** — Scaffold files (playwright, cypress, selenium, webdriverio, pytest, rspec) copied into the user's app repo by `/setup-e2e-framework`. Each includes a Layer 5 production guard that runs before any test executes. TS templates (playwright, cypress, webdriverio) locate `qa-config.json` via `QA_HARNESS_DIR` (set in `.env.test`) since the harness and app repo are normally sibling directories, not nested.
 
 **`templates/test-plan-template.md`** — Structure used by `/create-test-plan` to generate consistent test plans.
 

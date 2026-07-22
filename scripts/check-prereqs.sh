@@ -42,6 +42,7 @@ check "GitHub CLI (gh)"      "gh --version"    "brew install gh  &&  gh auth log
 check "gh CLI authenticated"  "gh auth status"  "gh auth login"                       "false"
 echo ""
 echo "Optional — set in your shell profile if using these sources:"
+check "AZURE_DEVOPS_PAT env var" "[ -n \"\${AZURE_DEVOPS_PAT:-}\" ]"   "export AZURE_DEVOPS_PAT=your_personal_access_token" "false"
 check "CLICKUP_TOKEN env var"    "[ -n \"\${CLICKUP_TOKEN:-}\" ]"      "export CLICKUP_TOKEN=your_api_token"          "false"
 check "GITLAB_TOKEN env var"     "[ -n \"\${GITLAB_TOKEN:-}\" ]"       "export GITLAB_TOKEN=your_personal_access_token" "false"
 check "BITBUCKET_TOKEN env var"  "[ -n \"\${BITBUCKET_TOKEN:-}\" ]"    "export BITBUCKET_TOKEN=your_app_password"      "false"
