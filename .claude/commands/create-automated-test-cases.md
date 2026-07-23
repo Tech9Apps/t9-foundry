@@ -15,6 +15,12 @@ The following files must exist:
 
 If any is missing, tell the user which command to run first.
 
+## Framework Check
+
+Read `testFramework.type` from `qa-config.json`.
+- **Unset**: stop and tell the user to run `/setup-e2e-framework` first.
+- **Not `playwright`**: stop and tell the user this command only generates Playwright specs; point them to `/write-e2e-tests <TICKET-ID>` instead, which supports Cypress/pytest/RSpec/Selenium/WebDriverIO/Jest.
+
 Follow `.claude/memory/automated-test-rules.md` — it is binding for this task.
 
 ## Read Context

@@ -48,10 +48,11 @@ Trigger phrases: "set up e2e framework", "scaffold playwright", "set up cypress"
 
    **Critical configuration — set from qa-config.json, never hardcode:**
    - `baseURL`: read from `process.env.BASE_URL || qa-config.environments.testEnvironmentBaseUrl`
-   - Production URL patterns: inject as `process.env.QA_PROD_PATTERNS` in the globalSetup/setupNodeEvents
+   - `QA_HARNESS_DIR`: the **absolute path to this harness repo** (`tech9foundry`). This is how the copied template finds `qa-config.json` at test-run time — the harness and app repo are typically sibling directories, not nested, so the template can't find the config by walking up from its own location alone. Compute it with `pwd` from the harness repo root and write it into `{localPath}/.env.test.example` (see step 7).
+   - Production URL patterns: optionally also inject as `process.env.QA_PROD_PATTERNS` (a JSON array string) to override or extend `qa-config.json`'s patterns without editing the config — not required when `QA_HARNESS_DIR` is set, since the template reads `productionProtection.prodUrlPatterns` from the config directly.
    - All credentials: read from `process.env.*` only
 
-   The `global-setup.ts` (Playwright) or `setupNodeEvents` (Cypress) already contains the Layer 5 production guard — it reads `QA_PROD_PATTERNS` and crashes if `BASE_URL` matches any pattern.
+   The `global-setup.ts` (Playwright), `setupNodeEvents`/config load (Cypress), or `onPrepare` (WebDriverIO) already contains the Layer 5 production guard — it loads `qa-config.json` (via `QA_HARNESS_DIR`) merged with any `QA_PROD_PATTERNS` override, and crashes if `BASE_URL` matches any pattern.
 
    Update `qa-config.json`:
    - `testFramework.type` = selected framework
@@ -71,9 +72,14 @@ Trigger phrases: "set up e2e framework", "scaffold playwright", "set up cypress"
    Create `{localPath}/.env.test.example` with:
    ```
    BASE_URL=https://staging.myapp.com
+   # Absolute path to this QA harness repo (tech9foundry) — required so the
+   # copied e2e template can find qa-config.json and enforce the production
+   # guard even when the harness and this app repo are sibling directories.
+   QA_HARNESS_DIR=/absolute/path/to/tech9foundry
    # Add credentials and tokens needed for e2e tests here
    # NEVER put production URLs or production credentials in this file
    ```
+   Fill in the real `QA_HARNESS_DIR` value (the harness repo's actual absolute path, from `pwd` at the harness root) rather than leaving the placeholder — this is the one value in this file that isn't a secret and should be set correctly, not just documented.
    Add `.env.test` to `{localPath}/.gitignore`
 
 8. **Confirm and report**

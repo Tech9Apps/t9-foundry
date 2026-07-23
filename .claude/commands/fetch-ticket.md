@@ -12,6 +12,8 @@ Read `qa-config.json > ticketSource.type` to determine which source to fetch fro
 
 > **Reference:** the method for each source below mirrors `.claude/guides/integration-sources.md` — update that file too if a fetch method changes here.
 
+**Every `curl` call below uses `-f` (fail on HTTP error status, including 404) and `--max-time 30` (bound the wait).** A non-zero exit means the fetch failed — treat it as "ticket not found" for the purposes of the not-found handling in `Manual-test-generator.md`/`Manual-Automation-test-generator.md`, and don't proceed as if the response body were valid ticket data.
+
 ## Fetch, by ticket source
 
 ### jira
@@ -52,14 +54,14 @@ Read all values from `qa-config.json > ticketSource.azure`. If `qa-config.json` 
 - **Base URL**: `{ticketSource.azure.host}/{organization}/{project}` (host defaults to `https://dev.azure.com`)
 
 ```bash
-curl -s -u ":$AZURE_DEVOPS_PAT" \
+curl -fsS --max-time 30 -u ":$AZURE_DEVOPS_PAT" \
   "https://dev.azure.com/{organization}/{project}/_apis/wit/workitems/$ARGUMENTS?\$expand=all&api-version=7.1"
 ```
 
 Comments are not included in the work item response above — fetch them separately:
 
 ```bash
-curl -s -u ":$AZURE_DEVOPS_PAT" \
+curl -fsS --max-time 30 -u ":$AZURE_DEVOPS_PAT" \
   "https://dev.azure.com/{organization}/{project}/_apis/wit/workitems/$ARGUMENTS/comments?api-version=7.1-preview.3"
 ```
 
@@ -83,12 +85,12 @@ ClickUp access is provided via a Personal API Token, read from the environment �
 - If the env var is not set, stop and tell the user to run `/connect-tickets` or export the token per `docs/integration-guide.md`.
 
 ```bash
-curl -s -H "Authorization: $CLICKUP_TOKEN" \
+curl -fsS --max-time 30 -H "Authorization: $CLICKUP_TOKEN" \
   "https://api.clickup.com/api/v2/task/$ARGUMENTS?include_subtasks=true"
 ```
 
 ```bash
-curl -s -H "Authorization: $CLICKUP_TOKEN" \
+curl -fsS --max-time 30 -H "Authorization: $CLICKUP_TOKEN" \
   "https://api.clickup.com/api/v2/task/$ARGUMENTS/comment"
 ```
 

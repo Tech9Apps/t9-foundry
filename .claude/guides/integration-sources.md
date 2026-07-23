@@ -1,6 +1,6 @@
 # Integration Source Reference
 
-> **Maintenance note:** When adding a new ticket source or changing an API method, also update `docs/integration-guide.md` — it contains the corresponding end-user setup instructions for the same sources. If the source is one the commands+agents pipeline covers (Jira, Azure, ClickUp, GitHub, none), also add the matching branch to `.claude/commands/fetch-ticket.md` and `.claude/commands/post-tests.md`.
+> **Maintenance note:** When adding a new ticket source or changing an API method, also update `docs/integration-guide.md` — it contains the corresponding end-user setup instructions for the same sources. If the source is one the commands+agents pipeline covers (Jira, Azure, ClickUp, GitHub, none), also add the matching branch to `.claude/commands/fetch-ticket.md`, `.claude/commands/post-tests.md`, `.claude/commands/file-bug.md`, and the Step 6 results-posting branch in `.claude/agents/Manual-Automation-test-generator.md`.
 
 ## Fetching Tickets
 
@@ -23,6 +23,18 @@
 | **ClickUp** | `POST https://api.clickup.com/api/v2/list/{list_id}/task`, then POST checklist for steps |
 | **GitHub Issues** | `gh issue create --label {testLabelName} --label {ticket-id}` |
 | **None** | Save formatted markdown to `{testCasesDir}/` only. Report the file path. |
+
+## Posting Automated Test Execution Results
+
+| Target | Method |
+|--------|--------|
+| **Jira** | `addCommentToJiraIssue` (MCP) on the parent ticket |
+| **Azure DevOps** | `PATCH {host}/{org}/{project}/_apis/wit/workitems/{id}?api-version=7.1` (JSON-patch, appends to `System.History`) |
+| **ClickUp** | `POST https://api.clickup.com/api/v2/task/{id}/comment` |
+| **GitHub Issues** | `gh issue comment {number} --repo owner/repo` |
+| **None** | Save formatted markdown to `{testCasesDir}/{ticket-id}-execution-results.md` only. Report the file path. |
+
+Used by `Manual-Automation-test-generator.md`'s Step 6, after running tests via `run-spec-tests.md`.
 
 ## Codebase Analysis
 

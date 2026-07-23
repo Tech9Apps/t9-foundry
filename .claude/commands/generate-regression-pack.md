@@ -41,9 +41,13 @@ From the scan, list every user-visible behavior the module currently supports. T
 - Traceability line for each case: the source file(s) the behavior comes from
 
 **Automated Playwright specs** → `tests/regression/$ARGUMENTS.spec.ts`
-- One `test.describe('Regression: <module>')` block; each test maps to a TC-XXX
-- Page objects under `pages/`, `data-testid`-first selectors, no sleeps, env values from `process.env` only (per `automated-test-rules.md`)
-- Prioritize automating the High-priority cases; leave cases that genuinely need a human (visual judgment, third-party side effects) manual and mark them so
+
+Check `testFramework.type` in `qa-config.json` first:
+- **Not `playwright`** (including unset): skip this subsection — do not generate `.spec.ts` files. Tell the user this fast path only automates Playwright regression specs; point them to `/write-e2e-tests` for other configured frameworks. Manual regression cases above are unaffected and still generated regardless of framework.
+- **`playwright`**: proceed —
+  - One `test.describe('Regression: <module>')` block; each test maps to a TC-XXX
+  - Page objects under `pages/`, `data-testid`-first selectors, no sleeps, env values from `process.env` only (per `automated-test-rules.md`)
+  - Prioritize automating the High-priority cases; leave cases that genuinely need a human (visual judgment, third-party side effects) manual and mark them so
 
 ## Idempotent Re-runs — Update, Don't Regenerate
 
@@ -58,6 +62,6 @@ If a previous pack exists for this module:
 Print:
 - Module scanned and key source files read
 - Number of manual regression cases (new/stale/unchanged if updating)
-- Number of automated tests and the spec file path
+- Number of automated tests and the spec file path — or, if `testFramework.type` isn't `playwright`, that automation was skipped and why
 - Which cases are manual-only and why
 - File paths created or updated

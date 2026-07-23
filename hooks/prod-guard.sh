@@ -5,6 +5,8 @@
 
 set -euo pipefail
 
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/qa-config-path.sh"
+
 INPUT=$(cat)
 
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null || true)
@@ -13,12 +15,15 @@ if [ -z "$COMMAND" ]; then
   exit 0
 fi
 
+# Resolve qa-config.json independent of cwd (see lib/qa-config-path.sh)
+QA_CONFIG_PATH=$(resolve_qa_config || echo "qa-config.json")
+
 # Load production URL patterns from qa-config.json if available
 PROD_PATTERNS=()
-if [ -f "qa-config.json" ]; then
+if [ -f "$QA_CONFIG_PATH" ]; then
   while IFS= read -r line; do
     [ -n "$line" ] && PROD_PATTERNS+=("$line")
-  done < <(jq -r '.productionProtection.prodUrlPatterns[]? // empty' qa-config.json 2>/dev/null || true)
+  done < <(jq -r '.productionProtection.prodUrlPatterns[]? // empty' "$QA_CONFIG_PATH" 2>/dev/null || true)
 fi
 
 # Always block common production environment variable patterns
@@ -42,7 +47,7 @@ for pattern in "${BLOCKED_ENV_PATTERNS[@]}"; do
     echo "BLOCKED: Command sets a production environment variable."
     echo "Pattern matched: $pattern"
     echo "Tests must never run against production. Check your environment configuration."
-    echo "Configured test environment: $(jq -r '.environments.testEnvironmentBaseUrl // "not set"' qa-config.json 2>/dev/null || echo 'not set')"
+    echo "Configured test environment: $(jq -r '.environments.testEnvironmentBaseUrl // "not set"' "$QA_CONFIG_PATH" 2>/dev/null || echo 'not set')"
     exit 2
   fi
 done
@@ -62,7 +67,7 @@ if [ "${#PROD_PATTERNS[@]}" -gt 0 ]; then
     if echo "$COMMAND" | grep -qE -e "$pattern"; then
       echo "BLOCKED: Command contains a production URL matching pattern: $pattern"
       echo "Tests must never run against production environments."
-      echo "Your configured test environment is: $(jq -r '.environments.testEnvironmentBaseUrl // "not set"' qa-config.json 2>/dev/null || echo 'not set')"
+      echo "Your configured test environment is: $(jq -r '.environments.testEnvironmentBaseUrl // "not set"' "$QA_CONFIG_PATH" 2>/dev/null || echo 'not set')"
       exit 2
     fi
   done
@@ -78,18 +83,18 @@ SUSPICIOUS_PATTERNS=(
   "https?://app\.[a-z0-9-]+\.(com|io|app|net|org)"
 )
 
-if [ "$(jq -r '.productionProtection.blockOnSuspiciousUrls // true' qa-config.json 2>/dev/null || echo 'true')" = "true" ]; then
+if [ "$(jq -r '.productionProtection.blockOnSuspiciousUrls // true' "$QA_CONFIG_PATH" 2>/dev/null || echo 'true')" = "true" ]; then
   for pattern in "${SUSPICIOUS_PATTERNS[@]}"; do
     if echo "$COMMAND" | grep -qiE -e "$pattern"; then
       if echo "$COMMAND" | grep -qiE "(staging|test|dev|qa|localhost|127\.0\.0\.1)"; then
         continue
       fi
-      # Only warn (not block) on heuristic matches — they may be false positives
-      # unless qa-config prodUrlPatterns are not yet configured
-      if [ ${#PROD_PATTERNS[@]} -eq 0 ]; then
-        echo "WARNING: Command may contain a production URL: $COMMAND"
-        echo "Configure productionProtection.prodUrlPatterns in qa-config.json to enable strict blocking."
-      fi
+      # Only warn (not block) on heuristic matches — they may be false positives.
+      # Always warn, even when prodUrlPatterns is configured: a configured
+      # pattern list only covers what's been typed in, and this heuristic is
+      # meant to layer on top of it, not disable itself once any pattern exists.
+      echo "WARNING: Command may contain a production URL: $COMMAND"
+      echo "Configure productionProtection.prodUrlPatterns in qa-config.json to enable strict blocking."
       break
     fi
   done

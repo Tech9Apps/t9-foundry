@@ -165,6 +165,30 @@ edit_input() {
   [ "$status" -eq 2 ]
 }
 
+# ── Heuristic fallback stays on once prod patterns are configured ────────────
+
+@test "still warns on a hardcoded URL outside the configured patterns, even when patterns exist" {
+  write_input "/project/e2e/config.ts" "const other = 'https://otherapp.io/page';" "prod-url-config.json"
+  run bash -c "cd '$TEST_TMP' && bash '$DETECTOR' < input.json"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "WARNING" ]]
+}
+
+# ── cwd-independent config resolution ─────────────────────────────────────────
+
+@test "resolves qa-config.json via CLAUDE_PROJECT_DIR when the tool's cwd has no config" {
+  # qa-config.json is gitignored repo-wide, so build the CLAUDE_PROJECT_DIR
+  # fixture at runtime (like write_input does for cwd) instead of committing
+  # a file with that literal name under tests/fixtures/.
+  local project_dir="$(mktemp -d)"
+  cp "$FIXTURES/prod-url-config.json" "$project_dir/qa-config.json"
+  write_input "/project/e2e/config.ts" "const base = 'https://myapp.example.com/';"
+  run env CLAUDE_PROJECT_DIR="$project_dir" bash -c "cd '$TEST_TMP' && bash '$DETECTOR' < input.json"
+  rm -rf "$project_dir"
+  [ "$status" -eq 2 ]
+  [[ "$output" =~ "BLOCKED" ]]
+}
+
 # ── Additional env var patterns ───────────────────────────────────────────────
 
 @test "blocks Write containing FLASK_ENV set to production value" {

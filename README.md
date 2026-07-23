@@ -156,6 +156,8 @@ Runs fetch → analyze → generate manual + automated test cases → review gat
 
 ## Skills Reference
 
+Most of these are `.claude/skills/`. Two (`/file-bug`, `/generate-regression-pack`) are actually implemented as `.claude/commands/` + `.claude/agents/` pairs — same slash-command interface, different underlying mechanism; see [Directory Structure](#directory-structure) for why the project has both.
+
 | Skill | What it does |
 |-------|-------------|
 | `/init` | Guided workspace setup — configures everything in one session |
@@ -237,7 +239,7 @@ Key fields:
 | `codeRepository.localPath` | Path to your local app repo clone |
 | `environments.testEnvironmentBaseUrl` | Your **staging** URL — never production |
 | `productionProtection.prodUrlPatterns` | Regex patterns matching your production URLs |
-| `testFramework.type` | `playwright`, `cypress`, `pytest`, `rspec`, `webdriverio`, or `jest` |
+| `testFramework.type` | `playwright`, `cypress`, `selenium`, `webdriverio`, `jest`, `pytest`, `rspec`, or `other` |
 
 Use `/reconfigure` to update any single value after initial setup.
 
@@ -265,7 +267,7 @@ See [`docs/integration-guide.md`](docs/integration-guide.md) for per-source setu
 │   ├── prod-guard.sh           # Runs before every shell command
 │   └── env-detector.sh         # Runs before every file write
 ├── templates/
-│   └── e2e/                    # Playwright, Cypress, pytest, RSpec scaffolds
+│   └── e2e/                    # Playwright, Cypress, Selenium, WebDriverIO, pytest, RSpec scaffolds
 ├── scripts/
 │   └── check-prereqs.sh        # Verify your environment
 ├── projects/                    # Saved team config profiles (/switch-project, /save-project)
@@ -284,7 +286,7 @@ See [`docs/integration-guide.md`](docs/integration-guide.md) for per-source setu
 | Ticket sources | Jira, Azure DevOps, ClickUp, GitHub Issues, GitLab Issues, Bitbucket |
 | Code repositories | GitHub, GitLab, Bitbucket, local filesystem |
 | Test case upload | Jira, Azure DevOps, ClickUp, GitHub Issues |
-| E2e frameworks | Playwright, Cypress, pytest, RSpec, WebDriverIO |
+| E2e frameworks | Playwright, Cypress, Selenium, WebDriverIO, Jest, pytest, RSpec |
 | App tech stacks | Node.js, Python, Ruby, Java, Go — framework agnostic |
 
 ---

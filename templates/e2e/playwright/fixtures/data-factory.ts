@@ -51,6 +51,7 @@ export class DataFactory {
         // TODO: add auth header if required for user creation
       },
       body: JSON.stringify({ ...defaults, ...attrs }),
+      signal: AbortSignal.timeout(10_000),
     });
 
     if (!response.ok) {
@@ -66,7 +67,10 @@ export class DataFactory {
         await fetch(`${process.env.BASE_URL}/api/users/${user.id}`, {
           method: 'DELETE',
           // TODO: add auth header if required
-        }).catch(() => {});
+          signal: AbortSignal.timeout(10_000),
+        }).catch((err) => {
+          console.warn(`DataFactory cleanup warning (user ${user.id}):`, err);
+        });
       },
     });
 

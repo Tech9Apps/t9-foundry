@@ -1,9 +1,9 @@
 # Analyze Project Source Code for Ticket
 
-You are given a Jira ticket ID: **$ARGUMENTS**
+You are given a ticket/work item ID: **$ARGUMENTS**
 
 **If `$ARGUMENTS` is empty, stop immediately and tell the user:**
-> "A Jira ticket ID is required. Usage: `/analyze-code <TICKET-ID>`"
+> "A ticket ID is required. Usage: `/analyze-code <TICKET-ID>`"
 **Do not proceed.**
 
 ## Prerequisites

@@ -31,6 +31,7 @@ export class DataFactory {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...defaults, ...attrs }),
+      signal: AbortSignal.timeout(10_000),
     });
 
     if (!response.ok) {
@@ -45,7 +46,10 @@ export class DataFactory {
       cleanupFn: async () => {
         await fetch(`${Cypress.config('baseUrl')}/api/users/${user.id}`, {
           method: 'DELETE',
-        }).catch(() => {});
+          signal: AbortSignal.timeout(10_000),
+        }).catch((err) => {
+          console.warn(`DataFactory cleanup warning (user ${user.id}):`, err);
+        });
       },
     });
 

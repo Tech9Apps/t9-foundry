@@ -32,9 +32,9 @@ Every shell command Claude runs passes through this hook before execution. It sc
 
 - Production environment variables: `NODE_ENV=production`, `RAILS_ENV=production`, `APP_ENV=prod`, `--env=production`, etc.
 - URLs matching any pattern in `productionProtection.prodUrlPatterns`
-- Suspicious URL patterns as a heuristic fallback when patterns aren't configured
+- Suspicious URL patterns as a heuristic — this always runs as an additional layer (unless `blockOnSuspiciousUrls` is set to `false`), not only when `prodUrlPatterns` is empty. A configured pattern list only covers what's been typed in; the heuristic keeps warning on anything else that looks production-like.
 
-**If a match is found:** exits with code 2, blocking the command and surfacing the blocking message to Claude.
+**If a match is found:** the env-var and configured-pattern checks exit with code 2 (blocking); the heuristic check only warns (it never blocks on its own, to avoid false-positive lockouts) and surfaces the warning to Claude.
 
 This makes it impossible for a mistyped command or a mis-configured test runner to execute against production even if Layers 1 and 2 somehow failed.
 
@@ -46,8 +46,9 @@ Every file Claude writes or edits passes through this hook. It scans the new con
 
 - URLs matching `productionProtection.prodUrlPatterns`
 - Hardcoded `NODE_ENV=production` or equivalent assignments
+- Suspicious hardcoded URLs as a heuristic fallback — like Layer 3, this always warns as an additional layer (unless `blockOnSuspiciousUrls` is `false`), not only when `prodUrlPatterns` is empty
 
-**If a match is found:** exits with code 2, blocking the write.
+**If a match is found:** the configured-pattern and env-var checks exit with code 2, blocking the write; the heuristic check only warns.
 
 This prevents production URLs from being persisted into test configuration files, environment files, or test code.
 
@@ -61,7 +62,11 @@ Every e2e framework template includes a startup guard that runs before any test 
 
 **Cypress:** `cypress.config.ts` calls `validateNotProduction` at config load time, before `setupNodeEvents` finishes.
 
+**WebDriverIO:** `wdio.conf.ts`'s `onPrepare` hook calls `validateNotProduction` before any spec runs.
+
 **What it checks:** The resolved `BASE_URL` (from `process.env.BASE_URL` or `qa-config.json`) against all patterns in `productionProtection.prodUrlPatterns`.
+
+**Finding `qa-config.json`:** the harness repo and the app repo are normally sibling directories (see the README's recommended layout), not nested — so this layer only works if `QA_HARNESS_DIR` (the harness repo's absolute path) is set in `.env.test`. `/setup-e2e-framework` writes this into `.env.test.example` when it scaffolds the template; if it's missing or wrong, this layer silently falls back to `QA_PROD_PATTERNS` (if set) or the heuristic-only check below — set `QA_HARNESS_DIR` correctly rather than relying on the heuristic as your only backstop.
 
 **If triggered:** throws a hard error with a clear message, crashing the test run before a single test executes.
 

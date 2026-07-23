@@ -6,7 +6,7 @@
     "type": "none"
   },
   "codeRepository": {
-    "type": "none",
+    "type": "local",
     "localPath": ""
   },
   "environments": {

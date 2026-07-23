@@ -4,8 +4,14 @@ You are given an argument: **$ARGUMENTS** — a spec file name or path.
 
 **If `$ARGUMENTS` is empty, stop immediately and tell the user:**
 > "You have not defined any spec file to run. Usage:
-> `/run-tests <spec-file>` — e.g. `/run-tests login.spec.ts`"
+> `/run-spec-tests <spec-file>` — e.g. `/run-spec-tests login.spec.ts`"
 **Do not proceed.**
+
+## Framework Check
+
+Read `testFramework.type` from `qa-config.json`.
+- **Unset**: stop and tell the user to run `/setup-e2e-framework` first.
+- **Not `playwright`**: stop and tell the user this command only runs Playwright specs directly; point them to `/run-tests`, which runs the configured test suite for any supported framework (Cypress/pytest/RSpec/Selenium/WebDriverIO/Jest).
 
 ## Find the Spec File
 
@@ -16,7 +22,7 @@ find tests/ -iname "*$ARGUMENTS*" --include="*.spec.ts" 2>/dev/null || find test
 If `$ARGUMENTS` already looks like a path (contains `/`), use it as-is provided the file exists.
 
 - **No match found:** stop immediately and tell the user:
-  > "This spec file (`$ARGUMENTS`) is not available in the folder structure. Check the file name/path and try again — e.g. `/run-tests login.spec.ts`."
+  > "This spec file (`$ARGUMENTS`) is not available in the folder structure. Check the file name/path and try again — e.g. `/run-spec-tests login.spec.ts`."
   Do not proceed.
 - **More than one match found:** list the candidates and ask the user to disambiguate — do not guess.
 

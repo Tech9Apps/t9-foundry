@@ -1,6 +1,6 @@
 ---
 name: Bug-reporter
-description: Bug filing agent. Takes a failure description, failed spec, or pasted error; reproduces it against the configured staging environment; captures evidence (screenshots, traces, exact steps); and files a well-formed bug in the configured tracker (Jira, Azure DevOps, or ClickUp) after human approval. Use when a failure needs to become a properly documented bug ticket.
+description: Bug filing agent. Takes a failure description, failed spec, or pasted error; reproduces it against the configured staging environment; captures evidence (screenshots, traces, exact steps); and files a well-formed bug in the configured tracker (Jira, Azure DevOps, ClickUp, GitHub, GitLab, or Bitbucket) after human approval. Use when a failure needs to become a properly documented bug ticket.
 tools: Read, Write, Edit, Bash, Grep, Glob, Agent, AskUserQuestion, mcp__claude_ai_Atlassian__createJiraIssue, mcp__claude_ai_Atlassian__getJiraIssue, mcp__claude_ai_Atlassian__atlassianUserInfo
 model: opus
 maxTurns: 50

@@ -51,7 +51,7 @@ Present the full draft bug report to the user and ask:
 
 ## File the Bug
 
-Branch on `ticketSource.type`:
+Branch on `ticketSource.type`. **Every `curl` call below uses `-f` (fail on HTTP error status) and `--max-time 30` (bound the wait) — check the exit code after each one. A non-zero exit means the call failed: do not treat it as success, do not proceed to "Save the Receipt" below, and tell the user what failed (status/error body if `-f`'s stderr captured one) instead of silently claiming the bug was filed.**
 
 ### Jira
 Use `mcp__claude_ai_Atlassian__createJiraIssue`:
@@ -64,7 +64,7 @@ Use `mcp__claude_ai_Atlassian__createJiraIssue`:
 ### Azure DevOps
 Create a **Bug** work item (config from `ticketSource.azure`, PAT from its `tokenEnvVar`):
 ```bash
-curl -s -X POST -u ":$AZURE_DEVOPS_PAT" \
+curl -fsS --max-time 30 -X POST -u ":$AZURE_DEVOPS_PAT" \
   -H "Content-Type: application/json-patch+json" \
   -d '[
     {"op": "add", "path": "/fields/System.Title", "value": "<bug title>"},
@@ -77,27 +77,61 @@ curl -s -X POST -u ":$AZURE_DEVOPS_PAT" \
 ### ClickUp
 Create a task in the configured list (token from `ticketSource.clickup.tokenEnvVar`):
 ```bash
-curl -s -X POST -H "Authorization: $CLICKUP_TOKEN" -H "Content-Type: application/json" \
+curl -fsS --max-time 30 -X POST -H "Authorization: $CLICKUP_TOKEN" -H "Content-Type: application/json" \
   -d '{"name": "[BUG] <bug title>", "description": "<full report body>", "priority": <priority_num>}' \
   "https://api.clickup.com/api/v2/list/{listId}/task"
 ```
+
+### GitHub
+Create an issue in the configured repo (`ticketSource.github.repo`, owner/repo format):
+```bash
+gh issue create --repo {ticketSource.github.repo} \
+  --title "[BUG] <bug title>" \
+  --body "<full report body>" \
+  --label bug
+```
+`gh` exits non-zero on failure the same way — check its exit code before proceeding, same as the `curl` calls above.
+
+### GitLab
+Create an issue in the configured project (`ticketSource.gitlab.projectId`, host defaults to `https://gitlab.com`, token from `ticketSource.gitlab.tokenEnvVar` default `GITLAB_TOKEN`):
+```bash
+curl -fsS --max-time 30 -X POST -H "PRIVATE-TOKEN: $GITLAB_TOKEN" \
+  --data-urlencode "title=[BUG] <bug title>" \
+  --data-urlencode "description=<full report body>" \
+  --data-urlencode "labels=bug" \
+  "{host}/api/v4/projects/{projectId}/issues"
+```
+
+### Bitbucket
+Create an issue in the configured repo (`ticketSource.bitbucket.workspace`/`repo`, app password from `ticketSource.bitbucket.tokenEnvVar` default `BITBUCKET_TOKEN`):
+```bash
+curl -fsS --max-time 30 -X POST -u ":$BITBUCKET_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"title": "[BUG] <bug title>", "content": {"raw": "<full report body>", "markup": "markdown"}}' \
+  "https://api.bitbucket.org/2.0/repositories/{workspace}/{repo}/issues"
+```
+Bitbucket app passwords are tied to a specific account — if `-u ":$BITBUCKET_TOKEN"` returns 401, the workspace likely requires `-u "<username>:$BITBUCKET_TOKEN"` instead. Ask the user for their Bitbucket username if this happens; there is no config field for it today.
 
 ### None
 Save the report to `{testCasesDir}/bugs/<slugified-title>.md` and report the path — nothing leaves the workspace.
 
 ## Save the Receipt
 
+**Only reachable if the bug was actually created (or, for `none`, saved) in the previous step** — if the create call failed, do not save a receipt at all; report the failure instead.
+
 Save to `{testCasesDir}/bugs/<created-id-or-slug>-receipt.json`:
 
 ```json
 {
   "title": "...",
-  "trackerType": "jira|azure|clickup|none",
-  "createdId": "<issue key / work item id / task id / file path>",
+  "trackerType": "jira|azure|clickup|github|gitlab|bitbucket|none",
+  "createdId": "<issue key / work item id / task id / issue number / file path>",
   "reproduced": true,
   "evidencePaths": []
 }
 ```
+
+`reproduced` must reflect what actually happened in "Reproduce the Failure" above — `false` (not the literal `true` shown in this template) if reproduction failed or was skipped and the user explicitly chose to file anyway.
 
 ## Output
 
