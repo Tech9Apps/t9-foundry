@@ -10,6 +10,8 @@ You are given a ticket/task/work-item ID: **$ARGUMENTS**
 
 Read `qa-config.json > ticketSource.type` to determine which source to fetch from. If `qa-config.json` is missing or `ticketSource.type` is unset, stop and tell the user to run `/init` or `/switch-project <profile>` first.
 
+**Inline context override.** If the invoking agent supplied an already-resolved ticket source (see Step 0 of `.claude/agents/Manual-test-generator.md`), use those values in place of the config file and skip the missing-config stop above. When nothing is supplied inline — every slash-command invocation, and every other agent — `qa-config.json` is required exactly as stated.
+
 > **Reference:** the method for each source below mirrors `.claude/guides/integration-sources.md` — update that file too if a fetch method changes here.
 
 **Every `curl` call below uses `-f` (fail on HTTP error status, including 404) and `--max-time 30` (bound the wait).** A non-zero exit means the fetch failed — treat it as "ticket not found" for the purposes of the not-found handling in `Manual-test-generator.md`/`Manual-Automation-test-generator.md`, and don't proceed as if the response body were valid ticket data.
@@ -20,7 +22,7 @@ Read `qa-config.json > ticketSource.type` to determine which source to fetch fro
 
 Jira access is provided via the **Atlassian MCP server** (no credentials needed in `.env`).
 
-- **Cloud ID**: read from `qa-config.json > ticketSource.jira.cloudId`. If unset, stop and tell the user to run `/init` or `/switch-project <profile>` first.
+- **Cloud ID**: use the inline-resolved `cloudId` if one was supplied, otherwise read `qa-config.json > ticketSource.jira.cloudId`. If neither is available, stop and tell the user to run `/init` or `/switch-project <profile>` first.
 
 Use the `mcp__claude_ai_Atlassian__getJiraIssue` tool:
 - `cloudId`: `<cloudId from qa-config.json>`

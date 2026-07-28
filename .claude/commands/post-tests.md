@@ -10,6 +10,8 @@ You are given a ticket/task/work-item ID: **$ARGUMENTS**
 
 Read `qa-config.json > ticketSource.type` to determine the upload target. If `qa-config.json` is missing or `ticketSource.type` is unset, stop and tell the user to run `/init` or `/switch-project <profile>` first.
 
+**Inline context override.** If the invoking agent supplied an already-resolved ticket source, `cloudId`, and `projectKey` (see Step 0 of `.claude/agents/Manual-test-generator.md`), use those in place of the config file and skip the missing-config stop above. When nothing is supplied inline, `qa-config.json` is required exactly as stated.
+
 - Manual test cases at `tests/cases/$ARGUMENTS.md`. If missing, tell the user to run `/create-manual-test-cases $ARGUMENTS` first.
 - Automated test spec file (find the relevant `.spec.ts` that contains a `test.describe` block with `$ARGUMENTS` in its name, if any)
 
@@ -72,8 +74,17 @@ After any remove/update/add action, re-display the updated table and ask for app
 
 ### jira
 
+**Resolve `cloudId` and `projectKey` first:** use the inline-resolved values if the invoking agent supplied them, otherwise read `ticketSource.jira.cloudId` / `ticketSource.jira.projectKey` from `qa-config.json`. Every `cloudId` / `projectKey` reference below means the resolved value.
+
+**Then confirm the test issue type exists** before creating anything. Call `mcp__claude_ai_Atlassian__getJiraProjectIssueTypesMetadata` for the resolved `projectKey` and look for the type named by `ticketSource.jira.testIssueType` (default `Test`):
+- Found → use that name as `issueTypeName`.
+- Not found → fall back to `Task`, and **tell the user** you are doing so and why, before the review gate closes. Do not create dozens of issues under a type the project rejects.
+- If the metadata call itself fails, say so and ask the user which issue type to use rather than guessing.
+
+The issue link type has the same problem: if `createIssueLink` rejects the configured `linkType` (default `Test`), stop after the first failure, report it, and ask which link type to use — do not create the remaining issues unlinked without saying so.
+
 Fetch the parent story/bug via `mcp__claude_ai_Atlassian__getJiraIssue`:
-- `cloudId`: `<ticketSource.jira.cloudId from qa-config.json>`
+- `cloudId`: `<resolved cloudId>`
 - `issueIdOrKey`: `$ARGUMENTS`
 - `fields`: `["components", "fixVersions"]`
 
@@ -82,9 +93,9 @@ Extract **Components** (`fields.components`, use `id`) and **Fix Versions** (`fi
 Identify the assignee: use `mcp__claude_ai_Atlassian__atlassianUserInfo` to get the current (connected) user's `accountId`.
 
 For **each** manual test case, create a Jira **Test** issue via `mcp__claude_ai_Atlassian__createJiraIssue`:
-- `cloudId`: `<ticketSource.jira.cloudId from qa-config.json>`
-- `projectKey`: `<ticketSource.jira.projectKey from qa-config.json>`
-- `issueTypeName`: `Test`
+- `cloudId`: `<resolved cloudId>`
+- `projectKey`: `<resolved projectKey>`
+- `issueTypeName`: `<the type confirmed above — testIssueType, or Task if it was absent>`
 - `summary`: `TC-XXX: <test case title>`
 - `assignee_account_id`: `<accountId from atlassianUserInfo>`
 - `additional_fields`: `{"components": [{"id": "<component-id-from-parent>"}], "fixVersions": [{"id": "<version-id-from-parent>"}]}`
@@ -92,7 +103,7 @@ For **each** manual test case, create a Jira **Test** issue via `mcp__claude_ai_
 **Create issues in parallel batches** (up to 8 at a time). Collect all created issue keys.
 
 For **each** created Test issue, link it to the parent via `mcp__claude_ai_Atlassian__createIssueLink`:
-- `cloudId`: `<ticketSource.jira.cloudId from qa-config.json>`
+- `cloudId`: `<resolved cloudId>`
 - `inwardIssue`: `<created-test-issue-key>`
 - `outwardIssue`: `$ARGUMENTS`
 - `type`: `Test`
