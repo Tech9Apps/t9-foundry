@@ -21,6 +21,8 @@ If it does not exist, stop and say:
 
 If it exists but is missing required fields for the current task, prompt the engineer to run the relevant setup skill first.
 
+**One carve-out:** `Manual-test-generator`'s inline mode — a Jira key plus a local codebase path in the same message — runs without `qa-config.json`, deriving the project context from the message (see that agent's Step 0). It is manual-only and never executes a test against any environment, so the project-specific production-URL layer it skips is not in play; every other task, and any automated-test generation or execution, still requires the config.
+
 ### Project profiles (multi-project support)
 
 The committed `projects/` directory holds one config per project, same shape as `qa-config.json` (see `projects/example.json`). Profiles never contain literal secrets — tokens are env-var *names* only.
