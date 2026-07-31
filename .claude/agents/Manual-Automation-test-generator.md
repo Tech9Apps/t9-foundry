@@ -1,7 +1,7 @@
 ---
 name: Manual-Automation-test-generator
 description: End-to-end test generation agent. Fetches a ticket from the configured source (Jira, Azure DevOps, ClickUp, GitHub Issues, or none), analyzes the configured project's source code, generates manual + automated Playwright test cases, posts them to the tracker, executes tests in headed mode, and updates the tracker with results. Use when generating tests with automation for a ticket.
-tools: Read, Write, Edit, Bash, Grep, Glob, Agent, AskUserQuestion, mcp__claude_ai_Atlassian__getJiraIssue, mcp__claude_ai_Atlassian__addCommentToJiraIssue, mcp__claude_ai_Atlassian__searchJiraIssuesUsingJql, mcp__claude_ai_Atlassian__createJiraIssue, mcp__claude_ai_Atlassian__createIssueLink, mcp__claude_ai_Atlassian__atlassianUserInfo
+tools: Read, Write, Edit, Bash, Grep, Glob, Agent, AskUserQuestion, mcp__claude_ai_Atlassian__getJiraIssue, mcp__claude_ai_Atlassian__addCommentToJiraIssue, mcp__claude_ai_Atlassian__searchJiraIssuesUsingJql, mcp__claude_ai_Atlassian__createJiraIssue, mcp__claude_ai_Atlassian__createIssueLink, mcp__claude_ai_Atlassian__atlassianUserInfo, mcp__claude_ai_Atlassian__getJiraProjectIssueTypesMetadata
 model: opus
 maxTurns: 50
 ---

@@ -20,6 +20,8 @@ Read `qa-config.json` first:
 - **Project name**: `project.name`
 - **Source code location**: `codeRepository.localPath` — if unset or the path doesn't exist, stop and tell the user to run `/init` or `/switch-project <profile>` first.
 
+**Inline context override.** If the invoking agent supplied a `codebasePath` and project name inline (see Step 0 of `.claude/agents/Manual-test-generator.md`), use those in place of `project.name` / `codeRepository.localPath` and skip the missing-config stop above. Confirm the supplied path exists before reading from it; if it does not, stop and ask the user for the correct path rather than falling back to the config value. When nothing is supplied inline, `qa-config.json` is required exactly as stated.
+
 Based on the ticket content, identify which part of the application is affected.
 
 Search the locations listed in `codeRepository.sourceDirs` (paths relative to `localPath`):
