@@ -26,7 +26,9 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
     if (!/^[A-Za-z0-9_-]+$/.test(String(id))) throw new TrackerError('VALIDATION', `"${id}" is not a valid ClickUp task id`);
     return `/task/${id}`;
   };
-  const summarize = (t) => ({ id: String(t.id), title: t.name, url: t.url, status: t.status && t.status.status });
+  // ClickUp statuses are per-list and custom: trust the status `type` (done/closed) when present, else the usual words
+  const clickupClosed = (s) => !!s && (s.type === 'closed' || s.type === 'done' || /^(closed|complete|completed|done|resolved)$/i.test(s.status || ''));
+  const summarize = (t) => ({ id: String(t.id), title: t.name, url: t.url, status: t.status && t.status.status, open: !clickupClosed(t.status) });
   const iso = (ms) => (/^\d+$/.test(String(ms)) ? new Date(Number(ms)).toISOString() : null);
 
   async function fetchTicket(id) {

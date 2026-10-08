@@ -67,13 +67,16 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
     return batch.value || [];
   }
 
+  // Resolved counts as closed: a defect that comes back after "resolved" is a regression, not a live report
+  const AZ_CLOSED = /^(closed|done|removed|resolved)$/i;
+
   async function search({ query, kind = 'any', limit = 10 }) {
     const q = wiqlString(query);
     let where = `([System.Title] CONTAINS '${q}' OR [System.Description] CONTAINS '${q}')`;
     if (kind === 'bug') where += " AND [System.WorkItemType] = 'Bug'";
     if (kind === 'test') where += " AND [System.WorkItemType] = 'Test Case'";
     const items = await runQuery(where, limit);
-    return { items: items.map((wi) => ({ id: String(wi.id), title: f(wi, 'System.Title'), url: htmlUrl(wi), status: f(wi, 'System.State') })) };
+    return { items: items.map((wi) => ({ id: String(wi.id), title: f(wi, 'System.Title'), url: htmlUrl(wi), status: f(wi, 'System.State'), open: !AZ_CLOSED.test(f(wi, 'System.State') || '') })) };
   }
 
   async function findByKey(key) {

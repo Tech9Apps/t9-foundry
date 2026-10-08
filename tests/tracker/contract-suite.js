@@ -102,6 +102,18 @@ function runContractSuite(name, makeMock) {
       assert.equal(mock.createdItems().length, 1);
     });
 
+    test('search says whether each item is open, and still returns closed ones (a recurrence must be recognizable)', async () => {
+      const { mock, adapter } = fresh();
+      const live = await run(adapter, 'create-bug', bugInput({ title: 'Receipt total is wrong on refunds' }));
+      const old = await run(adapter, 'create-bug', bugInput({ title: 'Receipt rounding is wrong on refunds' }));
+      mock.closeItem(old.id); // the tracker's NATIVE closed state (closed / resolved / done …)
+      const { items } = await run(adapter, 'search', { query: 'Receipt', kind: 'bug' });
+      assertValid('tracker-search-result', { items });
+      const byId = Object.fromEntries(items.map((i) => [i.id, i]));
+      assert.equal(byId[live.id].open, true, 'a live bug is open');
+      assert.equal(byId[old.id].open, false, 'a closed bug is still returned, marked not open');
+    });
+
     test('comment adds a comment and returns a schema-valid result', async () => {
       const { mock, adapter } = fresh();
       const id = seed(mock);

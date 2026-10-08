@@ -93,6 +93,7 @@ function createGithubMock({ token = 'test-token', repo = 'acme/shop' } = {}) {
     settle: () => state.unindexed.clear(), // the search index catches up
     tokenEnv: 'GITHUB_TOKEN',
     createdItems: () => state.created.map((n) => ({ id: String(n), title: state.issues.get(n).title, text: state.issues.get(n).body })),
+    closeItem: (id) => { state.issues.get(Number(id)).state = 'closed'; },
     commentsOn: (id) => state.comments.get(Number(id)).map((c) => c.body),
     // regex sources for fault injection
     paths: { create: '/issues$', search: '/search/issues', ticket: '/issues/\\d+$' },

@@ -10,8 +10,12 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["id", "title"],
-        "properties": { "id": { "type": "string" }, "title": { "type": "string" }, "url": { "type": "string" }, "status": { "type": "string" } }
+        "required": ["id", "title", "open"],
+        "properties": {
+          "id": { "type": "string" }, "title": { "type": "string" }, "url": { "type": "string" },
+          "status": { "type": "string", "description": "the tracker's own word (open, opened, Active, a custom ClickUp status …)" },
+          "open": { "type": "boolean", "description": "normalized: false once the item is closed/resolved/done — a match that is not open means a defect that came back is a regression" }
+        }
       }
     }
   }

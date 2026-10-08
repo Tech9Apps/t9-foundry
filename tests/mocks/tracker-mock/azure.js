@@ -102,6 +102,7 @@ function createAzureMock({ pat = 'test-pat', org = 'acme', project = 'shop' } = 
       const f = state.items.get(id).fields;
       return { id: String(id), title: f['System.Title'], text: [f['System.Description'], f['Microsoft.VSTS.TCM.Steps'], f['Microsoft.VSTS.TCM.ReproSteps']].map(stripTags).join('\n') };
     }),
+    closeItem: (id) => { state.items.get(Number(id)).fields['System.State'] = 'Closed'; },
     commentsOn: (id) => state.comments.get(Number(id)).map((c) => c.text),
     paths: { create: '/workitems/\\$[^/]+$', search: '/wiql', ticket: '/workitems/\\d+(\\?|$)', link: '/workitems/\\d+(\\?|$)' },
     linkMethod: 'PATCH',

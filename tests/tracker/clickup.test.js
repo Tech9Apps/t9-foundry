@@ -143,4 +143,17 @@ describe('clickup: specifics', () => {
       assert.equal(again.repaired, undefined);
     });
   });
+
+  test('open/closed follows the status TYPE, because statuses are custom per list ("shipped" can be closed, "in review" is not)', async () => {
+    const mock = createClickupMock();
+    const adapter = make(mock);
+    const task = (name, status) => { const id = mock.seedTicket({ title: name }); mock.state.tasks.get(String(id)).status = status; return id; };
+    const shipped = task('[BUG] Receipt shipped', { status: 'shipped', type: 'closed' });
+    const done = task('[BUG] Receipt done', { status: 'wrapped up', type: 'done' });
+    const review = task('[BUG] Receipt review', { status: 'in review', type: 'custom' });
+    const todo = task('[BUG] Receipt todo', { status: 'to do', type: 'open' });
+    const { items } = await run(adapter, 'search', { query: 'Receipt', kind: 'bug' });
+    const open = Object.fromEntries(items.map((i) => [i.id, i.open]));
+    assert.deepEqual([open[shipped], open[done], open[review], open[todo]], [false, false, true, true]);
+  });
 });

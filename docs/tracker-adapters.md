@@ -26,7 +26,7 @@ Same operations, same JSON in and out, same error shape — whichever tracker is
 | Op | Input | Returns |
 |----|-------|---------|
 | `fetch` | `{ id }` | a normalized **ticket** — [`schemas/tracker-ticket.schema.json`](../schemas/tracker-ticket.schema.json) |
-| `search` | `{ query, kind?: any\|bug\|test, limit? }` | `{ items: [{ id, title, url, status }] }` |
+| `search` | `{ query, kind?: any\|bug\|test, limit? }` | `{ items: [{ id, title, url, status, open }] }` — `status` is the tracker's own word, `open` is normalized (closed items are still returned, marked `open: false`) |
 | `create-test` | `{ parentId, tcId, title, description?, priority?, steps?: [{action, expected}], idempotencyKey? }` | `{ id, url, deduplicated, repaired? }` |
 | `link` | `{ childId, parentId }` | `{ linked, method: native\|reference-in-body }` |
 | `comment` | `{ id, body, idempotencyKey? }` | `{ id, url?, deduplicated }` |

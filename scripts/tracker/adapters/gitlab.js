@@ -29,7 +29,7 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
     if (!/^\d+$/.test(String(id))) throw new TrackerError('VALIDATION', `GitLab issue ids are numbers (got "${id}")`);
     return `${project}/issues/${id}`;
   };
-  const summarize = (i) => ({ id: String(i.iid), title: i.title, url: i.web_url, status: i.state });
+  const summarize = (i) => ({ id: String(i.iid), title: i.title, url: i.web_url, status: i.state, open: i.state === 'opened' });
   const priorityLabel = (p) => (p ? [`priority:${p}`] : []);
 
   async function fetchTicket(id) {

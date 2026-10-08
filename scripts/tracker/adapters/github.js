@@ -33,7 +33,7 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
     if (!/^\d+$/.test(String(id))) throw new TrackerError('VALIDATION', `GitHub issue ids are numbers (got "${id}")`);
     return `/repos/${repo}/issues/${id}`;
   };
-  const summarize = (issue) => ({ id: String(issue.number), title: issue.title, url: issue.html_url, status: issue.state });
+  const summarize = (issue) => ({ id: String(issue.number), title: issue.title, url: issue.html_url, status: issue.state, open: issue.state === 'open' });
 
   async function fetchTicket(id) {
     const { json: issue } = await call('GET', issuePath(id), undefined, `fetch GitHub issue ${id}`);

@@ -87,6 +87,7 @@ function createClickupMock({ token = 'pk_test_token', listId = '9001' } = {}) {
       const items = [...state.checklists.values()].filter((c) => c.task === id).flatMap((c) => c.items.map((i) => i.name));
       return { id, title: t.name, text: [t.description, ...items].join('\n') };
     }),
+    closeItem: (id) => { state.tasks.get(String(id)).status = { status: 'complete', type: 'closed' }; },
     commentsOn: (id) => state.comments.get(id).map((c) => c.comment_text),
     paths: { create: '/list/[^/]+/task$', search: '/list/[^/]+/task', ticket: '/task/[^/]+$', link: '/link/' },
     linkMethod: 'POST',

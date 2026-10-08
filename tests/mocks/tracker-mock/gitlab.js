@@ -74,6 +74,7 @@ function createGitlabMock({ token = 'glpat-test-token', projectId = '42' } = {})
       return String(iid);
     },
     createdItems: () => state.created.map((iid) => ({ id: String(iid), title: state.issues.get(iid).title, text: state.issues.get(iid).description })),
+    closeItem: (id) => { state.issues.get(Number(id)).state = 'closed'; },
     commentsOn: (id) => state.notes.get(Number(id)).map((n) => n.body),
     paths: { create: '/issues$', search: '/issues', ticket: '/issues/\\d+(\\?|$)', link: '/links' },
     linkMethod: 'POST',
