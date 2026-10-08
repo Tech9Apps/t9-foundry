@@ -31,6 +31,24 @@ node_tests() { cd "$REPO_ROOT" && env -u NODE_TEST_CONTEXT node --test --test-re
   done
 }
 
+@test "the planner passes its tests on all five tracker mocks (dedupe, regressions, read-only, degraded modes)" {
+  run node_tests plan.test.js
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "# fail 0" ]]
+}
+
+@test "the orchestrator passes its tests (re-run scoping, preflight, missing reports, evidence, outputs)" {
+  run node_tests orchestrate.test.js
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "# fail 0" ]]
+}
+
+@test "every seeded scenario (real bug, stale selector, flaky, environment outage) is run for real and triaged as documented" {
+  run node_tests scenarios.test.js
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "# fail 0" ]]
+}
+
 @test "the triage scripts depend on nothing but Node built-ins" {
   mods=$(grep -rhoE "require\('[^']+'\)" "$REPO_ROOT/scripts/triage" | sed -E "s/require\('([^']+)'\)/\1/" | grep -v '^\.' | sort -u)
   for m in $mods; do

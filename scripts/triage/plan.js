@@ -119,6 +119,18 @@ async function plan({ report, runId, adapter, trackerWarning }) {
   return { runId, actions, flaky, warnings };
 }
 
+// Only product-bug verdicts need the tracker, so credentials are not demanded otherwise. A tracker that cannot be
+// reached or configured degrades the plan with a warning (existing reports could not be checked); it never stops it.
+function connectIfNeeded(report, { configPath, source, baseUrl, timeoutMs, env, fetch }) {
+  if (!report.verdicts.some((v) => v.class === 'product-bug')) return { adapter: null };
+  try {
+    return { adapter: connect({ configPath, source, baseUrl, timeoutMs, env, fetch }) };
+  } catch (err) {
+    if (!(err instanceof TrackerError)) throw err;
+    return { adapter: null, trackerWarning: `no tracker lookup: ${err.message} — existing reports could not be checked, so filing may duplicate` };
+  }
+}
+
 async function main({ argv = process.argv.slice(2), env = process.env, stdout = process.stdout, stderr = process.stderr, fetch = globalThis.fetch, now = Date.now } = {}) {
   const out = (obj) => stdout.write(`${JSON.stringify(obj, null, 2)}\n`);
   try {
@@ -133,14 +145,7 @@ async function main({ argv = process.argv.slice(2), env = process.env, stdout = 
     if (!report || !Array.isArray(report.verdicts)) throw Object.assign(new Error(`${opts.report} is not a triage report (no "verdicts" array)`), { code: 'UNREADABLE' });
     const runId = opts.runId || new Date(now()).toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
 
-    // only product-bug verdicts need the tracker; do not demand credentials otherwise
-    let adapter = null; let trackerWarning;
-    if (report.verdicts.some((v) => v.class === 'product-bug')) {
-      try { adapter = connect({ configPath: opts.config, source: opts.source, baseUrl: opts.baseUrl, timeoutMs: opts.timeoutMs, env, fetch }); } catch (err) {
-        if (!(err instanceof TrackerError)) throw err;
-        trackerWarning = `no tracker lookup: ${err.message} — existing reports could not be checked, so filing may duplicate`;
-      }
-    }
+    const { adapter, trackerWarning } = connectIfNeeded(report, { configPath: opts.config, source: opts.source, baseUrl: opts.baseUrl, timeoutMs: opts.timeoutMs, env, fetch });
     const data = await plan({ report, runId, adapter, trackerWarning });
     for (const f of [opts.out && [opts.out, { ok: true, data }], opts.flakyOut && [opts.flakyOut, { runId, flaky: data.flaky }]].filter(Boolean)) {
       fs.mkdirSync(path.dirname(path.resolve(f[0])), { recursive: true });
@@ -157,4 +162,4 @@ async function main({ argv = process.argv.slice(2), env = process.env, stdout = 
 
 if (require.main === module) main().then((code) => { process.exitCode = code; });
 
-module.exports = { main, plan };
+module.exports = { main, plan, connectIfNeeded, sanitize };
