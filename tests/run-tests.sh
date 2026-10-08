@@ -44,4 +44,5 @@ bats \
   tests/check-prereqs.bats \
   tests/preflight.bats \
   tests/layer5-guard.bats \
-  tests/layer5-guard-py-rb.bats
+  tests/layer5-guard-py-rb.bats \
+  tests/demo.bats

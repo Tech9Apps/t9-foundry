@@ -147,6 +147,7 @@ LOCAL_PATH=$(jq -r '.codeRepository.localPath // ""' "$CFG")
 if [ -n "$LOCAL_PATH" ]; then
   case "$LOCAL_PATH" in /*|~*) APP_DIR="${LOCAL_PATH/#\~/$HOME}" ;; *) APP_DIR="$REPO_ROOT/$LOCAL_PATH" ;; esac
   if [ -d "$APP_DIR" ]; then
+    APP_DIR="$(cd "$APP_DIR" && pwd)"
     ok "app repo found: $APP_DIR"
     if [ -f "$APP_DIR/.env.test" ]; then
       HARNESS_LINE=$(grep -E '^QA_HARNESS_DIR=' "$APP_DIR/.env.test" | tail -1 | cut -d= -f2- || true)

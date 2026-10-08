@@ -1,0 +1,22 @@
+--- a/src/store.js	2026-10-08 12:03:15
++++ b/src/store.js	2026-10-08 12:03:15
+@@ -44,7 +44,7 @@
+     const code = normalizeCode(rawCode);
+     if (!isKnownCoupon(code)) throw new ApiError(400, 'INVALID_COUPON', 'Invalid discount code');
+     const cart = cartFor(email);
+-    if (cart.coupons.length > 0 && !cart.coupons.includes(code)) {
++    if (cart.coupons.length > 0) {
+       throw new ApiError(400, 'COUPON_LIMIT', 'Only one discount code per order');
+     }
+     cart.coupons.push(code);
+--- a/src/pricing.js	2026-10-08 12:03:15
++++ b/src/pricing.js	2026-10-08 12:03:15
+@@ -30,7 +30,7 @@
+   discount = Math.min(discount, subtotal);
+ 
+   const discounted = subtotal - discount;
+-  const shipping = lines.length === 0 ? 0 : subtotal >= FREE_SHIPPING_MIN ? 0 : SHIPPING_FLAT;
++  const shipping = lines.length === 0 ? 0 : discounted >= FREE_SHIPPING_MIN ? 0 : SHIPPING_FLAT;
+   const tax = Math.round((discounted * TAX_RATE_PERCENT) / 100);
+ 
+   return { subtotal, discount, discounted, shipping, tax, total: discounted + shipping + tax };

@@ -1,0 +1,39 @@
+{
+  "project": {
+    "name": "Brew & Co (demo)",
+    "description": "Embedded demo project: a tiny coffee-shop checkout with two planted bugs. Local only."
+  },
+  "ticketSource": { "type": "none" },
+  "codeRepository": {
+    "type": "local",
+    "localPath": "./demo/app",
+    "sourceDirs": {
+      "frontendRoutes": "public",
+      "components": "public",
+      "services": "src",
+      "backendHandlers": "src",
+      "constants": "src/catalog.js"
+    }
+  },
+  "environments": {
+    "testEnvironmentBaseUrl": "http://localhost:4173",
+    "testEnvironmentName": "local demo"
+  },
+  "productionProtection": {
+    "prodUrlPatterns": ["://(www\\.|shop\\.|api\\.)?brewandco\\.com"],
+    "prodEnvVarValues": ["production", "prod"],
+    "blockOnSuspiciousUrls": true,
+    "mode": "warn"
+  },
+  "testFramework": {
+    "type": "other",
+    "testDir": "./demo/app/test"
+  },
+  "dataManagement": { "strategy": "factory" },
+  "testOutput": {
+    "testPlansDir": "./demo/output/test-plans",
+    "testCasesDir": "./demo/output/test-cases",
+    "analysisDir": "./demo/output/analysis",
+    "e2eTestsPath": "./demo/app/test"
+  }
+}

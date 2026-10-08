@@ -76,6 +76,7 @@ The hooks and framework templates enforce this at additional layers — your beh
 | `/save-project NAME` | Snapshot the current `qa-config.json` as a shared team profile in `projects/` |
 | `/generate-regression-pack MODULE` | Build/update a full regression suite (manual + Playwright) for a module — no ticket required |
 | `/file-bug FAILURE` | Reproduce a failure on staging, capture evidence, and file a bug in the configured tracker |
+| `/demo [TICKET]` | Guided tour against the embedded Brew & Co demo project (backs up and restores your `qa-config.json`) |
 
 ### Canonical Workflow
 ```
@@ -112,6 +113,7 @@ bats tests/check-prereqs.bats
 bats tests/preflight.bats
 bats tests/layer5-guard.bats        # TS guards; needs Node >= 22.6 (type stripping)
 bats tests/layer5-guard-py-rb.bats  # pytest/selenium/rspec guards; needs python3 + ruby
+bats tests/demo.bats                # the embedded demo project must keep behaving as documented
 ```
 
 **Run a single test by name pattern:**
@@ -128,6 +130,8 @@ npm install --prefix tests/
 ```bash
 bash scripts/check-prereqs.sh
 ```
+
+**The embedded demo** (`demo/`): `bash demo/run-demo.sh` is the 2-minute tour; `/demo` is the guided version. `demo/app` has two *planted* bugs — `cd demo/app && npm test` is expected to show 2 failures (`DEMO-101/TC-005`, `DEMO-102/TC-006`), and `tests/demo.bats` pins exactly that. Don't "fix" them in `src/`; the fixes live in `demo/fixes.patch`.
 
 **Preflight an autonomous run** (go/no-go on config, credentials, prod patterns, staging reachability):
 ```bash
