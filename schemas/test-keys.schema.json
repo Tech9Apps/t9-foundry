@@ -1,0 +1,36 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "test-keys.schema.json",
+  "title": "Posted test cases (…-test-keys.json)",
+  "description": "Written by scripts/tracker/post-tests.js after every case. The record of what exists in the tracker for a ticket; safe to re-run against.",
+  "type": "object",
+  "required": ["parentTicket", "source", "tests"],
+  "additionalProperties": false,
+  "properties": {
+    "parentTicket": { "type": "string" },
+    "source": { "type": "string" },
+    "casesFile": { "type": "string" },
+    "updatedAt": { "type": "string" },
+    "tests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["tcId", "summary", "status", "linked"],
+        "additionalProperties": false,
+        "properties": {
+          "tcId": { "type": "string", "pattern": "^TC-\\d+$" },
+          "summary": { "type": "string" },
+          "status": { "enum": ["created", "deduplicated", "failed", "skipped"], "description": "created: new this run · deduplicated: already existed · failed: see error · skipped: the run stopped before reaching it" },
+          "linked": { "type": "boolean" },
+          "id": { "type": "string", "description": "the tracker's id for the test case (present once it exists, even if linking failed)" },
+          "url": { "type": "string" },
+          "repaired": { "type": "boolean", "description": "a half-built item from an earlier attempt was completed" },
+          "reason": { "type": "string" },
+          "error": { "$ref": "tracker-error.schema.json" },
+          "linkError": { "$ref": "tracker-error.schema.json" },
+          "partial": { "type": "object", "description": "a multi-call create failed part-way; this is the item it left behind" }
+        }
+      }
+    }
+  }
+}

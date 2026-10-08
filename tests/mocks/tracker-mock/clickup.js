@@ -88,7 +88,8 @@ function createClickupMock({ token = 'pk_test_token', listId = '9001' } = {}) {
       return { id, title: t.name, text: [t.description, ...items].join('\n') };
     }),
     commentsOn: (id) => state.comments.get(id).map((c) => c.comment_text),
-    paths: { create: '/list/[^/]+/task$', search: '/list/[^/]+/task', ticket: '/task/[^/]+$' },
+    paths: { create: '/list/[^/]+/task$', search: '/list/[^/]+/task', ticket: '/task/[^/]+$', link: '/link/' },
+    linkMethod: 'POST',
     missingId: '86zzzzzz',
   };
 }

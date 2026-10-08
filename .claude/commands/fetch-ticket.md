@@ -12,9 +12,9 @@ Read `qa-config.json > ticketSource.type` to determine which source to fetch fro
 
 **Inline context override.** If the invoking agent supplied an already-resolved ticket source (see Step 0 of `.claude/agents/Manual-test-generator.md`), use those values in place of the config file and skip the missing-config stop above. When nothing is supplied inline — every slash-command invocation, and every other agent — `qa-config.json` is required exactly as stated.
 
-> **Reference:** the method for each source below mirrors `.claude/guides/integration-sources.md` — update that file too if a fetch method changes here.
+> **Reference:** `.claude/guides/integration-sources.md` lists the fetch method per source — update it if a method changes here.
 
-**Every `curl` call below uses `-f` (fail on HTTP error status, including 404) and `--max-time 30` (bound the wait).** A non-zero exit means the fetch failed — treat it as "ticket not found" for the purposes of the not-found handling in `Manual-test-generator.md`/`Manual-Automation-test-generator.md`, and don't proceed as if the response body were valid ticket data.
+**Which path a source takes:** `github`, `clickup` and `azure` go through the tracker adapter CLI (`scripts/tracker/cli.js`, see `docs/tracker-adapters.md`) — one tested interface instead of hand-written API calls. `jira` uses the Atlassian MCP server. `none` has no tracker.
 
 ## Fetch, by ticket source
 
@@ -44,89 +44,29 @@ Map into the output schema below:
 - **Comments** — from the response
 - **Sub-tasks** — `fields.subtasks` (if any, fetch those too with `getJiraIssue`)
 
-### azure
-
-Azure DevOps has no pre-configured MCP server in this workspace, so access goes through the Azure DevOps REST API directly, authenticated with a Personal Access Token (PAT) read from the environment — never hardcode credentials.
-
-Read all values from `qa-config.json > ticketSource.azure`. If `qa-config.json` is missing or `organization`/`project` are unset, stop and tell the user to run `/init` or `/switch-project <profile>` first.
-
-- **Organization**: `ticketSource.azure.organization`
-- **Project**: `ticketSource.azure.project`
-- **PAT env var**: named by `ticketSource.azure.tokenEnvVar` (default `AZURE_DEVOPS_PAT`) — read from the shell env, never written into any file or output
-- **Base URL**: `{ticketSource.azure.host}/{organization}/{project}` (host defaults to `https://dev.azure.com`)
+### github / clickup / azure — via the tracker adapter CLI
 
 ```bash
-curl -fsS --max-time 30 -u ":$AZURE_DEVOPS_PAT" \
-  "https://dev.azure.com/{organization}/{project}/_apis/wit/workitems/$ARGUMENTS?\$expand=all&api-version=7.1"
+node scripts/tracker/cli.js fetch --input '{"id":"$ARGUMENTS"}' --context-file tests/cases/.ticket-context/$ARGUMENTS.json
 ```
 
-Comments are not included in the work item response above — fetch them separately:
+Pass the id exactly as given (a GitHub issue number, an Azure DevOps work item number, a ClickUp task id). The CLI reads the tracker settings from `qa-config.json > ticketSource`, reads the credential from the environment variable that config names (`GITHUB_TOKEN`, `CLICKUP_TOKEN`, `AZURE_DEVOPS_PAT`, or `ticketSource.<type>.tokenEnvVar`), and:
 
-```bash
-curl -fsS --max-time 30 -u ":$AZURE_DEVOPS_PAT" \
-  "https://dev.azure.com/{organization}/{project}/_apis/wit/workitems/$ARGUMENTS/comments?api-version=7.1-preview.3"
-```
+- prints `{ "ok": true, "data": <normalized ticket> }`, and
+- writes the ticket-context file (schema below) itself — **you do not map fields by hand**.
 
-Map into the output schema below:
-- **Title** — `fields["System.Title"]`
-- **Description** — `fields["System.Description"]`
-- **Issue Type** — `fields["System.WorkItemType"]` (Bug, User Story, Task, etc.)
-- **Status** — `fields["System.State"]`
-- **Priority** — `fields["Microsoft.VSTS.Common.Priority"]`
-- **Labels** — `fields["System.Tags"]` (semicolon-separated string — split into an array)
-- **Acceptance Criteria** — `fields["Microsoft.VSTS.Common.AcceptanceCriteria"]`
-- **Attachments** — `relations[]` entries where `rel == "AttachedFile"` (filenames and URLs)
-- **Comments** — from the comments response
-- **Sub-tasks** — `relations[]` entries where `rel == "System.LinkTypes.Hierarchy-Forward"` (if any, fetch those too with the same work item endpoint)
+Never put a token on the command line, in a file, or in your output.
 
-### clickup
+If it prints `{ "ok": false, "error": … }`, branch on `error.code`:
 
-ClickUp access is provided via a Personal API Token, read from the environment — never hardcode it.
+| `error.code` | What to do |
+|---|---|
+| `NOT_FOUND` | The ticket does not exist (or this token cannot see it). Stop — this is the "ticket not found" case the orchestrating agents handle. |
+| `UNAUTHENTICATED`, `FORBIDDEN`, `CONFIG` | Tell the user exactly what is wrong using `error.message` (e.g. "CLICKUP_TOKEN is not set") and how to fix it. Do not retry. |
+| `VALIDATION` | The id is malformed for this tracker (e.g. a Jira-style key against GitHub). Say so and ask for the right id. |
+| `RATE_LIMITED`, `TIMEOUT`, `NETWORK`, `UPSTREAM_ERROR` | The adapter already retried the read. Wait a few seconds and run it once more; if it fails again, report the code and message. |
 
-- **Token env var**: read `qa-config.json > ticketSource.clickup.tokenEnvVar` (defaults to `CLICKUP_TOKEN` if unset)
-- If the env var is not set, stop and tell the user to run `/connect-tickets` or export the token per `docs/integration-guide.md`.
-
-```bash
-curl -fsS --max-time 30 -H "Authorization: $CLICKUP_TOKEN" \
-  "https://api.clickup.com/api/v2/task/$ARGUMENTS?include_subtasks=true"
-```
-
-```bash
-curl -fsS --max-time 30 -H "Authorization: $CLICKUP_TOKEN" \
-  "https://api.clickup.com/api/v2/task/$ARGUMENTS/comment"
-```
-
-Map into the output schema below:
-- **Title** — `name`
-- **Description** — `text_content` (plain) or `description` (markdown, if present)
-- **Issue Type** — ClickUp tasks have no native issue-type field; use a custom field named "Type"/"Task Type" if the list has one, otherwise default to `"Task"`
-- **Status** — `status.status`
-- **Priority** — `priority.priority` (`urgent`/`high`/`normal`/`low`)
-- **Labels** — `tags[].name`
-- **Acceptance Criteria** — look in `description`/`text_content` or a custom field
-- **Attachments** — `attachments[]` (titles and URLs)
-- **Comments** — from the comments response
-- **Sub-tasks** — `subtasks[]` (present when `include_subtasks=true`; fetch each via the same task endpoint)
-
-### github
-
-Read the repo from `qa-config.json > ticketSource.github.repo` (owner/repo format) — this is the ticket-tracking repo, which may differ from `codeRepository.github.repo` (the app's source code repo).
-
-```bash
-gh issue view $ARGUMENTS --repo {ticketSource.github.repo} --json title,body,labels,milestone,comments
-```
-
-Map into the output schema below:
-- **Title** — `title`
-- **Description** — `body`
-- **Issue Type** — infer from `labels` (e.g. a `bug` label → `"Bug"`), default `"Task"`
-- **Status** — open/closed state from `gh issue view` output
-- **Priority** — from a `priority:*` label if present, else `""`
-- **Labels** — `labels[].name`
-- **Acceptance Criteria** — look in `body`
-- **Attachments** — not applicable, leave `[]`
-- **Comments** — `comments`
-- **Sub-tasks** — GitHub Issues has no native sub-task field, leave `[]`
+Exit code `2` means the command itself was invoked wrongly (message on stderr) — fix the invocation, do not guess at the ticket.
 
 ### none
 
@@ -134,11 +74,13 @@ No ticket system is configured. Ask the engineer to describe the feature and acc
 
 ## Output Schema (jira / azure / clickup / github)
 
-Save to `tests/cases/.ticket-context/$ARGUMENTS.json`:
+`tests/cases/.ticket-context/$ARGUMENTS.json` — written by the CLI for `github` / `clickup` / `azure`; for `jira` you write it yourself from the mapping above:
 
 ```json
 {
   "ticketId": "<TICKET-ID>",
+  "source": "jira|azure|clickup|github",
+  "url": "...",
   "summary": "...",
   "issueType": "Story|Bug|Task|...",
   "status": "...",

@@ -7,6 +7,7 @@ const Ajv = require('../node_modules/ajv');
 const SCHEMAS = path.join(__dirname, '..', '..', 'schemas');
 const ajv = new Ajv({ allErrors: true, strict: false });
 ajv.addSchema(require(path.join(SCHEMAS, 'tracker-inputs.schema.json')));
+ajv.addSchema(require(path.join(SCHEMAS, 'tracker-error.schema.json')));
 const compiled = new Map();
 
 function validator(name) {

@@ -103,7 +103,8 @@ function createAzureMock({ pat = 'test-pat', org = 'acme', project = 'shop' } = 
       return { id: String(id), title: f['System.Title'], text: [f['System.Description'], f['Microsoft.VSTS.TCM.Steps'], f['Microsoft.VSTS.TCM.ReproSteps']].map(stripTags).join('\n') };
     }),
     commentsOn: (id) => state.comments.get(Number(id)).map((c) => c.text),
-    paths: { create: '/workitems/\\$[^/]+$', search: '/wiql', ticket: '/workitems/\\d+(\\?|$)' },
+    paths: { create: '/workitems/\\$[^/]+$', search: '/wiql', ticket: '/workitems/\\d+(\\?|$)', link: '/workitems/\\d+(\\?|$)' },
+    linkMethod: 'PATCH',
     searchMethod: 'POST', // WIQL is a POST, but a read
     missingId: '99999',
   };

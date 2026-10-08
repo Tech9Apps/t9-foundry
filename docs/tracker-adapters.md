@@ -11,9 +11,10 @@ Same operations, same JSON in and out, same error shape — whichever tracker is
 **testable** (every adapter runs against an in-process mock in CI), **safe to retry** (idempotency keys), and
 **usable unattended** (token auth, hard timeouts, structured errors).
 
-> **Status.** Adapters exist for **GitHub, ClickUp and Azure DevOps**. Jira (needs a headless auth decision),
-> GitLab and Bitbucket are next. The markdown commands (`fetch-ticket.md`, `post-tests.md`, `file-bug.md`) have **not
-> been rewired to call the CLI yet** — that is the next step, and it changes pipeline behavior, so it ships separately.
+> **Status.** Adapters exist for **GitHub, ClickUp and Azure DevOps**, and the pipeline commands use them:
+> `fetch-ticket.md`, `post-tests.md`, `file-bug.md` and the results step of the automation agent call the CLIs below
+> for those three sources. **Jira** still uses the Atlassian MCP (headless auth is undecided), **GitLab/Bitbucket** bug
+> filing still uses `curl` until their adapters exist, and `none` has no tracker.
 
 ## Operations
 
@@ -45,6 +46,26 @@ Exit codes: **0** success · **1** the operation failed (read `error.code`) · *
 Credentials come from environment variables named in the config (`GITHUB_TOKEN`, `CLICKUP_TOKEN`, `AZURE_DEVOPS_PAT`,
 or `ticketSource.<type>.tokenEnvVar`) and are **never printed** — not in output, errors or URLs. stdin is only read
 with `--stdin`, so an inherited pipe can never hang an unattended run.
+
+## Posting test cases in bulk: `post-tests.js`
+
+```bash
+node scripts/tracker/post-tests.js --parent <ticket-id>          # reads tests/cases/<id>.md
+                                   [--only TC-003,TC-007]        # retry just these
+                                   [--dry-run]                   # print the plan; no credentials, no requests
+```
+
+Parses the harness's test-case markdown, **checks the parent ticket exists and the credentials work before creating
+anything** (so a typo'd id cannot create orphaned test cases), then creates each case (key `<parent>-<TC-id>`), links
+it, and records every outcome in `tests/cases/.ticket-context/<id>-test-keys.json`
+([`schemas/test-keys.schema.json`](../schemas/test-keys.schema.json)) after each case.
+
+| Situation | Behavior |
+|---|---|
+| Re-run | existing cases are found by key, not duplicated; created-but-unlinked cases get linked; half-built ones are completed |
+| One case fails (timeout, 5xx, validation) | recorded as `failed` with the error; the others continue |
+| A failure that would hit every remaining case (credentials revoked, rate limit) | the run stops; the rest are `skipped`; re-run later resumes |
+| Exit code | `0` all created/found **and** linked · `1` anything failed/skipped/unlinked, or it could not start · `2` bad invocation |
 
 ## Errors
 
@@ -83,6 +104,22 @@ Every failure is normalized, so a caller never parses tracker-specific messages:
 | Bug is | issue titled `[BUG] …`, label `bug` | task named `[BUG] …` | a `Bug` work item |
 | Idempotency marker | `qa-harness-key:<key>` line in the body | same, in the description | tag `qa-key-<key>` |
 | Not yet | — | — | assignee lookup (needs a second host) |
+
+## Keeping the prose honest
+
+The command prompts tell a model exactly how to call these scripts, so
+[`tests/helpers/commands-drift-check.js`](../tests/helpers/commands-drift-check.js) (run by
+`tests/commands-adapter-drift.bats`) checks every claim they make against the code: each `cli.js <op>` is a real
+operation, each `--flag` exists, each example JSON validates against the schemas, every registered adapter is named in
+each command's adapter section, and no direct `curl` / `gh issue` / vendor-API call has crept back in.
+
+## Evals
+
+[`evals/`](../evals/) runs the demo's three tickets — with golden counts verified independently of the code — through
+the real `fetch` (+ context file), `post-tests`, `create-bug` and `comment` against every tracker mock, plus four
+failure drills (transient failure, lost response, credentials revoked mid-run, wrong parent id). 87 checks;
+`node evals/run.js [--tracker T] [--scenario S] [--json]`. Deterministic by design: model-in-the-loop evals can reuse
+the same scenarios and goldens later.
 
 ## See it work
 

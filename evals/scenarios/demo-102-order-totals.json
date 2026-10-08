@@ -1,0 +1,14 @@
+{
+  "name": "DEMO-102 order totals",
+  "ticket": "demo/tickets/DEMO-102.md",
+  "cases": "demo/expected/DEMO-102-test-cases.md",
+  "golden": {
+    "ticketTitle": "DEMO-102: Correct order total, tax, and free shipping",
+    "acceptanceCriteria": 6,
+    "cases": 9,
+    "priorities": { "High": 5, "Medium": 2, "Low": 2 },
+    "bugs": [
+      { "report": "demo/expected/bug-DEMO-102-free-shipping-threshold.md", "priority": "Medium", "searchQuery": "ignores the discount" }
+    ]
+  }
+}

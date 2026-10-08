@@ -143,6 +143,37 @@ describe('tracker CLI', () => {
     assert.ok(mock.calls.length > 0);
   });
 
+  test('fetch --context-file also writes the pipeline ticket-context JSON (creating directories)', async () => {
+    const mock = createGithubMock();
+    const id = mock.seedTicket({ title: 'Apply a discount code', description: 'd', acceptance: '1. a\n2. b', labels: ['bug'], comments: [{ author: 'pm', body: 'hi' }] });
+    const target = path.join(tmpdir(), 'nested', '.ticket-context', 'DEMO-101.json');
+    const r = await cli(['fetch', '--config', config(), '--input', JSON.stringify({ id }), '--base-url', mock.baseUrl, '--context-file', target], { env: { GITHUB_TOKEN: mock.token }, fetch: mock.fetch });
+    assert.equal(r.code, 0);
+    const ctx = JSON.parse(fs.readFileSync(target, 'utf8'));
+    assert.equal(ctx.ticketId, id);
+    assert.equal(ctx.summary, 'Apply a discount code');
+    assert.equal(ctx.issueType, 'Bug');
+    assert.match(ctx.acceptanceCriteria, /1\. a/);
+    assert.deepEqual(ctx.comments.map((c) => c.body), ['hi']);
+    for (const key of ['ticketId', 'summary', 'issueType', 'status', 'priority', 'labels', 'description', 'acceptanceCriteria', 'attachments', 'comments', 'subtasks']) {
+      assert.ok(key in ctx, `ticket context must keep the field "${key}" that the pipeline commands read`);
+    }
+  });
+
+  test('a failed fetch writes no context file', async () => {
+    const mock = createGithubMock();
+    const target = path.join(tmpdir(), 'never.json');
+    const r = await cli(['fetch', '--config', config(), '--input', JSON.stringify({ id: mock.missingId }), '--base-url', mock.baseUrl, '--context-file', target], { env: { GITHUB_TOKEN: mock.token }, fetch: mock.fetch });
+    assert.equal(r.code, 1);
+    assert.equal(fs.existsSync(target), false);
+  });
+
+  test('--context-file on any operation but fetch is a usage error', async () => {
+    const r = await cli(['comment', '--config', config(), '--input', '{"id":"1","body":"x"}', '--context-file', '/tmp/x.json']);
+    assert.equal(r.code, 2);
+    assert.match(r.err, /only applies to fetch/);
+  });
+
   test('bad invocations exit 2 with a message on stderr, not stdout', async () => {
     for (const args of [[], ['frobnicate'], ['fetch', '--bogus'], ['fetch', '--input']]) {
       const r = await cli(args);

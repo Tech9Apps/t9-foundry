@@ -7,7 +7,8 @@
 //
 //   ops:      fetch | search | create-test | link | comment | create-bug
 //   input:    --input '<json>'  |  --input-file <path>  |  --stdin (read JSON from stdin)
-//   options:  --source <type>      github | clickup | azure   (default: ticketSource.type from the config)
+//   options:  --context-file <path> (fetch only) also write the pipeline's ticket-context JSON there
+//             --source <type>      github | clickup | azure   (default: ticketSource.type from the config)
 //             --config <path>      qa-config.json (default: $CLAUDE_PROJECT_DIR/qa-config.json, ./, ../, ../../)
 //             --base-url <url>     override the API base URL (mock servers; also $QA_TRACKER_BASE_URL)
 //             --timeout-ms <n>     per-request timeout (default 15000)
@@ -22,7 +23,9 @@ const fs = require('fs');
 const path = require('path');
 const { OPERATIONS } = require('./lib/contract');
 const { TrackerError } = require('./lib/errors');
-const { createAdapter, run, SUPPORTED } = require('./adapters');
+const { run } = require('./adapters');
+const { connect } = require('./lib/connect');
+const { toTicketContext } = require('./lib/context');
 
 function parseArgs(argv) {
   const [op, ...rest] = argv;
@@ -39,6 +42,7 @@ function parseArgs(argv) {
     else if (flag === '--input') opts.input = value();
     else if (flag === '--input-file') opts.inputFile = value();
     else if (flag === '--stdin') opts.stdin = true;
+    else if (flag === '--context-file') opts.contextFile = value();
     else if (flag === '--base-url') opts.baseUrl = value();
     else if (flag === '--timeout-ms') opts.timeoutMs = Number(value());
     else throw usage(`unknown option ${flag}`);
@@ -47,14 +51,6 @@ function parseArgs(argv) {
 }
 
 const usage = (message) => Object.assign(new Error(message), { isUsage: true });
-
-function findConfig(explicit, env) {
-  if (explicit) return explicit;
-  const candidates = [];
-  if (env.CLAUDE_PROJECT_DIR) candidates.push(path.join(env.CLAUDE_PROJECT_DIR, 'qa-config.json'));
-  candidates.push('qa-config.json', '../qa-config.json', '../../qa-config.json');
-  return candidates.find((c) => fs.existsSync(c));
-}
 
 async function readStdin(stdin) {
   const chunks = [];
@@ -66,11 +62,12 @@ async function main({ argv = process.argv.slice(2), env = process.env, stdin = p
   const out = (obj) => stdout.write(`${JSON.stringify(obj, null, 2)}\n`);
   try {
     if (!argv.length || argv[0] === '-h' || argv[0] === '--help') {
-      stderr.write(`Usage: cli.js <${OPERATIONS.join('|')}> [--source T] [--config P] [--input J | --input-file P | --stdin] [--base-url U] [--timeout-ms N]\n`);
+      stderr.write(`Usage: cli.js <${OPERATIONS.join('|')}> [--source T] [--config P] [--input J | --input-file P | --stdin] [--base-url U] [--timeout-ms N] [--context-file P]\n`);
       return argv.length ? 0 : 2;
     }
     const opts = parseArgs(argv);
     if (!OPERATIONS.includes(opts.op)) throw usage(`unknown operation "${opts.op}" (expected one of ${OPERATIONS.join(', ')})`);
+    if (opts.contextFile && opts.op !== 'fetch') throw usage('--context-file only applies to fetch');
 
     // Input
     let raw = opts.input;
@@ -83,27 +80,13 @@ async function main({ argv = process.argv.slice(2), env = process.env, stdin = p
       try { input = JSON.parse(raw); } catch (e) { throw usage(`input is not valid JSON (${e.message})`); }
     }
 
-    // Config
-    const configPath = findConfig(opts.config, env);
-    let config = {};
-    if (configPath) {
-      try { config = JSON.parse(fs.readFileSync(configPath, 'utf8')); } catch (e) { throw new TrackerError('CONFIG', `cannot read ${configPath}: ${e.message}`); }
-    } else if (!opts.source) {
-      throw new TrackerError('CONFIG', 'no qa-config.json found and no --source given — run /init or pass --config');
+    const adapter = connect({ configPath: opts.config, source: opts.source, baseUrl: opts.baseUrl, timeoutMs: opts.timeoutMs, env, fetch });
+    const data = await run(adapter, opts.op, input);
+    if (opts.contextFile) {
+      fs.mkdirSync(path.dirname(path.resolve(opts.contextFile)), { recursive: true });
+      fs.writeFileSync(opts.contextFile, `${JSON.stringify(toTicketContext(data), null, 2)}\n`);
     }
-    const type = opts.source || (config.ticketSource && config.ticketSource.type);
-    if (!type || type === 'none') {
-      throw new TrackerError('CONFIG', `ticketSource.type is "${type || 'unset'}" — there is no tracker to talk to (supported: ${SUPPORTED.join(', ')})`);
-    }
-
-    const adapter = createAdapter(type, {
-      settings: (config.ticketSource && config.ticketSource[type]) || {},
-      env,
-      fetch,
-      baseUrl: opts.baseUrl || env.QA_TRACKER_BASE_URL || undefined,
-      timeoutMs: opts.timeoutMs || undefined,
-    });
-    out({ ok: true, data: await run(adapter, opts.op, input) });
+    out({ ok: true, data });
     return 0;
   } catch (err) {
     if (err && err.isUsage) {

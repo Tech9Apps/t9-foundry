@@ -33,6 +33,12 @@ node_tests() { # <file> -> runs it, echoes the TAP summary lines
   [[ "$output" =~ "# fail 0" ]]
 }
 
+@test "the bulk test-case poster (post-tests.js) passes its tests on all three trackers" {
+  run node_tests post-tests.test.js
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "# fail 0" ]]
+}
+
 @test "the contract suite is actually exercised by every adapter (no adapter silently skips it)" {
   for a in github clickup azure; do
     grep -q "runContractSuite('$a'" "$REPO_ROOT/tests/tracker/$a.test.js"

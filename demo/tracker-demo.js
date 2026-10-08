@@ -16,6 +16,7 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const { main } = require('../scripts/tracker/cli');
+const { parseTestCases } = require('../scripts/tracker/lib/test-cases');
 
 const HERE = __dirname;
 const MOCKS = {
@@ -48,26 +49,6 @@ function parseTicket(file) {
     description: [section(md, 'Summary'), section(md, 'Description')].filter(Boolean).join('\n\n'),
     acceptance: section(md, 'Acceptance Criteria'),
   };
-}
-
-// "### TC-001: Title" blocks -> { tcId, title, priority, description, steps[{action, expected}] }
-function parseTestCases(md) {
-  const blocks = md.split(/^### (?=TC-\d+:)/m).slice(1);
-  return blocks.map((block) => {
-    const [head, ...rest] = block.split('\n');
-    const [, tcId, title] = head.match(/^(TC-\d+): (.+)$/);
-    const body = rest.join('\n');
-    const field = (name) => {
-      const m = body.match(new RegExp(`^- \\*\\*${name}:\\*\\*\\s*([\\s\\S]*?)(?=\\n- \\*\\*|\\n###|$(?![\\s\\S]))`, 'm'));
-      return m ? m[1].replace(/\s*\n\s*/g, ' ').trim() : '';
-    };
-    const priority = (field('Priority').match(/^(High|Medium|Low)/) || [])[1];
-    const stepsText = field('Steps');
-    const actions = stepsText.split(/(?:^|\s)\d+\.\s+/).map((s) => s.trim()).filter(Boolean);
-    const steps = actions.map((action) => ({ action: action.replace(/[.;]$/, ''), expected: '' }));
-    if (steps.length) steps[steps.length - 1].expected = field('Expected Result');
-    return { tcId, title, priority, description: field('Description'), steps };
-  });
 }
 
 function parseBug(file) {
