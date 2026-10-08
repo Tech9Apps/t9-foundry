@@ -14,7 +14,7 @@ Read `qa-config.json > ticketSource.type` to determine which source to fetch fro
 
 > **Reference:** `.claude/guides/integration-sources.md` lists the fetch method per source — update it if a method changes here.
 
-**Which path a source takes:** `github`, `clickup` and `azure` go through the tracker adapter CLI (`scripts/tracker/cli.js`, see `docs/tracker-adapters.md`) — one tested interface instead of hand-written API calls. `jira` uses the Atlassian MCP server. `none` has no tracker.
+**Which path a source takes:** `github`, `clickup`, `azure`, `gitlab` and `bitbucket` go through the tracker adapter CLI (`scripts/tracker/cli.js`, see `docs/tracker-adapters.md`) — one tested interface instead of hand-written API calls. `jira` uses the Atlassian MCP server. `none` has no tracker.
 
 ## Fetch, by ticket source
 
@@ -44,13 +44,13 @@ Map into the output schema below:
 - **Comments** — from the response
 - **Sub-tasks** — `fields.subtasks` (if any, fetch those too with `getJiraIssue`)
 
-### github / clickup / azure — via the tracker adapter CLI
+### github / clickup / azure / gitlab / bitbucket — via the tracker adapter CLI
 
 ```bash
 node scripts/tracker/cli.js fetch --input '{"id":"$ARGUMENTS"}' --context-file tests/cases/.ticket-context/$ARGUMENTS.json
 ```
 
-Pass the id exactly as given (a GitHub issue number, an Azure DevOps work item number, a ClickUp task id). The CLI reads the tracker settings from `qa-config.json > ticketSource`, reads the credential from the environment variable that config names (`GITHUB_TOKEN`, `CLICKUP_TOKEN`, `AZURE_DEVOPS_PAT`, or `ticketSource.<type>.tokenEnvVar`), and:
+Pass the id exactly as given (a GitHub / GitLab / Bitbucket issue number, an Azure DevOps work item number, a ClickUp task id). The CLI reads the tracker settings from `qa-config.json > ticketSource`, reads the credential from the environment variable that config names (`GITHUB_TOKEN`, `CLICKUP_TOKEN`, `AZURE_DEVOPS_PAT`, `GITLAB_TOKEN`, `BITBUCKET_TOKEN`, or `ticketSource.<type>.tokenEnvVar`), and:
 
 - prints `{ "ok": true, "data": <normalized ticket> }`, and
 - writes the ticket-context file (schema below) itself — **you do not map fields by hand**.
@@ -72,14 +72,14 @@ Exit code `2` means the command itself was invoked wrongly (message on stderr) �
 
 No ticket system is configured. Ask the engineer to describe the feature and acceptance criteria directly in the conversation. Use their answer as the requirements source for every downstream step — do not write a `tests/cases/.ticket-context/$ARGUMENTS.json` file, since there is no ticket to cache; instead carry the description forward in context for the Analyze Code / Create Test Cases steps.
 
-## Output Schema (jira / azure / clickup / github)
+## Output Schema (every source except `none`)
 
-`tests/cases/.ticket-context/$ARGUMENTS.json` — written by the CLI for `github` / `clickup` / `azure`; for `jira` you write it yourself from the mapping above:
+`tests/cases/.ticket-context/$ARGUMENTS.json` — written by the CLI for `github` / `clickup` / `azure` / `gitlab` / `bitbucket`; for `jira` you write it yourself from the mapping above:
 
 ```json
 {
   "ticketId": "<TICKET-ID>",
-  "source": "jira|azure|clickup|github",
+  "source": "jira|azure|clickup|github|gitlab|bitbucket",
   "url": "...",
   "summary": "...",
   "issueType": "Story|Bug|Task|...",

@@ -3,11 +3,14 @@
 const { TrackerError } = require('../lib/errors');
 const { validate } = require('../lib/contract');
 
-// Jira joins this list once the headless-Jira approach is decided; GitLab/Bitbucket follow.
+// Jira is deliberately absent: it stays on the Atlassian MCP (interactive) until the headless-auth
+// approach is decided. See docs/tracker-adapters.md.
 const ADAPTERS = {
   github: () => require('./github'),
   clickup: () => require('./clickup'),
   azure: () => require('./azure'),
+  gitlab: () => require('./gitlab'),
+  bitbucket: () => require('./bitbucket'),
 };
 const SUPPORTED = Object.keys(ADAPTERS);
 

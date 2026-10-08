@@ -17,7 +17,7 @@ Read `qa-config.json > ticketSource.type` to determine the upload target. If `qa
 
 > **Reference:** `.claude/guides/integration-sources.md` lists the upload method per target — update it if a method changes here.
 
-**Which path a target takes:** `github`, `clickup` and `azure` are posted by `scripts/tracker/post-tests.js` (one tested, resumable command — see `docs/tracker-adapters.md`). `jira` is posted through the Atlassian MCP tools below. `none` posts nothing.
+**Which path a target takes:** `github`, `clickup`, `azure`, `gitlab` and `bitbucket` are posted by `scripts/tracker/post-tests.js` (one tested, resumable command — see `docs/tracker-adapters.md`). `jira` is posted through the Atlassian MCP tools below. `none` posts nothing.
 
 ## Read Context
 
@@ -115,7 +115,7 @@ Save keys to `tests/cases/.ticket-context/$ARGUMENTS-test-keys.json`. Only inclu
 { "parentTicket": "$ARGUMENTS", "tests": [{ "tcId": "TC-001", "jiraKey": "<PROJECT-KEY>-XXXXX", "summary": "...", "linked": true }] }
 ```
 
-### github / clickup / azure — via the tracker adapter CLI
+### github / clickup / azure / gitlab / bitbucket — via the tracker adapter CLI
 
 Once the review gate is approved — and `tests/cases/$ARGUMENTS.md` reflects every remove/update/add the user asked for — post everything with one command:
 
@@ -123,7 +123,7 @@ Once the review gate is approved — and `tests/cases/$ARGUMENTS.md` reflects ev
 node scripts/tracker/post-tests.js --parent $ARGUMENTS
 ```
 
-It reads `tests/cases/$ARGUMENTS.md`, confirms the parent ticket exists and the credentials work (so a typo'd id creates nothing), then for every case creates the test item, links it to the parent, and records the outcome in `tests/cases/.ticket-context/$ARGUMENTS-test-keys.json`. You do not call the tracker yourself and you do not write the keys file by hand. Credentials come from the environment (`GITHUB_TOKEN`, `CLICKUP_TOKEN`, `AZURE_DEVOPS_PAT`, or `ticketSource.<type>.tokenEnvVar`) — never put a token on the command line or in a file. To preview without credentials or requests, add `--dry-run`.
+It reads `tests/cases/$ARGUMENTS.md`, confirms the parent ticket exists and the credentials work (so a typo'd id creates nothing), then for every case creates the test item, links it to the parent, and records the outcome in `tests/cases/.ticket-context/$ARGUMENTS-test-keys.json`. You do not call the tracker yourself and you do not write the keys file by hand. Credentials come from the environment (`GITHUB_TOKEN`, `CLICKUP_TOKEN`, `AZURE_DEVOPS_PAT`, `GITLAB_TOKEN`, `BITBUCKET_TOKEN`, or `ticketSource.<type>.tokenEnvVar`) — never put a token on the command line or in a file. To preview without credentials or requests, add `--dry-run`.
 
 **It is safe to run again.** Every case carries an idempotency key, so a re-run finds existing items instead of duplicating them, completes any item a previous attempt left half-built, and links anything that was created but not linked. Never run it twice at the same time.
 
@@ -145,5 +145,5 @@ No ticket system is configured — no remote upload is possible or attempted. Th
 
 - Confirm all test cases were posted (or, for `none`, confirm the file path)
 - Print a table: TC ID | Remote ID | Summary | Status (created / already existed) — for the adapter-backed trackers take it from `tests[]` in the command's output
-- Confirm links to the parent ticket/work item/task were created (GitHub references the parent in the issue body instead; not applicable for `none`)
+- Confirm links to the parent ticket/work item/task were created (GitHub and Bitbucket have no link API: they reference the parent in the issue body instead; not applicable for `none`)
 - Print the counts: created, already existed, failed, skipped

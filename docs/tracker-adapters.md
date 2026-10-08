@@ -11,10 +11,10 @@ Same operations, same JSON in and out, same error shape — whichever tracker is
 **testable** (every adapter runs against an in-process mock in CI), **safe to retry** (idempotency keys), and
 **usable unattended** (token auth, hard timeouts, structured errors).
 
-> **Status.** Adapters exist for **GitHub, ClickUp and Azure DevOps**, and the pipeline commands use them:
-> `fetch-ticket.md`, `post-tests.md`, `file-bug.md` and the results step of the automation agent call the CLIs below
-> for those three sources. **Jira** still uses the Atlassian MCP (headless auth is undecided), **GitLab/Bitbucket** bug
-> filing still uses `curl` until their adapters exist, and `none` has no tracker.
+> **Status.** Adapters exist for **GitHub, ClickUp, Azure DevOps, GitLab and Bitbucket**, and the pipeline commands use
+> them: `fetch-ticket.md`, `post-tests.md`, `file-bug.md` and the results step of the automation agent call the CLIs
+> below for those five sources. **Jira** deliberately has no adapter yet — it stays on the Atlassian MCP
+> (interactive only) until the headless-auth approach is decided — and `none` has no tracker.
 
 ## Operations
 
@@ -96,15 +96,16 @@ Every failure is normalized, so a caller never parses tracker-specific messages:
 
 ## Per-tracker notes
 
-| | GitHub | ClickUp | Azure DevOps |
-|---|---|---|---|
-| Config (`ticketSource.<type>`) | `repo`, `testLabelName`, `tokenEnvVar`, `apiBaseUrl` | `listId`, `tokenEnvVar`, `assignToSelf`, `apiBaseUrl` | `organization`, `project`, `host`, `tokenEnvVar` |
-| Auth | `Bearer <token>` (`GITHUB_TOKEN` / `GH_TOKEN`) | raw token | Basic, empty user + PAT |
-| Test case is | an issue labelled `test-case` + the parent id | a task + a "Test Steps" checklist | a `Test Case` work item with steps XML |
-| Bug is | issue titled `[BUG] …`, label `bug` | task named `[BUG] …` | a `Bug` work item |
-| Idempotency marker | `qa-harness-key:<key>` line in the body | same, in the description | tag `qa-key-<key>` |
-| Key lookup | **lists** issues by label (never search — GitHub's search index lags) | lists the configured list | WIQL query on the tag |
-| Not yet | — | — | assignee lookup (needs a second host) |
+| | GitHub | ClickUp | Azure DevOps | GitLab | Bitbucket |
+|---|---|---|---|---|---|
+| Config (`ticketSource.<type>`) | `repo`, `testLabelName`, `tokenEnvVar`, `apiBaseUrl` | `listId`, `tokenEnvVar`, `assignToSelf`, `apiBaseUrl` | `organization`, `project`, `host`, `tokenEnvVar` | `projectId`, `host`, `tokenEnvVar`, `testLabelName` | `workspace`, `repo`, `username`, `tokenEnvVar` |
+| Auth | `Bearer <token>` (`GITHUB_TOKEN` / `GH_TOKEN`) | raw token | Basic, empty user + PAT | `PRIVATE-TOKEN` header | Basic `username:app_password` |
+| Test case is | an issue labelled `test-case` + the parent id | a task + a "Test Steps" checklist | a `Test Case` work item with steps XML | an issue labelled `test-case` + parent number + `priority:<P>` | a `task` titled `TC-…:` (no labels in Bitbucket) |
+| Bug is | issue titled `[BUG] …`, label `bug` | task named `[BUG] …` | a `Bug` work item | issue titled `[BUG] …`, label `bug` | a `bug`-kind issue |
+| Idempotency marker | `qa-harness-key:<key>` line in the body | same, in the description | tag `qa-key-<key>` | marker line in the description | marker line in the body |
+| Key lookup | **lists** issues by label (never search — GitHub's search index lags) | lists the configured list | WIQL query on the tag | lists by label | lists newest-first by kind |
+| Link | `reference-in-body` | native | native relation | native "relates to" | `reference-in-body` |
+| Needs | — | — | the process must have a `Test Case` type (Basic does not); assignee lookup not done (needs a second host) | — | the repo's **issue tracker enabled**, and the account username |
 
 ## Keeping the prose honest
 
@@ -118,7 +119,7 @@ each command's adapter section, and no direct `curl` / `gh issue` / vendor-API c
 
 [`evals/`](../evals/) runs the demo's three tickets — with golden counts verified independently of the code — through
 the real `fetch` (+ context file), `post-tests`, `create-bug` and `comment` against every tracker mock, plus four
-failure drills (transient failure, lost response, credentials revoked mid-run, wrong parent id). 87 checks;
+failure drills (transient failure, lost response, credentials revoked mid-run, wrong parent id). 145 checks (3 scenarios × 5 trackers);
 `node evals/run.js [--tracker T] [--scenario S] [--json]`. Deterministic by design: model-in-the-loop evals can reuse
 the same scenarios and goldens later.
 
@@ -136,7 +137,7 @@ bats tests/tracker.bats                 # the same, plus guardrails (no deps, no
 ```
 
 - **One contract suite, every adapter** — [`tests/tracker/contract-suite.js`](../tests/tracker/contract-suite.js)
-  (22 behaviors) runs against each adapter's mock: normalization, NOT_FOUND vs UNAUTHENTICATED, retry rules,
+  (23 behaviors) runs against each adapter's mock: normalization, NOT_FOUND vs UNAUTHENTICATED, retry rules,
   timeouts, rate limits, idempotency (including the lost-response case), validation-before-request.
 - **Mocks are `fetch` functions**, not servers ([`tests/mocks/tracker-mock/`](../tests/mocks/tracker-mock/)). They
   record every call and accept fault injection — `mock.inject({ method, match, status | networkError | delayMs, times,

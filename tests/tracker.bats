@@ -27,20 +27,32 @@ node_tests() { # <file> -> runs it, echoes the TAP summary lines
   [[ "$output" =~ "# fail 0" ]]
 }
 
+@test "gitlab adapter passes the tracker contract suite and its own tests" {
+  run node_tests gitlab.test.js
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "# fail 0" ]]
+}
+
+@test "bitbucket adapter passes the tracker contract suite and its own tests" {
+  run node_tests bitbucket.test.js
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "# fail 0" ]]
+}
+
 @test "the tracker CLI passes its tests" {
   run node_tests cli.test.js
   [ "$status" -eq 0 ]
   [[ "$output" =~ "# fail 0" ]]
 }
 
-@test "the bulk test-case poster (post-tests.js) passes its tests on all three trackers" {
+@test "the bulk test-case poster (post-tests.js) passes its tests on all five trackers" {
   run node_tests post-tests.test.js
   [ "$status" -eq 0 ]
   [[ "$output" =~ "# fail 0" ]]
 }
 
 @test "the contract suite is actually exercised by every adapter (no adapter silently skips it)" {
-  for a in github clickup azure; do
+  for a in github clickup azure gitlab bitbucket; do
     grep -q "runContractSuite('$a'" "$REPO_ROOT/tests/tracker/$a.test.js"
   done
   # every adapter the registry knows about has a test file

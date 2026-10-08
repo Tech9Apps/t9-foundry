@@ -7,7 +7,7 @@
 // through the real tracker adapter CLI (scripts/tracker/cli.js) into an in-memory tracker. Only the
 // network is replaced: the CLI, adapters, schemas, retry and idempotency logic are the real thing.
 //
-//   node demo/tracker-demo.js [--tracker github|clickup|azure]
+//   node demo/tracker-demo.js [--tracker github|clickup|azure|gitlab|bitbucket]
 //
 // No network, no accounts, no ports. Exits 1 if the demo stops behaving as documented.
 
@@ -23,8 +23,10 @@ const MOCKS = {
   github: () => require('../tests/mocks/tracker-mock/github').createGithubMock(),
   clickup: () => require('../tests/mocks/tracker-mock/clickup').createClickupMock(),
   azure: () => require('../tests/mocks/tracker-mock/azure').createAzureMock(),
+  gitlab: () => require('../tests/mocks/tracker-mock/gitlab').createGitlabMock(),
+  bitbucket: () => require('../tests/mocks/tracker-mock/bitbucket').createBitbucketMock(),
 };
-const LABEL = { github: 'GitHub Issues', clickup: 'ClickUp', azure: 'Azure DevOps' };
+const LABEL = { github: 'GitHub Issues', clickup: 'ClickUp', azure: 'Azure DevOps', gitlab: 'GitLab', bitbucket: 'Bitbucket' };
 
 // ── Presentation ────────────────────────────────────────────────────────────────
 const tty = process.stdout.isTTY && !process.env.NO_COLOR;
@@ -212,7 +214,7 @@ async function main2() {
 
   console.log('');
   if (problems.length) { console.log(red(`The tracker demo found ${problems.length} integrity problem(s).`)); return 1; }
-  if (!embedded) say(dim('Same flow, other trackers:  node demo/tracker-demo.js --tracker clickup   |   --tracker azure'));
+  if (!embedded) say(dim('Same flow, other trackers:  node demo/tracker-demo.js --tracker clickup | azure | gitlab | bitbucket'));
   return 0;
 }
 

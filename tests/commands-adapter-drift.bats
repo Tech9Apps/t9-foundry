@@ -60,6 +60,20 @@ teardown() {
   [[ "$output" =~ 'adapter "jira" is registered but missing' ]]
 }
 
+@test "drift: dropping an adapter from the agent's Step 6 bullet is caught" {
+  sed -i.bak 's|github / clickup / azure / gitlab / bitbucket\*\* — through|github / clickup / azure** — through|' "$TEST_TMP/.claude/agents/Manual-Automation-test-generator.md"
+  run env DRIFT_ROOT="$TEST_TMP" node "$CHECK"
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ 'adapter "gitlab" is registered but missing from Step 6' ]]
+}
+
+@test "no command contains a direct API call any more (every tracker but Jira goes through an adapter)" {
+  for f in "$REPO_ROOT"/.claude/commands/*.md; do
+    run grep -nE "^\s*curl\s" "$f"
+    [ "$status" -eq 1 ]
+  done
+}
+
 @test "the adapter-backed commands no longer contain the old hand-written API calls" {
   for f in fetch-ticket post-tests; do
     run grep -nE "api\.clickup\.com|dev\.azure\.com|gh issue|_apis/wit" "$REPO_ROOT/.claude/commands/$f.md"

@@ -156,7 +156,7 @@ Executes the test suite against your staging environment and reports a pass/fail
 ```
 /generate-tests JIRA-123
 ```
-Runs fetch → analyze → generate manual + automated test cases → review gate → upload → execute → report results as one pipeline, with the ticket fetch and code analysis running in parallel. Same production guards and human-review-before-upload gate as the step-by-step flow above — just fewer commands to type. Falls back to the step-by-step commands above for GitLab/Bitbucket tickets or when you want manual review between each stage.
+Runs fetch → analyze → generate manual + automated test cases → review gate → upload → execute → report results as one pipeline, with the ticket fetch and code analysis running in parallel. Same production guards and human-review-before-upload gate as the step-by-step flow above — just fewer commands to type. Falls back to the step-by-step commands above when you want manual review between each stage.
 
 ---
 
@@ -192,7 +192,7 @@ Most of these are `.claude/skills/`. Two (`/file-bug`, `/generate-regression-pac
 /init → /catchup-e2e → /setup-ci → /run-tests   ← for existing projects without tickets
 ```
 
-**Fast path (Jira / Azure DevOps / ClickUp / GitHub Issues, ticket-driven):** `/generate-tests TICKET-ID` runs the same fetch → analyze → generate → upload → execute pipeline as one command, via subagents that fetch the ticket and analyze code in parallel. Built from smaller pieces in `.claude/commands/` (`fetch-ticket`, `analyze-code`, `create-manual-test-cases`, `create-automated-test-cases`, `post-tests`, `run-spec-tests`) composed by agents in `.claude/agents/`. Use this when you want speed on a supported source; use the step-by-step skills above for GitLab/Bitbucket, other e2e frameworks, or when you want to review between stages.
+**Fast path (Jira / Azure DevOps / ClickUp / GitHub Issues / GitLab / Bitbucket, ticket-driven):** `/generate-tests TICKET-ID` runs the same fetch → analyze → generate → upload → execute pipeline as one command, via subagents that fetch the ticket and analyze code in parallel. Built from smaller pieces in `.claude/commands/` (`fetch-ticket`, `analyze-code`, `create-manual-test-cases`, `create-automated-test-cases`, `post-tests`, `run-spec-tests`) composed by agents in `.claude/agents/`. Use this when you want speed on a supported source; use the step-by-step skills above for other e2e frameworks, or when you want to review between stages.
 
 ---
 

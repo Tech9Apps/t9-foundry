@@ -160,7 +160,7 @@ for (const type of Object.keys(MOCKS)) {
 }
 
 describe('post-tests: link failures (trackers with a link call)', () => {
-  for (const type of ['clickup', 'azure']) {
+  for (const type of ['clickup', 'azure', 'gitlab']) {
     test(`${type}: a case that was created but could not be linked says so, and a re-run links it without duplicating`, async () => {
       const w = workspace(type);
       w.mock.inject({ method: w.mock.linkMethod, match: w.mock.paths.link, status: 500 });

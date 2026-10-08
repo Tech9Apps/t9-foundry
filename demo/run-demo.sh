@@ -4,7 +4,7 @@
 #   bash demo/run-demo.sh                    # paced — press Enter between acts
 #   bash demo/run-demo.sh --no-pause         # straight through (also automatic when not a terminal)
 #   bash demo/run-demo.sh --tracker [name]   # add Act 8: post everything to an in-memory tracker
-#                                            #   (github | clickup | azure; default github)
+#                                            #   (github | clickup | azure | gitlab | bitbucket; default github)
 #
 # What it shows (all real — the same hooks, scripts and tests the harness uses):
 #   1. a ticket and the acceptance criteria a tester starts from
@@ -31,7 +31,7 @@ while [ "$#" -gt 0 ]; do
     --no-pause|--ci) PAUSE=0 ;;
     --tracker)
       TRACKER="github"
-      case "${2:-}" in github|clickup|azure) TRACKER="$2"; shift ;; esac ;;
+      case "${2:-}" in github|clickup|azure|gitlab|bitbucket) TRACKER="$2"; shift ;; esac ;;
     -h|--help) sed -n '2,20p' "${BASH_SOURCE[0]}"; exit 0 ;;
     *) echo "Unknown option: $1" >&2; exit 2 ;;
   esac
@@ -192,7 +192,7 @@ say "ticket → test cases → automated run → triage → bug report, with pro
 say "Done by hand, that is a lot of reading, writing, running and write-up. The harness does the legwork;"
 say "people keep the judgment calls (is this release-blocking? is the requirement itself right?)."
 echo ""
-[ -n "$TRACKER" ] || say "${B}See it post to a tracker${N}:  bash demo/run-demo.sh --tracker   ${D}(github | clickup | azure)${N}"
+[ -n "$TRACKER" ] || say "${B}See it post to a tracker${N}:  bash demo/run-demo.sh --tracker   ${D}(github | clickup | azure | gitlab | bitbucket)${N}"
 say "${B}Try it for real${N} (about 15 minutes, needs Claude Code):  open this repo in Claude Code and run  ${B}/demo${N}"
 say "${B}Read more${N}: demo/README.md  ·  sample outputs: demo/expected/  ·  the app: demo/app/"
 echo ""

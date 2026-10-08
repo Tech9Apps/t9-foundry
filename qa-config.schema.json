@@ -60,7 +60,8 @@
           "properties": {
             "projectId": { "type": "string" },
             "tokenEnvVar": { "type": "string", "default": "GITLAB_TOKEN" },
-            "host": { "type": "string", "default": "https://gitlab.com" }
+            "host": { "type": "string", "default": "https://gitlab.com" },
+            "testLabelName": { "type": "string", "default": "test-case", "description": "Label applied to test-case issues" }
           }
         },
         "bitbucket": {

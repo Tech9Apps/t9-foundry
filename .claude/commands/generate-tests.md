@@ -8,7 +8,7 @@ You are given a ticket ID: **$ARGUMENTS**
 
 This command is a thin wrapper: it delegates the full fetch → analyze → generate → review-gate → post → execute → report-results pipeline to the `Manual-Automation-test-generator` agent, rather than reimplementing it here. This keeps there being exactly one implementation of the pipeline (the agent's), so its human-review gate, checkpoint reporting, and not-found handling apply here too instead of being duplicated and potentially drifting out of sync.
 
-Supports Jira, Azure DevOps, ClickUp, GitHub Issues, and `none` (per `ticketSource.type`). For GitLab or Bitbucket ticket sources, this fast path isn't wired up — use the step-by-step skills (`/create-test-plan`, `/write-test-cases`, `/upload-tests`, `/write-e2e-tests`) instead.
+Supports Jira, Azure DevOps, ClickUp, GitHub Issues, GitLab, Bitbucket, and `none` (per `ticketSource.type`). Automated test generation here is Playwright-only; for other e2e frameworks use the step-by-step skills (`/create-test-plan`, `/write-test-cases`, `/upload-tests`, `/write-e2e-tests`).
 
 ## Steps
 

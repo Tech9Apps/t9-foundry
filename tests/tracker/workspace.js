@@ -10,8 +10,10 @@ const { main } = require('../../scripts/tracker/post-tests');
 const { createGithubMock } = require('../mocks/tracker-mock/github');
 const { createClickupMock } = require('../mocks/tracker-mock/clickup');
 const { createAzureMock } = require('../mocks/tracker-mock/azure');
+const { createGitlabMock } = require('../mocks/tracker-mock/gitlab');
+const { createBitbucketMock } = require('../mocks/tracker-mock/bitbucket');
 
-const MOCKS = { github: createGithubMock, clickup: createClickupMock, azure: createAzureMock };
+const MOCKS = { github: createGithubMock, clickup: createClickupMock, azure: createAzureMock, gitlab: createGitlabMock, bitbucket: createBitbucketMock };
 
 function workspace(type, { casesFile, title = 'DEMO-101: Apply a discount code', description = 'story', acceptance = '1. a', parentName = 'DEMO-101' }) {
   const mock = MOCKS[type]();

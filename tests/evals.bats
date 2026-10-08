@@ -17,16 +17,16 @@ teardown() {
   [ "$status" -eq 0 ]
   [ "$(echo "$output" | jq -r '.ok')" = "true" ]
   [ "$(echo "$output" | jq -r '.failed')" = "0" ]
-  [ "$(echo "$output" | jq -r '[.results[].tracker] | unique | length')" = "3" ]
+  [ "$(echo "$output" | jq -r '[.results[].tracker] | unique | length')" = "5" ]
   [ "$(echo "$output" | jq -r '[.results[].scenario] | unique | length')" -ge 3 ]
-  [ "$(echo "$output" | jq -r '.total')" -ge 87 ]
+  [ "$(echo "$output" | jq -r '.total')" -ge 145 ]
 }
 
 @test "the human-readable report shows a pass/fail cell per tracker" {
   run node "$REPO_ROOT/evals/run.js"
   [ "$status" -eq 0 ]
-  [[ "$output" =~ "github ✓  clickup ✓  azure ✓" ]]
-  [[ "$output" =~ "87/87 checks passed" ]]
+  [[ "$output" =~ "github ✓  clickup ✓  azure ✓  gitlab ✓  bitbucket ✓" ]]
+  [[ "$output" =~ "145/145 checks passed" ]]
 }
 
 @test "--tracker and --scenario narrow the run" {

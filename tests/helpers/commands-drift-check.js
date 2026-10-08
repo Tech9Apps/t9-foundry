@@ -81,11 +81,7 @@ for (const [name, file] of Object.entries(FILES)) {
   }
 
   // 4. no direct API calls left for adapter-backed sources
-  const withoutNonAdapterSections = (() => {
-    if (name !== 'bug') return md;
-    // file-bug.md legitimately keeps curl for GitLab and Bitbucket (no adapter yet): drop those sections
-    return md.replace(/### GitLab[\s\S]*?(?=### None)/, '');
-  })();
+  const withoutNonAdapterSections = md; // every tracker except Jira has an adapter now: no direct API calls anywhere
   for (const [re, label] of [[/^\s*curl\s/m, 'a curl command'], [/\bgh issue\b/, 'gh issue'], [/api\.clickup\.com/, 'api.clickup.com'], [/dev\.azure\.com/, 'dev.azure.com'], [/_apis\/wit/, 'an Azure REST path'], [/System\.History/, 'System.History']]) {
     if (re.test(withoutNonAdapterSections)) bad(`${file}: still contains ${label} — adapter-backed sources must go through the CLI`);
   }
@@ -96,8 +92,10 @@ for (const [name, file] of Object.entries(FILES)) {
     const heading = (md.match(/### ([^\n]*tracker adapter CLI)/i) || [])[1] || '';
     if (!section) bad(`${file}: no "… via the tracker adapter CLI" section`);
     else for (const a of SUPPORTED) if (!new RegExp(a, 'i').test(heading)) bad(`${file}: adapter "${a}" is registered but missing from the section heading "${heading}"`);
-  } else if (!/github \/ clickup \/ azure/.test(md)) {
-    bad(`${file}: Step 6 does not name the adapter-backed sources`);
+  } else {
+    const step6 = (md.match(/- \*\*([^*]*)\*\* — through the tracker adapter CLI/) || [])[1] || '';
+    if (!step6) bad(`${file}: Step 6 has no "… — through the tracker adapter CLI" bullet`);
+    else for (const a of SUPPORTED) if (!new RegExp(a, 'i').test(step6)) bad(`${file}: adapter "${a}" is registered but missing from Step 6 ("${step6.trim()}")`);
   }
 }
 

@@ -16,7 +16,7 @@ case (created, carried across, linked), a no-op re-run, four failure drills (tra
 revoked credentials mid-run, wrong parent id), one-time results comments, and — where the ticket has a known bug — filing
 it once, finding it by search, and re-filing without a duplicate.
 
-Deterministic: no network, no model, ~1 second. `bats tests/evals.bats` runs it in CI and proves a wrong golden
+Deterministic: no network, no model, ~2 seconds. `bats tests/evals.bats` runs it in CI and proves a wrong golden
 fails. To add a scenario, drop a JSON file in `scenarios/` (see the existing ones).
 
 **Not yet:** model-in-the-loop evals — having Claude generate the test cases or bug reports and judging them against

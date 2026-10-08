@@ -202,8 +202,8 @@ failing_ids() { grep '^not ok|' | cut -d'|' -f2 | tr '\n' ' ' | sed 's/ $//'; }
 
 # ── The tracker half of the demo (in-memory tracker, real adapter CLI) ──────────
 
-@test "tracker-demo: the same flow works against github, clickup and azure" {
-  for t in github clickup azure; do
+@test "tracker-demo: the same flow works against all five trackers" {
+  for t in github clickup azure gitlab bitbucket; do
     run node "$DEMO/tracker-demo.js" --tracker "$t"
     [ "$status" -eq 0 ]
     [[ "$output" =~ "26 created" ]]

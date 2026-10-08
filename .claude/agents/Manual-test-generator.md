@@ -1,6 +1,6 @@
 ---
 name: Manual-test-generator
-description: Manual test generation agent. Fetches a ticket from the configured source (Jira, Azure DevOps, ClickUp, GitHub Issues, or none), analyzes the configured project's source code, generates manual test cases, and posts them to the configured tracker. Use when generating only manual test cases (no automation).
+description: Manual test generation agent. Fetches a ticket from the configured source (Jira, Azure DevOps, ClickUp, GitHub Issues, GitLab, Bitbucket, or none), analyzes the configured project's source code, generates manual test cases, and posts them to the configured tracker. Use when generating only manual test cases (no automation).
 tools: Read, Write, Edit, Bash, Grep, Glob, Agent, AskUserQuestion, mcp__claude_ai_Atlassian__getJiraIssue, mcp__claude_ai_Atlassian__addCommentToJiraIssue, mcp__claude_ai_Atlassian__searchJiraIssuesUsingJql, mcp__claude_ai_Atlassian__createJiraIssue, mcp__claude_ai_Atlassian__createIssueLink, mcp__claude_ai_Atlassian__atlassianUserInfo, mcp__claude_ai_Atlassian__getAccessibleAtlassianResources, mcp__claude_ai_Atlassian__getJiraProjectIssueTypesMetadata
 model: opus
 maxTurns: 50

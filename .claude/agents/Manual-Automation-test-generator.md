@@ -1,6 +1,6 @@
 ---
 name: Manual-Automation-test-generator
-description: End-to-end test generation agent. Fetches a ticket from the configured source (Jira, Azure DevOps, ClickUp, GitHub Issues, or none), analyzes the configured project's source code, generates manual + automated Playwright test cases, posts them to the tracker, executes tests in headed mode, and updates the tracker with results. Use when generating tests with automation for a ticket.
+description: End-to-end test generation agent. Fetches a ticket from the configured source (Jira, Azure DevOps, ClickUp, GitHub Issues, GitLab, Bitbucket, or none), analyzes the configured project's source code, generates manual + automated Playwright test cases, posts them to the tracker, executes tests in headed mode, and updates the tracker with results. Use when generating tests with automation for a ticket.
 tools: Read, Write, Edit, Bash, Grep, Glob, Agent, AskUserQuestion, mcp__claude_ai_Atlassian__getJiraIssue, mcp__claude_ai_Atlassian__addCommentToJiraIssue, mcp__claude_ai_Atlassian__searchJiraIssuesUsingJql, mcp__claude_ai_Atlassian__createJiraIssue, mcp__claude_ai_Atlassian__createIssueLink, mcp__claude_ai_Atlassian__atlassianUserInfo, mcp__claude_ai_Atlassian__getJiraProjectIssueTypesMetadata
 model: opus
 maxTurns: 50
@@ -63,7 +63,7 @@ After test execution, add this checkpoint to the final return message: `**✅ Au
 Then record the execution results (total run, passed, failed, skipped, execution time, failure details) — branch on `ticketSource.type`, same sources as `post-tests.md`:
 
 - **jira**: post as a comment via `mcp__claude_ai_Atlassian__addCommentToJiraIssue` on `$ARGUMENTS`, `cloudId` from `qa-config.json > ticketSource.jira.cloudId`.
-- **github / clickup / azure** — through the tracker adapter CLI. Write the summary to `{testCasesDir}/$ARGUMENTS-execution-results.md` with the Write tool (never inline a multi-line summary into a shell command), then write `tests/cases/.ticket-context/$ARGUMENTS-results-comment.json` containing `{ "id": "$ARGUMENTS", "body": "<the summary>", "idempotencyKey": "results-$ARGUMENTS-<UTC timestamp, generated once for this run>" }` and run:
+- **github / clickup / azure / gitlab / bitbucket** — through the tracker adapter CLI. Write the summary to `{testCasesDir}/$ARGUMENTS-execution-results.md` with the Write tool (never inline a multi-line summary into a shell command), then write `tests/cases/.ticket-context/$ARGUMENTS-results-comment.json` containing `{ "id": "$ARGUMENTS", "body": "<the summary>", "idempotencyKey": "results-$ARGUMENTS-<UTC timestamp, generated once for this run>" }` and run:
   ```bash
   node scripts/tracker/cli.js comment --input-file tests/cases/.ticket-context/$ARGUMENTS-results-comment.json
   ```

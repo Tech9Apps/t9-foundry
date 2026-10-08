@@ -37,7 +37,7 @@ Build a structured report:
 - **Severity/Priority** — proposed, with one-line justification
 - **Suspected Area** — source files/modules implicated (if the code scan found any)
 
-## Check for an existing report (github, clickup, azure)
+## Check for an existing report (every tracker with an adapter)
 
 Before the review gate, look for a report of the same defect so the user can decide not to file a duplicate:
 
@@ -45,7 +45,7 @@ Before the review gate, look for a report of the same defect so the user can dec
 node scripts/tracker/cli.js search --input '{"query":"<2-4 distinctive words from the title>","kind":"bug","limit":5}'
 ```
 
-`data.items` lists `{ id, title, url, status }`. Show anything that plausibly matches under **Possible existing reports** in the review gate below. If the search itself fails, say so and carry on — a failed search is not a reason to block the report. (Jira, GitLab, Bitbucket and `none` have no adapter yet: skip this step.)
+`data.items` lists `{ id, title, url, status }`. Show anything that plausibly matches under **Possible existing reports** in the review gate below. If the search itself fails, say so and carry on — a failed search is not a reason to block the report. (Jira and `none` have no adapter: skip this step.)
 
 ## Review Gate — Human Approval Required
 
@@ -54,7 +54,7 @@ Present the full draft bug report to the user — and, if the search above found
 > **Please review the bug report above.** You can:
 > - **Approve** — type `yes` or `approve` to file it as a new bug
 > - **Update** — tell me what to change (title, severity, steps, etc.)
-> - **Duplicate** — name an existing report above and I will add this as a comment on it instead (github, clickup, azure)
+> - **Duplicate** — name an existing report above and I will add this as a comment on it instead (any adapter-backed tracker)
 >
 > What would you like to do?
 
@@ -62,7 +62,7 @@ Present the full draft bug report to the user — and, if the search above found
 
 ## File the Bug
 
-Branch on `ticketSource.type`. `github`, `clickup` and `azure` go through the tracker adapter CLI; `jira` uses the Atlassian MCP tool; `gitlab` and `bitbucket` (no adapter yet) use the `curl` calls below — **those use `-f` (fail on HTTP error status) and `--max-time 30` (bound the wait): check the exit code after each one. A non-zero exit means the call failed: do not treat it as success, do not proceed to "Save the Receipt" below, and tell the user what failed instead of silently claiming the bug was filed.**
+Branch on `ticketSource.type`. `jira` uses the Atlassian MCP tool; `none` saves a file; **everything else** (`github`, `clickup`, `azure`, `gitlab`, `bitbucket`) goes through the tracker adapter CLI.
 
 ### Jira
 Use `mcp__claude_ai_Atlassian__createJiraIssue`:
@@ -72,7 +72,7 @@ Use `mcp__claude_ai_Atlassian__createJiraIssue`:
 - `summary`: the bug title
 - `description`: the full report body (markdown)
 
-### GitHub / ClickUp / Azure DevOps — via the tracker adapter CLI
+### GitHub / ClickUp / Azure DevOps / GitLab / Bitbucket — via the tracker adapter CLI
 
 1. **Write the input to a file** with the Write tool — never inline a multi-line report into a shell command (quoting breaks, and a bug body is full of quotes and backticks). Use `{testCasesDir}/bugs/<slug>.input.json`, where `<slug>` is the lowercase, hyphenated title (≤ 50 characters):
    ```json
@@ -89,7 +89,7 @@ Use `mcp__claude_ai_Atlassian__createJiraIssue`:
    ```bash
    node scripts/tracker/cli.js create-bug --input-file {testCasesDir}/bugs/<slug>.input.json
    ```
-   Credentials come from the environment (`GITHUB_TOKEN`, `CLICKUP_TOKEN`, `AZURE_DEVOPS_PAT`, or `ticketSource.<type>.tokenEnvVar`); never put a token on the command line or in a file.
+   Credentials come from the environment (`GITHUB_TOKEN`, `CLICKUP_TOKEN`, `AZURE_DEVOPS_PAT`, `GITLAB_TOKEN`, `BITBUCKET_TOKEN`, or `ticketSource.<type>.tokenEnvVar`; Bitbucket also needs `ticketSource.bitbucket.username`); never put a token on the command line or in a file.
 3. **Read the result.** `{ "ok": true, "data": { "id", "url", "deduplicated" } }` → record `id` as the receipt's `createdId` and show the user the `url`. If `deduplicated` is `true`, the bug **was already filed** by an earlier attempt: say "this was already filed as `<id>`", not "created".
 4. **If it fails** (`"ok": false`), branch on `error.code`: `UNAUTHENTICATED` / `FORBIDDEN` / `CONFIG` → tell the user exactly what is missing or wrong (`error.message`) and how to fix it, do not retry; `VALIDATION` → fix the input and retry; `RATE_LIMITED` / `TIMEOUT` / `NETWORK` / `UPSTREAM_ERROR` → run the **same command again**. That is safe: the idempotency key means a retry returns the original bug even when the first attempt succeeded and only the response was lost. Do **not** save a receipt until it succeeds.
 
@@ -98,26 +98,6 @@ Use `mcp__claude_ai_Atlassian__createJiraIssue`:
 node scripts/tracker/cli.js comment --input-file {testCasesDir}/bugs/<slug>.comment.json
 ```
 with `{ "id": "<existing id>", "body": "<what this run adds: steps, evidence, environment>", "idempotencyKey": "bug-<slug>-comment" }`. The receipt's `createdId` is then the existing id, and note `"commentedOnExisting": true`.
-
-### GitLab
-Create an issue in the configured project (`ticketSource.gitlab.projectId`, host defaults to `https://gitlab.com`, token from `ticketSource.gitlab.tokenEnvVar` default `GITLAB_TOKEN`):
-```bash
-curl -fsS --max-time 30 -X POST -H "PRIVATE-TOKEN: $GITLAB_TOKEN" \
-  --data-urlencode "title=[BUG] <bug title>" \
-  --data-urlencode "description=<full report body>" \
-  --data-urlencode "labels=bug" \
-  "{host}/api/v4/projects/{projectId}/issues"
-```
-
-### Bitbucket
-Create an issue in the configured repo (`ticketSource.bitbucket.workspace`/`repo`, account username from `ticketSource.bitbucket.username`, app password from `ticketSource.bitbucket.tokenEnvVar` default `BITBUCKET_TOKEN`):
-```bash
-curl -fsS --max-time 30 -X POST -u "{username}:$BITBUCKET_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"title": "[BUG] <bug title>", "content": {"raw": "<full report body>", "markup": "markdown"}}' \
-  "https://api.bitbucket.org/2.0/repositories/{workspace}/{repo}/issues"
-```
-Bitbucket app passwords authenticate as `username:app_password`, so `ticketSource.bitbucket.username` is required. If it is unset, stop and tell the user to set it with `/reconfigure` (or add it to `qa-config.json`) — do not guess it and do not retry with an empty username.
 
 ### None
 Save the report to `{testCasesDir}/bugs/<slugified-title>.md` and report the path — nothing leaves the workspace.
