@@ -1,0 +1,18 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "tracker-search-result.schema.json",
+  "title": "Result of search",
+  "type": "object",
+  "required": ["items"],
+  "additionalProperties": false,
+  "properties": {
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "title"],
+        "properties": { "id": { "type": "string" }, "title": { "type": "string" }, "url": { "type": "string" }, "status": { "type": "string" } }
+      }
+    }
+  }
+}

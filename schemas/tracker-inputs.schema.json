@@ -1,0 +1,37 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "tracker-inputs.schema.json",
+  "title": "Tracker operation inputs",
+  "description": "One definition per operation: #/definitions/<op>. Validated at runtime by scripts/tracker/lib/contract.js.",
+  "definitions": {
+    "fetch": { "type": "object", "required": ["id"], "properties": { "id": { "type": ["string", "integer"] } } },
+    "search": {
+      "type": "object", "required": ["query"],
+      "properties": { "query": { "type": "string", "minLength": 1 }, "kind": { "enum": ["any", "bug", "test"] }, "limit": { "type": "integer", "minimum": 1, "maximum": 100 } }
+    },
+    "create-test": {
+      "type": "object", "required": ["parentId", "tcId", "title"],
+      "properties": {
+        "parentId": { "type": ["string", "integer"] },
+        "tcId": { "type": "string", "pattern": "^TC-[A-Za-z0-9-]+$" },
+        "title": { "type": "string", "minLength": 1 },
+        "description": { "type": "string" },
+        "priority": { "enum": ["High", "Medium", "Low"] },
+        "steps": { "type": "array", "items": { "type": "object", "required": ["action"], "properties": { "action": { "type": "string" }, "expected": { "type": "string" } } } },
+        "idempotencyKey": { "type": "string", "pattern": "^[A-Za-z0-9._-]{1,80}$" }
+      }
+    },
+    "link": { "type": "object", "required": ["childId", "parentId"], "properties": { "childId": { "type": ["string", "integer"] }, "parentId": { "type": ["string", "integer"] } } },
+    "comment": { "type": "object", "required": ["id", "body"], "properties": { "id": { "type": ["string", "integer"] }, "body": { "type": "string", "minLength": 1 } } },
+    "create-bug": {
+      "type": "object", "required": ["title", "body"],
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "body": { "type": "string", "minLength": 1 },
+        "priority": { "enum": ["High", "Medium", "Low"] },
+        "labels": { "type": "array", "items": { "type": "string" } },
+        "idempotencyKey": { "type": "string", "pattern": "^[A-Za-z0-9._-]{1,80}$" }
+      }
+    }
+  }
+}

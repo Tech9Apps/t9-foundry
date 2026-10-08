@@ -44,6 +44,7 @@ bats \
   tests/check-prereqs.bats \
   tests/preflight.bats \
   tests/settings-lint.bats \
+  tests/tracker.bats \
   tests/layer5-guard.bats \
   tests/layer5-guard-py-rb.bats \
   tests/demo.bats
