@@ -46,6 +46,7 @@ bats \
   tests/settings-lint.bats \
   tests/tracker.bats \
   tests/results.bats \
+  tests/triage.bats \
   tests/commands-adapter-drift.bats \
   tests/evals.bats \
   tests/layer5-guard.bats \

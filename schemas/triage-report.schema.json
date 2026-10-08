@@ -1,0 +1,63 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "triage-report.schema.json",
+  "title": "Failure triage report",
+  "description": "What scripts/triage/classify.js produces: one verdict per failing or flaky test, with the class, the rule that decided it, the evidence, and whether to act or only propose.",
+  "type": "object",
+  "required": ["runs", "preflight", "threshold", "summary", "verdicts"],
+  "additionalProperties": false,
+  "properties": {
+    "runs": { "type": "integer", "minimum": 1, "description": "1 = the main run; more = re-runs of the failing specs" },
+    "preflight": { "enum": ["ok", "failed", "unknown"] },
+    "threshold": { "type": "number", "exclusiveMinimum": 0, "maximum": 1, "description": "confidence at or above which a verdict is `act`" },
+    "summary": {
+      "type": "object",
+      "required": ["tests", "triaged", "byClass", "act", "propose"],
+      "additionalProperties": false,
+      "properties": {
+        "tests": { "type": "integer", "minimum": 0 },
+        "triaged": { "type": "integer", "minimum": 0 },
+        "byClass": {
+          "type": "object",
+          "required": ["product-bug", "test-bug", "flaky", "environment", "undetermined"],
+          "additionalProperties": false,
+          "properties": {
+            "product-bug": { "type": "integer" }, "test-bug": { "type": "integer" }, "flaky": { "type": "integer" },
+            "environment": { "type": "integer" }, "undetermined": { "type": "integer" }
+          }
+        },
+        "act": { "type": "integer", "minimum": 0 },
+        "propose": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "verdicts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["key", "test", "class", "rule", "confidence", "action", "evidence", "attempts", "fingerprint", "token", "signature"],
+        "additionalProperties": false,
+        "properties": {
+          "key": { "type": "string", "description": "the test's identity across runs: ticket/caseId, else file|title" },
+          "test": {
+            "type": "object", "required": ["name"], "additionalProperties": false,
+            "properties": { "name": { "type": "string" }, "ticket": { "type": "string" }, "caseId": { "type": "string" }, "file": { "type": "string" }, "line": { "type": "integer" } }
+          },
+          "class": { "enum": ["product-bug", "test-bug", "flaky", "environment", "undetermined"] },
+          "rule": { "enum": ["ENV-1", "ENV-2", "FLK-1", "TST-1", "TST-2", "ENV-3", "PRD-1", "PRD-2", "PRD-3", "UND-1"] },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+          "action": { "enum": ["act", "propose"] },
+          "evidence": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+          "alternatives": {
+            "type": "array", "description": "other rules that also matched, in precedence order",
+            "items": { "type": "object", "required": ["class", "rule", "confidence"], "additionalProperties": false, "properties": { "class": { "type": "string" }, "rule": { "type": "string" }, "confidence": { "type": "number" } } }
+          },
+          "attempts": { "type": "array", "items": { "type": "object", "required": ["run", "status"], "additionalProperties": false, "properties": { "run": { "type": "integer" }, "status": { "enum": ["passed", "failed"] } } } },
+          "error": { "type": "object", "additionalProperties": false, "properties": { "kind": { "type": "string" }, "message": { "type": "string" } } },
+          "fingerprint": { "type": "string", "pattern": "^[0-9a-f]{12}$" },
+          "token": { "type": "string", "pattern": "^qafp[0-9a-f]{12}$", "description": "the single word written into a filed bug so tracker search can find it again" },
+          "signature": { "type": "string" }
+        }
+      }
+    }
+  }
+}

@@ -15,6 +15,7 @@ instruction in the current conversation, the user wins — but say so out loud.
 | `ai-usage-rules.md` | Every test-related task — read this first |
 | `manual-test-rules.md` | Writing / uploading **manual** test cases |
 | `automated-test-rules.md` | Writing / running **automated** (e2e) test cases |
+| `failure-triage-rules.md` | Deciding **why an automated test failed** and what to do about it (the `QA-run-orchestrator`) |
 
 ## When to read these
 
