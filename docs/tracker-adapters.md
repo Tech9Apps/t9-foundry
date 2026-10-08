@@ -144,7 +144,8 @@ Use a **scratch** repo / project / list: the script creates items and there is d
 leaves them behind (labelled `qa-harness-smoke` where the tracker has labels, and titled `[qa-harness smoke <id>]`
 everywhere) and lists them at the end for you to close.
 
-It checks, in order: connect · create a bug · fetch it back · search finds it · create a test case and link it ·
+It checks, in order: connect · create a bug · fetch it back · search finds it · search finds a marker that is only in the
+bug's body, and fetch returns that body (failure triage dedupes bugs this way) · create a test case and link it ·
 retrying the bug with the same key returns the original · same for the test case · a comment, and the same comment
 again · an unknown id is `NOT_FOUND` · an invalid token is rejected (`--skip-bad-token` skips that last one). Each is
 **pass**, **warn** or **fail**; a step that depends on a failed one shows as **skipped**, never disappears. Warnings are
