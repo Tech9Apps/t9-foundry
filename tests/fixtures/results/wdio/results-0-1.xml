@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+  <testsuite name="Search" timestamp="2026-10-08T10:00:00" time="0.9" tests="1" failures="1" errors="0" skipped="0">
+    <testcase classname="chrome.Search" name="TC-020 finds by sku" time="0.9">
+      <failure message="expected 3 results, got 0"><![CDATA[Error: expected 3 results, got 0
+    at search.e2e.js:14]]></failure>
+    </testcase>
+  </testsuite>
+</testsuites>

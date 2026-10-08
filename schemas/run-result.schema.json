@@ -1,0 +1,58 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "run-result.schema.json",
+  "title": "Normalized test-run result",
+  "description": "What scripts/results/normalize.js produces from any supported framework's output (JUnit XML, TAP, Playwright JSON, Jest JSON). Data, not a verdict: callers decide what a failure means.",
+  "type": "object",
+  "required": ["format", "totals", "tests"],
+  "additionalProperties": false,
+  "properties": {
+    "format": { "enum": ["junit", "tap", "playwright-json", "jest-json"], "description": "the raw format that was parsed" },
+    "framework": { "type": "string", "description": "as named by the caller (qa-config testFramework.type), if supplied" },
+    "durationMs": { "type": "number" },
+    "totals": {
+      "type": "object",
+      "required": ["total", "passed", "failed", "skipped"],
+      "additionalProperties": false,
+      "properties": {
+        "total": { "type": "integer", "minimum": 0 },
+        "passed": { "type": "integer", "minimum": 0, "description": "includes flaky passes" },
+        "failed": { "type": "integer", "minimum": 0 },
+        "skipped": { "type": "integer", "minimum": 0 },
+        "flaky": { "type": "integer", "minimum": 0, "description": "passed only after a retry (a subset of passed); only formats that record retries can report it" }
+      }
+    },
+    "tests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "status"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string" },
+          "suite": { "type": "string" },
+          "file": { "type": "string" },
+          "line": { "type": "integer" },
+          "status": { "enum": ["passed", "failed", "skipped"] },
+          "flaky": { "type": "boolean" },
+          "retries": { "type": "integer", "minimum": 0 },
+          "durationMs": { "type": "number" },
+          "ticket": { "type": "string", "description": "e.g. DEMO-101, from a test name like \"DEMO-101/TC-005: …\"" },
+          "caseId": { "type": "string", "pattern": "^TC-\\d+$", "description": "the manual test case this automates, from the test name" },
+          "error": {
+            "type": "object",
+            "required": ["message"],
+            "additionalProperties": false,
+            "properties": {
+              "message": { "type": "string" },
+              "kind": { "enum": ["failure", "error", "timeout"], "description": "failure: an assertion failed · error: the test crashed · timeout" },
+              "details": { "type": "string", "description": "stack / full output, truncated" },
+              "expected": { "type": "string" },
+              "actual": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

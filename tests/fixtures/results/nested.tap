@@ -1,0 +1,29 @@
+TAP version 13
+# hand-written, node:test describe() shape: children are written before their parent
+# Subtest: cart
+    # Subtest: DEMO-102/TC-001 sums
+    ok 1 - DEMO-102/TC-001 sums
+      ---
+      duration_ms: 1.5
+      location: '/work/cart.test.js:5:3'
+      ...
+    # Subtest: DEMO-102/TC-002 taxes
+    not ok 2 - DEMO-102/TC-002 taxes
+      ---
+      duration_ms: 2
+      failureType: 'testCodeFailure'
+      error: 'expected 108'
+      code: 'ERR_ASSERTION'
+      ...
+    # Subtest: DEMO-102/TC-003 later
+    ok 3 - DEMO-102/TC-003 later # SKIP not built yet
+    # Subtest: DEMO-102/TC-004 someday
+    ok 4 - DEMO-102/TC-004 someday # TODO
+    1..4
+not ok 1 - cart
+  ---
+  duration_ms: 9
+  failureType: 'subtestsFailed'
+  error: '1 subtest failed'
+  ...
+1..1

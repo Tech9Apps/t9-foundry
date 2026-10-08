@@ -1,0 +1,53 @@
+{
+  "config": { "rootDir": "/work/e2e", "projects": [{ "name": "chromium" }] },
+  "_comment": "hand-written, Playwright JSON reporter shape (PLAYWRIGHT_JSON_OUTPUT_NAME)",
+  "suites": [
+    {
+      "title": "checkout.spec.ts",
+      "file": "checkout.spec.ts",
+      "specs": [],
+      "suites": [
+        {
+          "title": "Checkout",
+          "file": "checkout.spec.ts",
+          "specs": [
+            {
+              "title": "DEMO-101/TC-001: applies a valid code",
+              "ok": true, "file": "checkout.spec.ts", "line": 10, "column": 3,
+              "tests": [{ "projectName": "chromium", "status": "expected", "expectedStatus": "passed",
+                "results": [{ "status": "passed", "duration": 812, "retry": 0 }] }]
+            },
+            {
+              "title": "DEMO-101/TC-002: rejects an expired code",
+              "ok": false, "file": "checkout.spec.ts", "line": 22, "column": 3,
+              "tests": [{ "projectName": "chromium", "status": "unexpected", "expectedStatus": "passed",
+                "results": [{ "status": "failed", "duration": 1500, "retry": 0,
+                  "error": { "message": "\u001b[31mError:\u001b[39m expect(received).toBe(expected)\n\nExpected: \"Code expired\"\nReceived: \"Invalid code\"", "stack": "Error: expect(received).toBe(expected)\n    at checkout.spec.ts:30:5" } }] }]
+            },
+            {
+              "title": "DEMO-101/TC-003: flaky network banner",
+              "ok": true, "file": "checkout.spec.ts", "line": 35, "column": 3,
+              "tests": [{ "projectName": "chromium", "status": "flaky", "expectedStatus": "passed",
+                "results": [
+                  { "status": "failed", "duration": 900, "retry": 0, "error": { "message": "Timeout 5000ms exceeded." } },
+                  { "status": "passed", "duration": 700, "retry": 1 } ] }]
+            },
+            {
+              "title": "DEMO-101/TC-004: needs a paid plan",
+              "ok": true, "file": "checkout.spec.ts", "line": 48, "column": 3,
+              "tests": [{ "projectName": "chromium", "status": "skipped", "expectedStatus": "skipped",
+                "results": [{ "status": "skipped", "duration": 0, "retry": 0 }] }]
+            },
+            {
+              "title": "DEMO-101/TC-005: hangs",
+              "ok": false, "file": "checkout.spec.ts", "line": 60, "column": 3,
+              "tests": [{ "projectName": "chromium", "status": "unexpected", "expectedStatus": "passed",
+                "results": [{ "status": "timedOut", "duration": 30000, "retry": 0, "error": { "message": "Test timeout of 30000ms exceeded." } }] }]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "stats": { "startTime": "2026-10-08T10:00:00.000Z", "duration": 36000, "expected": 1, "unexpected": 2, "flaky": 1, "skipped": 1 }
+}

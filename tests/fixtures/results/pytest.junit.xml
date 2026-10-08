@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- hand-written, pytest --junitxml shape -->
+<testsuites>
+  <testsuite name="pytest" errors="0" failures="1" skipped="1" tests="4" time="0.412" timestamp="2026-10-08T10:00:00" hostname="ci">
+    <testcase classname="tests.test_checkout" name="test_TC_001_totals_include_tax" file="tests/test_checkout.py" line="12" time="0.010"/>
+    <testcase classname="tests.test_checkout" name="test_TC_002_empty_cart" file="tests/test_checkout.py" line="25" time="0.004">
+      <failure message="assert 0 == 1">def test_TC_002_empty_cart():
+&gt;       assert len(cart.items) == 1
+E       assert 0 == 1
+
+tests/test_checkout.py:27: AssertionError</failure>
+    </testcase>
+    <testcase classname="tests.test_checkout" name="test_TC_003_guest_checkout" file="tests/test_checkout.py" line="40" time="0.000">
+      <skipped type="pytest.skip" message="guest checkout disabled">tests/test_checkout.py:40: guest checkout disabled</skipped>
+    </testcase>
+    <testcase classname="tests.test_checkout" name="test_TC_004_payment" file="tests/test_checkout.py" line="52" time="0.100">
+      <error message="failed on setup with &quot;ConnectionError: db down&quot;">ConnectionError: db down</error>
+    </testcase>
+  </testsuite>
+</testsuites>

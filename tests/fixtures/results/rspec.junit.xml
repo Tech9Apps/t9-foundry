@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- hand-written, rspec_junit_formatter shape (note the entity-encoded quotes and brackets) -->
+<testsuite name="rspec" tests="2" skipped="0" failures="1" errors="0" time="0.31" timestamp="2026-10-08T10:00:00+00:00" hostname="ci">
+  <properties/>
+  <testcase classname="spec.cart_spec" name="Cart DEMO-102/TC-001 totals &amp; shipping" file="./spec/cart_spec.rb" time="0.05"></testcase>
+  <testcase classname="spec.cart_spec" name="Cart DEMO-102/TC-002 rounds &quot;half up&quot;" file="./spec/cart_spec.rb" time="0.26">
+    <failure message="expected: 10.01&#10;     got: 10.00" type="RSpec::Expectations::ExpectationNotMetError">Failure/Error: expect(total).to eq(10.01)
+
+  expected: 10.01
+       got: 10.00
+# ./spec/cart_spec.rb:21:in `block (2 levels) in &lt;top (required)&gt;'</failure>
+  </testcase>
+</testsuite>
