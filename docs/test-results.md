@@ -64,7 +64,7 @@ in either: `run.js` clears its own `qa-results/raw/` before every run.
 | `rspec` | `bundle exec rspec … --format RspecJunitFormatter --out …` | JUnit | the `rspec_junit_formatter` gem |
 | `jest` | `npx jest … --verbose --json --outputFile=…` | Jest JSON | — |
 | `webdriverio` | `npx wdio <config> [--spec …]` | JUnit, one file per worker (merged) | `@wdio/junit-reporter`, configured: `reporters: ['spec', ['junit', { outputDir: process.env.QA_RESULTS_DIR }]]` |
-| `node` | `node --test --test-reporter=junit …` | JUnit | Node 22 (verified on 22.17; it is what the demo app uses) |
+| `node` | `node --test --test-reporter=tap …` | TAP (with file and line, which re-running only the failing specs needs) | Node 22 (verified on 22.17; it is what the demo app uses) |
 | `selenium`, `other` | *no recipe* | — | run your suite as you normally do, then `normalize.js` its JUnit/TAP/JSON report |
 
 Defaults for `--framework`, `--test-dir` and `--config-file` come from `testFramework` in `qa-config.json`. Every

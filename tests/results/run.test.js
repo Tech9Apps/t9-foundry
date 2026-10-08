@@ -230,9 +230,9 @@ test('every supported framework asks for a structured report, and unknown ones h
     const p = plan({ framework, outDir: 'out/raw' });
     assert.ok(p, framework);
     const everything = [p.command, ...p.args, ...Object.keys(p.env), ...Object.values(p.env)].join(' ');
-    assert.match(everything, /json|junit|Junit|JUnit|RspecJunitFormatter|QA_RESULTS_DIR/, `${framework} must request a structured report`);
+    assert.match(everything, /json|junit|Junit|JUnit|RspecJunitFormatter|QA_RESULTS_DIR|test-reporter=tap/, `${framework} must request a structured report`);
     assert.ok(path.isAbsolute(p.results), `${framework} results path is absolute`);
-    assert.ok(['junit', 'playwright-json', 'jest-json'].includes(p.format));
+    assert.ok(['junit', 'tap', 'playwright-json', 'jest-json'].includes(p.format));
   }
   for (const framework of ['selenium', 'other', undefined, 'mocha; rm -rf /']) assert.equal(plan({ framework, outDir: 'o' }), null);
 });
@@ -249,6 +249,6 @@ test('recipes honour specs, config path and headed — and pass each as its own 
   // node: reporter options must come BEFORE the files, or node hands them to the test file and writes no report
   const nd = plan({ framework: 'node', outDir: 'o', specs: ['a.test.js'] }).args;
   assert.equal(nd[nd.length - 1], 'a.test.js');
-  assert.ok(nd.indexOf('--test-reporter=junit') < nd.indexOf('a.test.js'));
+  assert.ok(nd.indexOf('--test-reporter=tap') < nd.indexOf('a.test.js'));
   assert.deepEqual(plan({ framework: 'webdriverio', outDir: 'o', configPath: 'wdio.conf.js', specs: ['a', 'b'] }).args, ['wdio', 'wdio.conf.js', '--spec', 'a', 'b']);
 });
