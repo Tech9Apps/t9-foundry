@@ -74,12 +74,14 @@ function createAzureMock({ pat = 'test-pat', org = 'acme', project = 'shop' } = 
   });
   core.route('POST', `${W}/wiql`, ({ body }) => {
     const q = (body && body.query) || '';
-    const needles = [...q.matchAll(/\[System\.\w+\] CONTAINS '((?:[^']|'')*)'/g)].map((m) => m[1].replace(/''/g, "'").toLowerCase());
+    // Each `[Field] CONTAINS 'x'` is checked against THAT field only (as real WIQL does) — matching a blob of every
+    // field would hide an adapter that searches the wrong one (bug bodies live in ReproSteps, not Description).
+    const clauses = [...q.matchAll(/\[((?:System|Microsoft\.VSTS)\.[\w.]+)\] CONTAINS '((?:[^']|'')*)'/g)].map((m) => ({ field: m[1], needle: m[2].replace(/''/g, "'").toLowerCase() }));
     const type = (q.match(/\[System\.WorkItemType\] = '([^']+)'/) || [])[1];
-    const hits = [...state.items.values()].filter((it) => {
-      const hay = [it.fields['System.Title'], it.fields['System.Description'], it.fields['System.Tags']].join('\n').toLowerCase();
-      return (!needles.length || needles.some((n) => hay.includes(n))) && (!type || it.fields['System.WorkItemType'] === type);
-    });
+    const hits = [...state.items.values()].filter((it) => (
+      (!clauses.length || clauses.some((c) => String(it.fields[c.field] || '').toLowerCase().includes(c.needle)))
+      && (!type || it.fields['System.WorkItemType'] === type)
+    ));
     return [200, { workItems: hits.map((it) => ({ id: it.id })) }];
   });
   core.route('POST', `${W}/workitemsbatch`, ({ body }) => [200, { count: (body.ids || []).length, value: (body.ids || []).map((id) => item(id)) }]);

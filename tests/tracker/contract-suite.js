@@ -102,6 +102,16 @@ function runContractSuite(name, makeMock) {
       assert.equal(mock.createdItems().length, 1);
     });
 
+    test('a token that appears ONLY in a bug\'s body is found by search(kind: bug), and fetch returns the body (fingerprint dedupe depends on both)', async () => {
+      const { adapter } = fresh();
+      const token = 'qafp0123456789ab';
+      const created = await run(adapter, 'create-bug', bugInput({ title: 'Receipt total is wrong on refunds', body: `Steps: refund an order.\n\nqa-harness-fingerprint: ${token}` }));
+      const found = await run(adapter, 'search', { query: token, kind: 'bug' });
+      assert.ok(found.items.some((i) => i.id === created.id), 'search must look in the body, not just the title');
+      const ticket = await run(adapter, 'fetch', { id: created.id });
+      assert.ok(ticket.description.includes(token), `fetch must return the bug body in description, got: ${JSON.stringify(ticket.description)}`);
+    });
+
     test('search says whether each item is open, and still returns closed ones (a recurrence must be recognizable)', async () => {
       const { mock, adapter } = fresh();
       const live = await run(adapter, 'create-bug', bugInput({ title: 'Receipt total is wrong on refunds' }));

@@ -110,7 +110,7 @@ Every failure is normalized, so a caller never parses tracker-specific messages:
 | Idempotency marker | `qa-harness-key:<key>` line in the body | same, in the description | tag `qa-key-<key>` | marker line in the description | marker line in the body |
 | Key lookup | **lists** issues by label (never search — GitHub's search index lags) | lists the configured list | WIQL query on the tag | lists by label | lists newest-first by kind |
 | Link | `reference-in-body` | native | native relation | native "relates to" | `reference-in-body` |
-| Needs | — | — | the process must have a `Test Case` type (Basic does not); assignee lookup not done (needs a second host) | — | the repo's **issue tracker enabled**, and the account username |
+| Needs | — | — | the process must have a `Test Case` type and a `Bug` type (Basic has neither); bug bodies live in Repro Steps, which `search(kind: bug)` and `fetch` read; assignee lookup not done (needs a second host) | — | the repo's **issue tracker enabled**, and the account username |
 
 ## Verification status
 

@@ -39,7 +39,8 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
   async function fetchTicket(id) {
     const { json: wi } = await call('GET', `${workItemUrl(id)}?$expand=all&api-version=7.1`, undefined, `fetch Azure DevOps work item ${id}`);
     const { json: c } = await call('GET', `${workItemUrl(id)}/comments?api-version=7.1-preview.3`, undefined, `fetch comments for work item ${id}`);
-    const description = stripHtml(f(wi, 'System.Description') || '');
+    // Bugs keep their body in Repro Steps, not Description; a ticket's "description" is whichever the item has
+    const description = stripHtml(f(wi, 'System.Description') || f(wi, 'Microsoft.VSTS.TCM.ReproSteps') || '');
     const relations = wi.relations || [];
     return {
       source: 'azure',
@@ -73,7 +74,9 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
   async function search({ query, kind = 'any', limit = 10 }) {
     const q = wiqlString(query);
     let where = `([System.Title] CONTAINS '${q}' OR [System.Description] CONTAINS '${q}')`;
-    if (kind === 'bug') where += " AND [System.WorkItemType] = 'Bug'";
+    // createBug writes the body to Repro Steps, so that is where a fingerprint marker (or any body text) has to be found.
+    // Only for bugs: the field does not exist in every process (Basic has no Bug type), and a WIQL clause on a missing field is an error.
+    if (kind === 'bug') where = `([System.Title] CONTAINS '${q}' OR [System.Description] CONTAINS '${q}' OR [Microsoft.VSTS.TCM.ReproSteps] CONTAINS '${q}') AND [System.WorkItemType] = 'Bug'`;
     if (kind === 'test') where += " AND [System.WorkItemType] = 'Test Case'";
     const items = await runQuery(where, limit);
     return { items: items.map((wi) => ({ id: String(wi.id), title: f(wi, 'System.Title'), url: htmlUrl(wi), status: f(wi, 'System.State'), open: !AZ_CLOSED.test(f(wi, 'System.State') || '') })) };
