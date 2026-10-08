@@ -43,6 +43,7 @@ bats \
   tests/wording-lint.bats \
   tests/check-prereqs.bats \
   tests/preflight.bats \
+  tests/settings-lint.bats \
   tests/layer5-guard.bats \
   tests/layer5-guard-py-rb.bats \
   tests/demo.bats
