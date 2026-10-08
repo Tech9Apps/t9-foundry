@@ -197,7 +197,7 @@ failing_ids() { grep '^not ok|' | cut -d'|' -f2 | tr '\n' ' ' | sed 's/ $//'; }
   [[ "$output" =~ "20 passed, 2 failed" ]]
   [[ "$output" =~ "BLOCKED (exit 2)" ]]
   [[ "$output" =~ "GO: no blocking issues" ]]
-  [[ "$output" =~ "# fail 0" ]]
+  [[ "$output" =~ "22 passed, 0 failed" ]]   # Act 7: the fixed copy, read through the structured runner
 }
 
 # ── The tracker half of the demo (in-memory tracker, real adapter CLI) ──────────

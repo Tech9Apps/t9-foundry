@@ -14,8 +14,8 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawnSync } = require('child_process');
 const { main } = require('../scripts/tracker/cli');
+const { main: runResults } = require('../scripts/results/run');
 const { parseTestCases } = require('../scripts/tracker/lib/test-cases');
 
 const HERE = __dirname;
@@ -61,10 +61,16 @@ function parseBug(file) {
   return { title, body, priority };
 }
 
-function runRealSuite() {
-  const res = spawnSync(process.execPath, ['--test', '--test-reporter=tap'], { cwd: path.join(HERE, 'app'), encoding: 'utf8' });
-  const lines = (res.stdout || '').split('\n').filter((l) => /^\s*(not ok|ok) \d+ - DEMO-/.test(l));
-  const results = lines.map((l) => ({ failed: /^\s*not ok/.test(l), id: l.replace(/^.* - (DEMO-\d+\/TC-\d+).*$/, '$1') }));
+// Run the demo app's own suite through the harness's structured-results runner (no console scraping).
+async function runRealSuite(workdir) {
+  let out = '';
+  const code = await runResults({
+    argv: ['--framework', 'node', '--cwd', path.join(HERE, 'app'), '--out', path.join(workdir, 'qa-run'), '--quiet'],
+    env: process.env, stdout: { write: (s) => { out += s; } }, stderr: { write: () => {} },
+  });
+  const doc = out ? JSON.parse(out) : null;
+  if (!doc || !doc.data) { console.error(`the test run produced no result (exit ${code}): ${doc && doc.error && doc.error.message}`); process.exit(1); }
+  const results = doc.data.tests.filter((t) => t.ticket && t.caseId).map((t) => ({ failed: t.status === 'failed', id: `${t.ticket}/${t.caseId}` }));
   return { results, failed: results.filter((r) => r.failed).map((r) => r.id), passed: results.filter((r) => !r.failed).length };
 }
 
@@ -145,7 +151,7 @@ async function main2() {
 
   // 3. Run the real suite; file the bugs it finds --------------------------------------
   heading(3, 'Run the real checks, file what they find');
-  const suite = runRealSuite();
+  const suite = await runRealSuite(work);
   say(`${bold('cd demo/app && npm test')}  →  ${suite.passed} passed, ${suite.failed.length} failed`);
   const bugs = suite.failed.map((id) => {
     const ticket = id.split('/')[0];

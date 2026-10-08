@@ -11,7 +11,7 @@ setup() {
   # a private copy of everything the checker reads, so a test can corrupt the prose safely
   mkdir -p "$TEST_TMP/.claude" "$TEST_TMP/scripts"
   cp -R "$REPO_ROOT/.claude/commands" "$REPO_ROOT/.claude/agents" "$TEST_TMP/.claude/"
-  cp -R "$REPO_ROOT/scripts/tracker" "$TEST_TMP/scripts/"
+  cp -R "$REPO_ROOT/scripts/tracker" "$REPO_ROOT/scripts/results" "$TEST_TMP/scripts/"
   cp -R "$REPO_ROOT/schemas" "$TEST_TMP/"
 }
 teardown() {
@@ -79,4 +79,55 @@ teardown() {
     run grep -nE "api\.clickup\.com|dev\.azure\.com|gh issue|_apis/wit" "$REPO_ROOT/.claude/commands/$f.md"
     [ "$status" -eq 1 ]
   done
+}
+
+# ── run-spec-tests.md → scripts/results/run.js, and the bug receipt ─────────────────
+
+@test "drift: a run.js flag that does not exist is caught" {
+  sed -i.bak 's|<path-to-spec-file> --headed|<path-to-spec-file> --headd|' "$TEST_TMP/.claude/commands/run-spec-tests.md"
+  run env DRIFT_ROOT="$TEST_TMP" node "$CHECK"
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "run.js has no option --headd" ]]
+}
+
+@test "drift: a --framework run.js has no recipe for is caught" {
+  sed -i.bak 's|--framework playwright|--framework playwrite|' "$TEST_TMP/.claude/commands/run-spec-tests.md"
+  run env DRIFT_ROOT="$TEST_TMP" node "$CHECK"
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "not a framework run.js knows" ]]
+}
+
+@test "drift: telling the model to read a result field the schema does not define is caught" {
+  sed -i.bak 's|`totals.passed`|`totals.passd`|' "$TEST_TMP/.claude/commands/run-spec-tests.md"
+  run env DRIFT_ROOT="$TEST_TMP" node "$CHECK"
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "totals.passd" ]]
+}
+
+@test "drift: going back to a list reporter's console output is caught" {
+  printf '\nRun `npx playwright test --reporter=list` and read the summary line.\n' >> "$TEST_TMP/.claude/commands/run-spec-tests.md"
+  run env DRIFT_ROOT="$TEST_TMP" node "$CHECK"
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "list reporter" ]]
+}
+
+@test "drift: run-spec-tests.md no longer calling the runner is caught" {
+  sed -i.bak 's|node scripts/results/run.js|node scripts/results/runn.js|' "$TEST_TMP/.claude/commands/run-spec-tests.md"
+  run env DRIFT_ROOT="$TEST_TMP" node "$CHECK"
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "no longer calls scripts/results/run.js" ]]
+}
+
+@test "drift: a receipt example that lists different trackers than the schema is caught" {
+  sed -i.bak 's#|gitlab|bitbucket|none"#|gitlab|none"#' "$TEST_TMP/.claude/commands/file-bug.md"
+  run env DRIFT_ROOT="$TEST_TMP" node "$CHECK"
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "receipt example lists trackers" ]]
+}
+
+@test "drift: a receipt example the schema would reject is caught" {
+  sed -i.bak 's|"reproduced": true,|"reproduced": "yes",|' "$TEST_TMP/.claude/commands/file-bug.md"
+  run env DRIFT_ROOT="$TEST_TMP" node "$CHECK"
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "receipt example is invalid" ]]
 }

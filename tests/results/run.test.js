@@ -59,6 +59,14 @@ test('a failing run: exit 1, runner output kept off stdout, result.json equals w
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test('--quiet discards the runner output instead of sending it to stderr', async () => {
+  const dir = tmp();
+  const r = await run(base(dir, ['--quiet']), { code: 1, report: 'playwright.json' });
+  assert.equal(r.calls[0].options.stdio, 'ignore');
+  assert.equal(r.code, 1);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test('a passing run: exit 0 and ok', async () => {
   const dir = tmp();
   const pass = path.join(dir, 'pass.json');

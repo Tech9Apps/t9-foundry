@@ -6,6 +6,10 @@
 //     against schemas/tracker-inputs.schema.json (with <placeholders> filled in)
 //   - no direct API calls (curl, gh issue, vendor hostnames) remain for adapter-backed sources
 //   - every registered adapter is named in each command's adapter section
+//   - run-spec-tests.md: every scripts/results/run.js flag and --framework it names exists, and every
+//     `totals.*` / `error.*` field it tells the model to read is in schemas/run-result.schema.json
+//   - file-bug.md's receipt example validates against schemas/bug-receipt.schema.json, and its tracker list
+//     is exactly the schema's
 // Prints "OK" or the list of problems (exit 1).
 'use strict';
 const fs = require('fs');
@@ -42,6 +46,18 @@ const validateInput = (op, obj, where) => {
 // "<anything>" and $VARS inside example JSON become a plain token so the example can be parsed/validated
 const fill = (s) => s.replace(/<[^>\n]+>/g, 'x').replace(/\$ARGUMENTS/g, '1').replace(/\{testCasesDir\}/g, 'out');
 
+// ── receipts ────────────────────────────────────────────────────────────────────
+const receiptSchema = JSON.parse(read('schemas/bug-receipt.schema.json'));
+const validateReceipt = ajv.compile(receiptSchema);
+function checkReceipt(example, md, file) {
+  // the prose shows the trackers as "a|b|c": that list must be exactly the schema's, in any order
+  const listed = (example.trackerType || '').split('|').sort().join('|');
+  const allowed = [...receiptSchema.properties.trackerType.enum].sort().join('|');
+  if (listed !== allowed) bad(`${file}: receipt example lists trackers "${listed}" but the schema allows "${allowed}"`);
+  const filled = { ...example, trackerType: receiptSchema.properties.trackerType.enum[0] };
+  if (!validateReceipt(filled)) bad(`${file}: receipt example is invalid — ${ajv.errorsText(validateReceipt.errors)}`);
+}
+
 for (const [name, file] of Object.entries(FILES)) {
   const md = read(file);
   const lines = md.split('\n');
@@ -72,6 +88,7 @@ for (const [name, file] of Object.entries(FILES)) {
       let obj;
       try { obj = JSON.parse(fill(m[1])); } catch (e) { bad(`${file}: a json example does not parse (${e.message})`); continue; }
       if ('title' in obj && 'body' in obj) validateInput('create-bug', obj, `${file} (json example)`);
+      if ('evidencePaths' in obj) checkReceipt(obj, md, file);
     }
     // inline `{ "id": …, "body": …, "idempotencyKey": … }` comment inputs
     for (const m of md.matchAll(/`(\{ "id": [^`]*"body": [^`]*\})`|containing `(\{ "id": [^`]*\})`/g)) {
@@ -96,6 +113,34 @@ for (const [name, file] of Object.entries(FILES)) {
     const step6 = (md.match(/- \*\*([^*]*)\*\* — through the tracker adapter CLI/) || [])[1] || '';
     if (!step6) bad(`${file}: Step 6 has no "… — through the tracker adapter CLI" bullet`);
     else for (const a of SUPPORTED) if (!new RegExp(a, 'i').test(step6)) bad(`${file}: adapter "${a}" is registered but missing from Step 6 ("${step6.trim()}")`);
+  }
+}
+
+// ── run-spec-tests.md: the structured-results runner ──────────────────────────────
+{
+  const file = '.claude/commands/run-spec-tests.md';
+  const md = read(file);
+  const runFlags = flagsIn(read('scripts/results/run.js'));
+  const { SUPPORTED: FRAMEWORKS } = require(path.join(ROOT, 'scripts/results/frameworks.js'));
+  md.split('\n').forEach((line, i) => {
+    const cmd = line.match(/node scripts\/results\/run\.js(.*)$/);
+    if (!cmd) return;
+    for (const f of cmd[1].matchAll(/(?:^|\s)(--[a-z-]+)/g)) if (!runFlags.has(f[1])) bad(`${file}:${i + 1}: run.js has no option ${f[1]}`);
+    const fw = cmd[1].match(/--framework\s+(\S+)/);
+    if (!fw) bad(`${file}:${i + 1}: run.js example has no --framework`);
+    else if (!FRAMEWORKS.includes(fw[1])) bad(`${file}:${i + 1}: "${fw[1]}" is not a framework run.js knows (${FRAMEWORKS.join(', ')})`);
+  });
+  if (!/node scripts\/results\/run\.js/.test(md)) bad(`${file}: no longer calls scripts/results/run.js`);
+  if (/--reporter=list\b(?!,)/.test(md)) bad(`${file}: still tells the model to read a list reporter's console output`);
+  // every `totals.x` / `error.x` the prose says to read must exist in the result schema
+  const resultSchema = JSON.parse(read('schemas/run-result.schema.json'));
+  const testProps = resultSchema.properties.tests.items.properties;
+  const fields = { totals: resultSchema.properties.totals.properties, error: testProps.error.properties };
+  for (const m of md.matchAll(/`(totals|error)\.([A-Za-z]+)`/g)) {
+    if (!(m[2] in fields[m[1]])) bad(`${file}: tells the model to read ${m[1]}.${m[2]}, which schemas/run-result.schema.json does not define`);
+  }
+  for (const m of md.matchAll(/`(flaky|durationMs|ticket|caseId|status)\b[^`]*`/g)) {
+    if (!(m[1] in testProps) && !(m[1] in resultSchema.properties)) bad(`${file}: mentions result field "${m[1]}", which the schema does not define`);
   }
 }
 

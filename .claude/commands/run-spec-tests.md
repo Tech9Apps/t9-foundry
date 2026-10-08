@@ -28,13 +28,23 @@ If `$ARGUMENTS` already looks like a path (contains `/`), use it as-is provided 
 
 ## Execute Tests
 
-**Always run in headed mode** so the user can see the browser executing tests live:
+Run the spec through the harness runner. It runs Playwright in headed mode (so the user can watch), makes it write a
+JSON report, and normalizes that report — so you read exact counts and failures from data instead of scraping console
+output:
 
 ```bash
-npx playwright test <path-to-spec-file> --headed --reporter=list
+node scripts/results/run.js --framework playwright --spec <path-to-spec-file> --headed
 ```
 
+Playwright's own list output streams to the terminal as it runs. When it finishes, stdout is one JSON document and
+`qa-results/result.json` holds the same thing. Exit codes: **0** every test passed · **1** some failed · **2** bad
+invocation · **3** no trustworthy report (Playwright could not start, was killed, wrote nothing, or its exit code
+contradicts its report — read `error.message` or `warnings`; never report that as a pass).
+
 ### Handle Failures (max 3 retries):
+
+For each test in `data.tests` with `status: "failed"`, `error.message` and `error.details` say what failed, and `error.kind`
+says whether it was an assertion (`failure`), a crash (`error`) or a `timeout`:
 
 1. **Read the failure screenshot** from `test-results/` to understand what the browser was showing at the time of failure
 2. **Selector/locator issues** — fix selectors in the page object (`pages/<feature>.page.ts`), re-run
@@ -43,15 +53,18 @@ npx playwright test <path-to-spec-file> --headed --reporter=list
 5. **Element intercepted by overlay** — use `{ force: true }` on hover/click, or dismiss the overlay first, re-run
 6. After 3 failed retries, proceed with the failure details
 
+Re-run with the same command. A test that passes only after Playwright's own retries comes back `flaky: true` — report
+it as passed but flag it; do not fix or hide it silently.
+
 ### Capture Results:
-- Total tests run
-- Tests passed / failed / skipped
-- Failure details (if any)
-- Execution time
+Read them from `data` in the JSON (or `qa-results/result.json`):
+- `totals.total`, `totals.passed`, `totals.failed`, `totals.skipped`, and `totals.flaky` if present
+- each failure's `name`, `error.message`, `error.kind` (and `ticket` / `caseId` when the test name carries them)
+- `durationMs`
 
 ## Output
 
 Print:
-- Test execution results (passed/failed/skipped)
+- Test execution results (passed/failed/skipped, and flaky if any)
 - Execution time
 - Spec file path used

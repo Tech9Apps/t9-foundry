@@ -88,11 +88,17 @@ act 3 "Run the automated checks against the app"
 say "Most of the cases are automated as plain Node API checks (no browser, no install; the few UI-only"
 say "cases stay manual). Running ${B}cd demo/app && npm test${N}:"
 echo ""
-TAP="$TMP/tap.txt"
-( cd "$APP" && node --test --test-reporter=tap >"$TAP" 2>&1 )
-PASS=0; FAIL=0; FAILED_NAMES=""
+# The structured way: run the suite, let the harness's normalizer read the report (no scraping console output).
 # "status|DEMO-101/TC-005: title", sorted by ticket then case (node runs files concurrently)
-RESULTS=$(grep -E '^\s*(not ok|ok) [0-9]+ - DEMO-' "$TAP" | sed -E 's/^[[:space:]]*(not ok|ok) [0-9]+ - /\1|/' | sort -t'|' -k2,2)
+node "$ROOT/scripts/results/run.js" --framework node --cwd "$APP" --out "$TMP/qa-run" --quiet >/dev/null 2>&1 || true
+[ -f "$TMP/qa-run/result.json" ] || problem "the test run produced no structured result"
+PASS=0; FAIL=0; FAILED_NAMES=""
+RESULTS=$(node -e '
+  const d = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).data;
+  d.tests.filter((t) => t.ticket)
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .forEach((t) => console.log((t.status === "failed" ? "not ok" : "ok") + "|" + t.name));
+' "$TMP/qa-run/result.json")
 while IFS='|' read -r status full; do
   [ -n "$full" ] || continue
   if [ "$status" = "not ok" ]; then
@@ -167,9 +173,10 @@ cp -R "$APP" "$TMP/app-fixed"
 if patch -p1 -d "$TMP/app-fixed" --silent < "$HERE/fixes.patch"; then
   grep -E '^[-+] ' "$HERE/fixes.patch" | sed 's/^/     /'
   echo ""
-  RESULT=$( cd "$TMP/app-fixed" && node --test --test-reporter=tap 2>&1 | grep -E '^# (pass|fail)' | tr '\n' ' ' )
+  node "$ROOT/scripts/results/run.js" --framework node --cwd "$TMP/app-fixed" --out "$TMP/qa-fixed" --quiet >/dev/null 2>&1 || true
+  RESULT=$( node -e 'const t = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).data.totals; console.log(t.passed + " passed, " + t.failed + " failed")' "$TMP/qa-fixed/result.json" 2>/dev/null )
   say "Re-running the same checks → ${B}${RESULT}${N}"
-  echo "$RESULT" | grep -q '# fail 0' && say "${G}✓ Green.${N} Those two checks are now regression tests that guard the fix." || problem "fixed app still has failures"
+  [ "${RESULT##*, }" = "0 failed" ] && say "${G}✓ Green.${N} Those two checks are now regression tests that guard the fix." || problem "fixed app still has failures"
 else
   problem "fixes.patch did not apply"
 fi

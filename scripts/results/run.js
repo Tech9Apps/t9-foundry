@@ -7,11 +7,12 @@
 //   node scripts/results/run.js [--framework playwright|cypress|pytest|rspec|jest|webdriverio|node]
 //                               [--test-dir D] [--config-file F] [--spec S]... [--headed]
 //                               [--out qa-results] [--cwd D] [--config qa-config.json]
-//                               [--timeout-ms N] [--dry-run]
+//                               [--timeout-ms N] [--quiet] [--dry-run]
 //
 //   --framework / --test-dir / --config-file default to testFramework.* in qa-config.json
 //   --out       the report goes to <out>/raw (cleared first, so a stale report can never pass for this run);
 //               the normalized result to <out>/result.json
+//   --quiet     discard the runner's own console output (it goes to stderr otherwise)
 //   --dry-run   print the command and the report location; run nothing
 //
 // The runner's own output goes to stderr; stdout is ONE JSON document:
@@ -47,6 +48,7 @@ function parseArgs(argv) {
     else if (flag === '--cwd') opts.cwd = value();
     else if (flag === '--config') opts.config = value();
     else if (flag === '--timeout-ms') opts.timeoutMs = Number(value());
+    else if (flag === '--quiet') opts.quiet = true;
     else if (flag === '--dry-run') opts.dryRun = true;
     else throw usage(`unknown option ${flag}`);
   }
@@ -62,11 +64,11 @@ function fromConfig(opts, env) {
   }
 }
 
-function runChild({ spawn, command, args, env, cwd, timeoutMs }) {
+function runChild({ spawn, command, args, env, cwd, timeoutMs, quiet }) {
   return new Promise((resolve) => {
     let child;
     try {
-      child = spawn(command, args, { cwd, env, stdio: ['ignore', 2, 2] });
+      child = spawn(command, args, { cwd, env, stdio: quiet ? 'ignore' : ['ignore', 2, 2] });
     } catch (err) {
       resolve({ spawnError: err });
       return;
@@ -82,7 +84,7 @@ async function main({ argv = process.argv.slice(2), env = process.env, stdout = 
   const out = (obj) => stdout.write(`${JSON.stringify(obj, null, 2)}\n`);
   try {
     if (!argv.length || argv[0] === '-h' || argv[0] === '--help') {
-      stderr.write('Usage: run.js [--framework F] [--test-dir D] [--config-file F] [--spec S]... [--headed] [--out DIR] [--cwd D] [--config P] [--timeout-ms N] [--dry-run]\n');
+      stderr.write('Usage: run.js [--framework F] [--test-dir D] [--config-file F] [--spec S]... [--headed] [--out DIR] [--cwd D] [--config P] [--timeout-ms N] [--quiet] [--dry-run]\n');
       return argv.length ? 0 : 2;
     }
     const opts = parseArgs(argv);
@@ -107,7 +109,7 @@ async function main({ argv = process.argv.slice(2), env = process.env, stdout = 
     fs.mkdirSync(rawDir, { recursive: true });
 
     const started = now();
-    const run = await runChild({ spawn, command: p.command, args: p.args, env: { ...env, ...p.env }, cwd: opts.cwd, timeoutMs: opts.timeoutMs || DEFAULT_TIMEOUT_MS });
+    const run = await runChild({ spawn, command: p.command, args: p.args, env: { ...env, ...p.env }, cwd: opts.cwd, timeoutMs: opts.timeoutMs || DEFAULT_TIMEOUT_MS, quiet: opts.quiet });
     const durationMs = now() - started;
     const base = { command, durationMs, resultPath };
     const noReport = (message, extra = {}) => {
