@@ -51,6 +51,22 @@ node_tests() { # <file> -> runs it, echoes the TAP summary lines
   [[ "$output" =~ "# fail 0" ]]
 }
 
+@test "the real-tracker smoke script passes its tests against all five mocks, including its failure reporting" {
+  run node_tests smoke.test.js
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "# fail 0" ]]
+}
+
+@test "smoke.js, run as a real process, refuses to create anything without --yes" {
+  cd "$REPO_ROOT"
+  cfg="$BATS_TEST_TMPDIR/smoke-config.json"
+  echo '{"ticketSource":{"type":"github","github":{"repo":"acme/scratch"}}}' > "$cfg"
+  run bash -c 'node scripts/tracker/smoke.js --config "$1" 2>/dev/null' _ "$cfg"
+  [ "$status" -eq 2 ]
+  [[ "$output" =~ "NOT_CONFIRMED" ]]
+  [[ "$output" =~ "repo=acme/scratch" ]]   # the plan says WHICH project it would write to
+}
+
 @test "the contract suite is actually exercised by every adapter (no adapter silently skips it)" {
   for a in github clickup azure gitlab bitbucket; do
     grep -q "runContractSuite('$a'" "$REPO_ROOT/tests/tracker/$a.test.js"
