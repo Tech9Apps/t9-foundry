@@ -1,7 +1,30 @@
 # Phase 2 design: run → triage → act
 
-Status: **design + first implementation checkpoint** on `v2/phase-2-closed-loop` (stacked on Phase 1, PR #8).
-Self-heal is **not** designed here beyond its boundary: it is an open decision (see Questions).
+Status: **first implementation checkpoint done** on `v2/phase-2-closed-loop` (stacked on Phase 1, PR #8). Everything
+below is built and tested except self-heal, which is **not** built and is an open decision (see Questions).
+
+## What was built, and where the build changed the design
+
+| Piece | Where |
+|---|---|
+| classifier, fingerprints, locator evidence | `scripts/triage/{classify,fingerprint,locators}.js`, `lib/text.js` |
+| planner (read-only tracker dedupe) | `scripts/triage/plan.js` |
+| the loop's spine: run → re-run failing specs → evidence → classify → plan | `scripts/triage/orchestrate.js` |
+| binding rubric; agent; command | `.claude/memory/failure-triage-rules.md`, `.claude/agents/QA-run-orchestrator.md`, `.claude/commands/run-and-triage.md` |
+| four seeded scenarios, run for real | `demo/scenarios/` (goldens by hand in `manifest.json`), `tests/triage/scenarios.test.js` |
+| prose-vs-code drift checks | `tests/helpers/{triage-rubric-check,orchestrator-drift-check}.js`, `tests/triage.bats` |
+
+Changes the build forced (each found by a test, not by thought):
+- **`orchestrate.js` was not in the plan.** Six steps of choreography in prose is where a model errs; one command is not.
+- **Normalized `open` on tracker search results** (all five adapters), as designed — but building it also exposed a **Phase 1
+  Azure bug**: bug bodies live in Repro Steps, which `search` and `fetch` never read. Fixed, with a contract test every
+  adapter now runs and an Azure mock that matches per field like real WIQL.
+- **A missing element must never count as an assertion failure.** Runners report both with the same plain kind, so without
+  this a stale selector with no DOM evidence classified as a product bug at 0.85. Fixed in the classifier.
+- **TST-2 ignores the runner's error kind** (most runners cannot tell a crash from an assertion; it uses the wording and
+  the first stack frame instead).
+- **The `node` results recipe emits TAP**, not JUnit: re-running only the failing specs needs the file location.
+- **An outage scenario needs a real name-resolution failure** (`.invalid`), because a dead local port reports `EPERM` in a sandbox.
 
 ## The loop
 
