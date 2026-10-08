@@ -1,0 +1,62 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/hooks/session-init.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/hooks/prod-guard.sh\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/hooks/env-detector.sh\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "Bash(cat qa-config*)",
+      "Bash(jq *)",
+      "Bash(gh issue view *)",
+      "Bash(gh issue create *)",
+      "Bash(gh issue list *)",
+      "Bash(gh repo view *)",
+      "Bash(gh auth status)",
+      "Bash(gh api *)",
+      "Bash(curl -fsS --max-time 30 *api/v4/*)",
+      "Bash(curl -fsS --max-time 30 *api.bitbucket.org*)",
+      "Bash(npx playwright --version)",
+      "Bash(npx playwright test --list*)",
+      "Bash(npx cypress --version)",
+      "Bash(node --version)",
+      "Bash(npm --version)",
+      "Bash(python --version)",
+      "Bash(python3 --version)",
+      "Bash(bash scripts/check-prereqs.sh)",
+      "Bash(node scripts/tracker/cli.js fetch *)",
+      "Bash(node scripts/tracker/cli.js search *)",
+      "Bash(node scripts/tracker/post-tests.js * --dry-run*)"
+    ]
+  }
+}

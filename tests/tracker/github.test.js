@@ -72,4 +72,67 @@ describe('github: specifics', () => {
       assert.ok(!c.path.includes(mock.token) && !c.search.includes(mock.token));
     }
   });
+
+  describe('idempotency lookup survives GitHub search lag (the list endpoint is consistent, search is not)', () => {
+    test('a lost response followed by an immediate retry does NOT create a duplicate, even though search cannot see the new issue yet', async () => {
+      const mock = createGithubMock();
+      mock.state.searchLag = true; // new issues are absent from search results until settle()
+      const adapter = make(mock);
+      mock.inject({ method: 'POST', match: mock.paths.create, networkError: true, afterCommit: true });
+      await assert.rejects(run(adapter, 'create-bug', { title: 'Coupon stacks', body: 'details', idempotencyKey: 'run-9-bug-1' }), (e) => e.code === 'NETWORK');
+      assert.equal(mock.createdItems().length, 1, 'the write happened');
+
+      // sanity: search really cannot see it yet — this is the trap
+      assert.deepEqual((await run(adapter, 'search', { query: 'Coupon stacks', kind: 'bug' })).items, []);
+
+      const retry = await run(adapter, 'create-bug', { title: 'Coupon stacks', body: 'details', idempotencyKey: 'run-9-bug-1' });
+      assert.equal(retry.deduplicated, true);
+      assert.equal(mock.createdItems().length, 1, 'no duplicate');
+    });
+
+    test('the same holds for test cases', async () => {
+      const mock = createGithubMock();
+      mock.state.searchLag = true;
+      const adapter = make(mock);
+      const parent = mock.seedTicket({ title: 'Parent' });
+      const input = { parentId: parent, tcId: 'TC-001', title: 't', idempotencyKey: 'P-TC-001' };
+      await run(adapter, 'create-test', input);
+      const again = await run(adapter, 'create-test', input);
+      assert.equal(again.deduplicated, true);
+      assert.equal(mock.createdItems().length, 1);
+    });
+
+    test('the lookup lists by label (test label + parent id for tests, "bug" for bugs) and never calls search', async () => {
+      const mock = createGithubMock();
+      const adapter = make(mock);
+      const parent = mock.seedTicket({ title: 'Parent' });
+      await run(adapter, 'create-test', { parentId: parent, tcId: 'TC-001', title: 't', idempotencyKey: 'k1' });
+      await run(adapter, 'create-bug', { title: 'b', body: 'x', idempotencyKey: 'k2' });
+      const lists = mock.calls.filter((c) => c.method === 'GET' && c.path.endsWith('/issues'));
+      assert.equal(lists[0].query.labels, `test-case,${parent}`);
+      assert.equal(lists[1].query.labels, 'bug');
+      assert.ok(lists.every((c) => c.query.state === 'all'), 'closed issues count too');
+      assert.ok(!mock.calls.some((c) => c.path.includes('/search/')), 'idempotency never depends on the search index');
+    });
+
+    test('finds an item that is more than one page old', async () => {
+      const mock = createGithubMock();
+      const adapter = make(mock);
+      const first = await run(adapter, 'create-bug', { title: 'the original', body: 'x', idempotencyKey: 'old-key' });
+      for (let n = 0; n < 130; n += 1) mock.seedIssue({ title: `filler ${n}`, labels: ['bug'] });
+      const again = await run(adapter, 'create-bug', { title: 'the original', body: 'x', idempotencyKey: 'old-key' });
+      assert.equal(again.deduplicated, true);
+      assert.equal(again.id, first.id);
+      assert.ok(mock.calls.filter((c) => c.method === 'GET' && c.path.endsWith('/issues')).some((c) => c.query.page === '2'), 'it paged');
+    });
+
+    test('pull requests are never mistaken for the item', async () => {
+      const mock = createGithubMock();
+      const adapter = make(mock);
+      const n = mock.seedIssue({ title: 'a PR', body: 'qa-harness-key:pr-key', labels: ['bug'] });
+      mock.state.issues.get(n).pull_request = { url: 'https://api.github.test/pulls/1' };
+      const created = await run(adapter, 'create-bug', { title: 'real', body: 'x', idempotencyKey: 'pr-key' });
+      assert.equal(created.deduplicated, false);
+    });
+  });
 });

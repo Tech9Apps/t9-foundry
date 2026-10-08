@@ -4,7 +4,9 @@ const { createCore } = require('./core');
 // In-process mock of the slice of the GitHub REST API the adapter uses.
 function createGithubMock({ token = 'test-token', repo = 'acme/shop' } = {}) {
   const core = createCore({ checkAuth: (h) => h.authorization === `Bearer ${token}` });
-  const state = { issues: new Map(), comments: new Map(), created: [], nextNumber: 1, nextCommentId: 9000, rateLimited: false };
+  // searchLag: GitHub's search index is eventually consistent — newly created issues are absent from
+  // search results until settle() is called. List endpoints are read-after-write consistent.
+  const state = { issues: new Map(), comments: new Map(), created: [], nextNumber: 1, nextCommentId: 9000, rateLimited: false, searchLag: false, unindexed: new Set() };
   const [owner, name] = repo.split('/');
   const html = (n) => `https://github.test/${repo}/issues/${n}`;
 
@@ -28,6 +30,17 @@ function createGithubMock({ token = 'test-token', repo = 'acme/shop' } = {}) {
     return issue;
   };
 
+  core.route('GET', '/repos/:owner/:repo/issues', ({ params, query }) => {
+    inRepo(params);
+    const labels = (query.labels || '').split(',').filter(Boolean).map((l) => l.toLowerCase());
+    const wantState = query.state || 'open';
+    const per = Math.min(Number(query.per_page) || 30, 100);
+    const page = Number(query.page) || 1;
+    const all = [...state.issues.values()]
+      .filter((i) => (wantState === 'all' || i.state === wantState) && labels.every((l) => i.labels.some((x) => x.name.toLowerCase() === l)))
+      .sort((a, b) => (query.direction === 'asc' ? a.number - b.number : b.number - a.number));
+    return [200, all.slice((page - 1) * per, page * per)];
+  });
   core.route('GET', '/repos/:owner/:repo/issues/:number', ({ params }) => [200, getIssue(params)]);
   core.route('GET', '/repos/:owner/:repo/issues/:number/comments', ({ params }) => {
     getIssue(params);
@@ -38,6 +51,7 @@ function createGithubMock({ token = 'test-token', repo = 'acme/shop' } = {}) {
     if (!body || !body.title) throw core.httpError(422, 'Validation Failed', { message: 'Validation Failed', errors: [{ field: 'title', code: 'missing_field' }] });
     const number = seedIssue({ title: body.title, body: body.body || '', labels: body.labels || [], user: 'qa-bot' });
     state.created.push(number);
+    if (state.searchLag) state.unindexed.add(number);
     return [201, state.issues.get(number)];
   });
   core.route('POST', '/repos/:owner/:repo/issues/:number/comments', ({ params, body }) => {
@@ -54,7 +68,7 @@ function createGithubMock({ token = 'test-token', repo = 'acme/shop' } = {}) {
     if (wantRepo && wantRepo !== repo) return [200, { total_count: 0, items: [] }];
     const labels = [...q.matchAll(/label:"?([^"\s]+)"?/g)].map((m) => m[1].toLowerCase());
     const text = q.replace(/\b(repo|label|is|in):("[^"]*"|\S+)/g, '').replace(/"/g, '').trim().toLowerCase();
-    const items = [...state.issues.values()].filter((i) => {
+    const items = [...state.issues.values()].filter((i) => !state.unindexed.has(i.number)).filter((i) => {
       const haystack = `${i.title}\n${i.body}`.toLowerCase();
       const have = i.labels.map((l) => l.name.toLowerCase());
       return (!text || haystack.includes(text)) && labels.every((l) => have.includes(l));
@@ -76,6 +90,7 @@ function createGithubMock({ token = 'test-token', repo = 'acme/shop' } = {}) {
     source: 'github', fetch: core.fetch, inject: core.inject, calls: core.calls, state, seedIssue, repo, token, baseUrl: 'https://api.github.test',
     settings: { repo },
     seedTicket,
+    settle: () => state.unindexed.clear(), // the search index catches up
     tokenEnv: 'GITHUB_TOKEN',
     createdItems: () => state.created.map((n) => ({ id: String(n), title: state.issues.get(n).title, text: state.issues.get(n).body })),
     commentsOn: (id) => state.comments.get(Number(id)).map((c) => c.body),

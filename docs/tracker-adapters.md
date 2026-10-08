@@ -103,6 +103,7 @@ Every failure is normalized, so a caller never parses tracker-specific messages:
 | Test case is | an issue labelled `test-case` + the parent id | a task + a "Test Steps" checklist | a `Test Case` work item with steps XML |
 | Bug is | issue titled `[BUG] …`, label `bug` | task named `[BUG] …` | a `Bug` work item |
 | Idempotency marker | `qa-harness-key:<key>` line in the body | same, in the description | tag `qa-key-<key>` |
+| Key lookup | **lists** issues by label (never search — GitHub's search index lags) | lists the configured list | WIQL query on the tag |
 | Not yet | — | — | assignee lookup (needs a second host) |
 
 ## Keeping the prose honest

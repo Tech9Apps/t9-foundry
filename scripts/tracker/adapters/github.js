@@ -6,6 +6,8 @@ const { keyMarker, stepsAsMarkdown, extractAcceptanceCriteria } = require('../li
 
 // GitHub Issues over the REST API (token auth) — works headless, unlike the `gh` CLI path.
 // settings = qa-config.json > ticketSource.github  ({ repo: "owner/repo", testLabelName, tokenEnvVar, apiBaseUrl })
+const LIST_PAGES = 5; // up to 500 labelled issues per lookup
+
 function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, retryDelayMs }) {
   const repo = settings.repo;
   if (!repo || !/^[^/\s]+\/[^/\s]+$/.test(repo)) {
@@ -63,11 +65,23 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
     return { items: (json.items || []).slice(0, limit).map(summarize) };
   }
 
-  async function findByKey(key) {
+  // Idempotency lookup deliberately uses the LIST endpoint, not search. GitHub's search index is
+  // eventually consistent: an issue created a moment ago can be missing from search results for
+  // seconds, so a retry right after a lost response would miss it and create a duplicate. Listing
+  // is read-after-write consistent. It is scoped by label (a test case carries the test label and
+  // its parent id; a bug carries `bug`) so it stays cheap and finds items however old they are.
+  async function findByKey(key, { op, input } = {}) {
     const marker = keyMarker(key);
-    const { json } = await call('GET', `/search/issues?q=${encodeURIComponent(`"${marker}" repo:${repo} is:issue in:body`)}&per_page=5`, undefined, 'look up idempotency key');
-    const hit = (json.items || []).find((i) => (i.body || '').includes(marker));
-    return hit ? { id: String(hit.number), url: hit.html_url } : null;
+    const labels = op === 'create-test' ? [testLabel, String(input.parentId)] : op === 'create-bug' ? ['bug'] : [];
+    for (let page = 1; page <= LIST_PAGES; page += 1) {
+      const query = `state=all&sort=created&direction=desc&per_page=100&page=${page}${labels.length ? `&labels=${encodeURIComponent(labels.join(','))}` : ''}`;
+      const { json } = await call('GET', `/repos/${repo}/issues?${query}`, undefined, 'look up idempotency key');
+      const batch = json || [];
+      const hit = batch.find((i) => !i.pull_request && (i.body || '').includes(marker));
+      if (hit) return { id: String(hit.number), url: hit.html_url };
+      if (batch.length < 100) break;
+    }
+    return null;
   }
 
   async function createTest({ parentId, tcId, title, description = '', priority, steps = [], idempotencyKey }) {
