@@ -107,7 +107,9 @@ function evaluate({ key, attempts }, { runCount, preflight, blast, evidence }) {
   if (failing.length && blast.size && failing.every((a) => blast.has(normalizeSignature(msgOf(a))))) {
     add('ENV-3', 'environment', 0.6, 'most of the run failed with this one error — an outage or a single suite-wide regression; cannot tell which from the tests alone');
   }
-  const assertions = failing.length > 0 && failing.every((a) => a.error && a.error.kind === 'failure');
+  // An "assertion" failure is evidence about the APP. A missing element is evidence about the test or the page, and most
+  // runners (node:test, Playwright, Jest) report it with the same plain kind as an assertion — so look at the wording.
+  const assertions = failing.length > 0 && failing.every((a) => a.error && a.error.kind === 'failure' && !isLocatorError(msgOf(a)));
   const sameSignature = sigs.length > 0 && sigs.every((s) => s === sigs[0]);
   if (failing.length >= 2 && !passing.length && assertions && sameSignature) {
     if (main.caseId) add('PRD-1', 'product-bug', 0.85, `failed in all ${failing.length} attempts with the same assertion ("${short(msgOf(failing[0]))}")`, `traceable to manual case ${main.ticket ? `${main.ticket}/` : ''}${main.caseId}`);

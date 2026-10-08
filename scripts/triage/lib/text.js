@@ -59,17 +59,20 @@ function extractTestId(message) {
 }
 
 // Did the test CRASH in its own code (TypeError, bad import …) rather than fail an assertion? Look at the first
-// stack frame that names a source file: if it is a test file, the bug is in the test.
+// stack frame that names a source file: if it is a test file, the bug is in the test. The runner's own "kind" is NOT
+// used: most runners (node:test, Playwright, Jest) report a thrown exception and a failed assertion identically, so
+// the wording and the stack location are the evidence.
 const CRASH = /\b(?:TypeError|ReferenceError|SyntaxError)\b|Cannot find module|is not a function|is not defined|NameError|AttributeError|NoMethodError|undefined method/;
+const ASSERTION = /\bAssertionError\b|expect\(received\)|\bexpected\b.*\b(?:to|but)\b|!==|Failure\/Error: expect/i;
 const TEST_PATH = /(?:^|[\\/])(?:tests?|specs?|e2e|__tests__|cypress[\\/]e2e)[\\/]|\.(?:test|spec)\.[cm]?[jt]sx?$|_spec\.rb$|(?:^|[\\/])test_[^\\/]*\.py$|_test\.py$/;
 function firstSourceFrame(details) {
   const m = stripAnsi(details || '').match(/(?:\(|\bat\s+|^\s*)((?:[A-Za-z]:)?[\\/]?[\w.@~+ \\/-]*?[\w.-]+\.(?:[cm]?[jt]sx?|py|rb))(?::(\d+))?(?::\d+)?/m);
   return m ? { file: m[1], line: m[2] ? Number(m[2]) : undefined } : null;
 }
 function testCrash(error) {
-  if (!error || error.kind !== 'error') return null;
-  const text = `${error.message || ''}\n${error.details || ''}`;
-  if (!CRASH.test(text)) return null;
+  if (!error) return null;
+  const head = `${error.message || ''}`;
+  if (!CRASH.test(`${head}\n${error.details || ''}`) || ASSERTION.test(head)) return null;
   const frame = firstSourceFrame(error.details);
   return frame && TEST_PATH.test(frame.file) ? frame : null;
 }

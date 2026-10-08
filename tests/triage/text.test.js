@@ -50,10 +50,14 @@ describe('testCrash', () => {
   test('…and a crash inside application code is not', () => {
     assert.equal(crash('TypeError: x', 'at totals (/work/demo/app/src/pricing.js:30:11)'), null);
   });
-  test('assertion failures are never crashes, and non-crash errors are not either', () => {
-    assert.equal(crash('TypeError: x', 'at (/w/tests/a.js:1:1)', 'failure'), null);
+  test('an assertion error is never a crash, even with a test-file frame; and plain messages are not crashes', () => {
+    assert.equal(crash('AssertionError [ERR_ASSERTION]: expected 1 to equal 2 (TypeError mentioned in passing)', 'at (/w/tests/a.js:1:1)'), null);
+    assert.equal(crash('Error: expect(received).toBe(expected)', 'at (/w/tests/a.js:1:1)'), null);
     assert.equal(crash('something odd happened', 'at (/w/tests/a.js:1:1)'), null);
     assert.equal(testCrash(undefined), null);
+  });
+  test('the runner\'s "kind" does not matter: node:test and Playwright report a thrown TypeError as a plain failure', () => {
+    for (const kind of ['failure', 'error', 'timeout', undefined]) assert.ok(crash('TypeError: x is not a function', 'at run (/w/tests/a.test.js:1:1)', kind), String(kind));
   });
   test('reports the file and line', () => {
     assert.deepEqual(crash('ReferenceError: nope is not defined', 'at X (/w/tests/a.test.js:7:3)'), { file: '/w/tests/a.test.js', line: 7 });

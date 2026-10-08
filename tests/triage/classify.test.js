@@ -156,6 +156,15 @@ describe('test-bug (TST-1/2)', () => {
     assert.match(v.evidence[0], /"add-to-cart".*"add-to-basket"/);
   });
 
+  test('a locator error reported as a plain FAILURE (as node:test and Playwright report it) is never a product bug, with or without evidence', () => {
+    const plain = err("locator not found: getByTestId('coupon-apply-btn')", 'failure');
+    const ticketed = { ticket: 'DEMO-101', caseId: 'TC-901' };
+    const runs = [run(fail('DEMO-101/TC-901: apply', plain, ticketed)), run(fail('DEMO-101/TC-901: apply', plain, ticketed)), run(fail('DEMO-101/TC-901: apply', plain, ticketed))];
+    const v = only(triage(runs));
+    assert.deepEqual([v.class, v.action], ['undetermined', 'propose']);
+    assert.ok(!(v.alternatives || []).some((a) => a.class === 'product-bug'), 'not even offered as an alternative');
+  });
+
   test('locator not found but NO DOM evidence → undetermined 0.4 (and says what would settle it)', () => {
     const v = only(triage(uiRuns()));
     assert.deepEqual([v.class, v.rule, v.confidence, v.action], ['undetermined', 'UND-1', 0.4, 'propose']);
@@ -197,6 +206,11 @@ describe('test-bug (TST-1/2)', () => {
     const crash = err('TypeError: x is not a function', 'error', 'at run (/work/tests/a.test.js:3:3)');
     const v = only(triage([run(fail('t', crash)), run(fail('t', ASSERT))]));
     assert.notEqual(v.rule, 'TST-2');
+  });
+
+  test('TST-2 fires for a runner that reports a thrown TypeError as a plain failure (node:test, Playwright)', () => {
+    const e = err("TypeError: Cannot read properties of undefined (reading 'click')", 'failure', 'at run (/work/e2e/checkout.spec.ts:12:7)');
+    assert.equal(only(triage([run(fail('t', e)), run(fail('t', e))])).rule, 'TST-2');
   });
 
   test('the same TypeError raised inside the APP is not blamed on the test', () => {
