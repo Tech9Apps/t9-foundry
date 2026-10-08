@@ -68,7 +68,8 @@ echo "${D}Project: Brew & Co, a tiny coffee-shop checkout. Local only; nothing l
 act 1 "A ticket lands"
 say "Product hands QA a story. This is DEMO-101 — the acceptance criteria are where every test starts:"
 echo ""
-sed -n '/^### Acceptance Criteria/,/^## Technical Notes/p' "$HERE/tickets/DEMO-101.md" | sed '$d' | sed 's/^/   /'
+say "${B}Acceptance criteria${N}"
+sed -n '/^### Acceptance Criteria/,/^## Technical Notes/p' "$HERE/tickets/DEMO-101.md" | sed '1,2d;$d' | sed 's/\*\*//g; s/^/   /'
 say "${D}(There are two more tickets: DEMO-102 pricing, DEMO-103 sign-in lockout.)${N}"
 pause
 
