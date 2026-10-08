@@ -1,6 +1,6 @@
 import { defineConfig } from 'cypress';
 import { loadQAConfig } from './support/qa-config-loader';
-import { validateNotProduction } from './support/prod-guard';
+import { validateNotProduction, guardOptionsFromConfig } from './support/prod-guard';
 import { DataFactory } from './support/data-factory';
 
 const qa = loadQAConfig();
@@ -17,7 +17,7 @@ const prodPatterns: string[] =
   (process.env.QA_PROD_PATTERNS ? JSON.parse(process.env.QA_PROD_PATTERNS) : []);
 
 // Layer 5: production guard — crashes at config load time
-validateNotProduction(baseUrl, prodPatterns);
+validateNotProduction(baseUrl, prodPatterns, guardOptionsFromConfig(qa));
 
 export default defineConfig({
   e2e: {

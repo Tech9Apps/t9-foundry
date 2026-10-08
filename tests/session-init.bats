@@ -8,7 +8,7 @@ INIT_HOOK="$REPO_ROOT/hooks/session-init.sh"
 FIXTURES="$BATS_TEST_DIRNAME/fixtures"
 
 setup() {
-  TEST_TMP="$(mktemp -d)"
+  TEST_TMP="$(mktemp -d "${TMPDIR:-/tmp}/qa-test.XXXXXX")"
 }
 
 teardown() {
@@ -110,6 +110,55 @@ teardown() {
   run env -u BITBUCKET_TOKEN bash -c "cd '$TEST_TMP' && bash '$INIT_HOOK'"
   [ "$status" -eq 0 ]
   [[ "$output" =~ "BITBUCKET_TOKEN" ]]
+}
+
+@test "warns when ticketSource is bitbucket and no username is configured" {
+  cp "$FIXTURES/bitbucket-config.json" "$TEST_TMP/qa-config.json"
+  run env BITBUCKET_TOKEN=x bash -c "cd '$TEST_TMP' && bash '$INIT_HOOK'"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "bitbucket.username" ]]
+}
+
+# ── Enforce mode (unattended runs fail closed) ───────────────────────────────
+
+@test "enforce mode: a missing qa-config.json blocks the session" {
+  run env QA_AUTONOMOUS=1 bash -c "cd '$TEST_TMP' && bash '$INIT_HOOK'"
+  [ "$status" -eq 2 ]
+  [[ "$output" =~ "BLOCKED" ]]
+}
+
+@test "enforce mode via QA_AUTONOMOUS=1: empty prodUrlPatterns blocks the session" {
+  cp "$FIXTURES/empty-patterns-config.json" "$TEST_TMP/qa-config.json"
+  run env QA_AUTONOMOUS=1 bash -c "cd '$TEST_TMP' && bash '$INIT_HOOK'"
+  [ "$status" -eq 2 ]
+  [[ "$output" =~ "prodUrlPatterns" ]]
+}
+
+@test "enforce mode via config: empty prodUrlPatterns blocks the session" {
+  cp "$FIXTURES/enforce-empty-patterns-config.json" "$TEST_TMP/qa-config.json"
+  run env -u QA_AUTONOMOUS bash -c "cd '$TEST_TMP' && bash '$INIT_HOOK'"
+  [ "$status" -eq 2 ]
+}
+
+@test "enforce mode: a fully configured workspace starts and reports the guard mode" {
+  cp "$FIXTURES/enforce-config.json" "$TEST_TMP/qa-config.json"
+  run env -u QA_AUTONOMOUS bash -c "cd '$TEST_TMP' && bash '$INIT_HOOK'"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "Guard mode:       enforce" ]]
+}
+
+@test "warn mode (default) reports the guard mode as warn" {
+  cp "$FIXTURES/valid-config.json" "$TEST_TMP/qa-config.json"
+  run env -u QA_AUTONOMOUS bash -c "cd '$TEST_TMP' && bash '$INIT_HOOK'"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "Guard mode:       warn" ]]
+}
+
+@test "a malformed qa-config.json blocks the session with a clear message" {
+  cp "$FIXTURES/malformed-config.json" "$TEST_TMP/qa-config.json"
+  run bash -c "cd '$TEST_TMP' && bash '$INIT_HOOK'"
+  [ "$status" -eq 2 ]
+  [[ "$output" =~ "not valid JSON" ]]
 }
 
 # ── Empty production patterns ─────────────────────────────────────────────────

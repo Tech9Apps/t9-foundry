@@ -6,6 +6,7 @@
 set -euo pipefail
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/qa-config-path.sh"
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/guard-mode.sh"
 
 INPUT=$(cat)
 
@@ -107,13 +108,33 @@ done
 # This heuristic always runs as an additional layer, even once prodUrlPatterns
 # is configured — a configured list only covers what's been typed in, and
 # should not disable the fallback check for everything else.
-if [ "$(jq -r '.productionProtection.blockOnSuspiciousUrls // true' "$QA_CONFIG_PATH" 2>/dev/null || echo 'true')" = "true" ] \
+if [ "$(jq -r 'if .productionProtection.blockOnSuspiciousUrls == false then "false" else "true" end' "$QA_CONFIG_PATH" 2>/dev/null || echo 'true')" = "true" ] \
   && echo "$CONTENT" | grep -qE "https?://[a-z0-9.-]+\.(com|io|net|app|org)"; then
-  URLS=$(echo "$CONTENT" | grep -oE "https?://[a-z0-9.-]+\.(com|io|net|app|org)[^'\"[:space:]]*" | head -5 || true)
+  URLS=$(echo "$CONTENT" | grep -oE "https?://[a-z0-9.-]+\.(com|io|net|app|org)[^'\"[:space:]]*" | head -20 || true)
   if [ -n "$URLS" ]; then
-    # Only warn on bare non-localhost, non-staging URLs in test files
-    SUSPICIOUS=$(echo "$URLS" | grep -vE "(staging|test|dev|qa|localhost|127\.0\.0\.1|example\.com)" || true)
+    # Only consider bare non-localhost, non-staging URLs that aren't known-safe hosts
+    SUSPICIOUS=""
+    while IFS= read -r url; do
+      [ -n "$url" ] || continue
+      if echo "$url" | grep -qiE "(staging|test|dev|qa|localhost|127\.0\.0\.1|example\.com)"; then continue; fi
+      if url_is_exempt "$url" "$QA_CONFIG_PATH"; then continue; fi
+      SUSPICIOUS="${SUSPICIOUS}${SUSPICIOUS:+ }${url}"
+    done <<< "$URLS"
+
     if [ -n "$SUSPICIOUS" ]; then
+      # Documentation files legitimately link to external sites; never block those.
+      case "$FILE_PATH" in
+        *.md|*.markdown|*.txt|*.rst) IS_DOC_FILE=1 ;;
+        *) IS_DOC_FILE=0 ;;
+      esac
+
+      if [ "$(resolve_guard_mode "$QA_CONFIG_PATH")" = "enforce" ] && [ "$IS_DOC_FILE" -eq 0 ]; then
+        # Unattended: a warning nobody reads is no guard. Block.
+        echo "BLOCKED: File content contains hardcoded URLs that may be production: $SUSPICIOUS"
+        echo "Guard mode is 'enforce' (QA_AUTONOMOUS=1 or productionProtection.mode), so heuristic matches block."
+        echo "Use process.env.BASE_URL instead of hardcoding. If a URL is safe, add a regex for it to productionProtection.allowedUrlPatterns in qa-config.json."
+        exit 2
+      fi
       echo "WARNING: File contains hardcoded URLs that may be production: $SUSPICIOUS"
       echo "Consider using process.env.BASE_URL and configuring productionProtection.prodUrlPatterns in qa-config.json."
     fi

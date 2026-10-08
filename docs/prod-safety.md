@@ -74,6 +74,47 @@ This is the final backstop. Even if a QA engineer manually sets `BASE_URL` to a 
 
 ---
 
+## Guard Modes: `warn` and `enforce`
+
+The suspicious-URL heuristic (Layers 3, 4 and 5) has two modes:
+
+| Mode | Heuristic match | Empty `prodUrlPatterns` | Missing / malformed `qa-config.json` | When |
+|------|-----------------|-------------------------|--------------------------------------|------|
+| `warn` (default) | prints a warning | warns at session start | prints setup guidance (malformed config blocks) | a human is at the keyboard |
+| `enforce` | **blocks** (exit 2 / throws) | **blocks the session** | **blocks the session** | unattended runs — a warning nobody reads is not a guard |
+
+Enforce is selected by **`QA_AUTONOMOUS=1`** (set by autonomous entry points; overrides the config) or by
+`productionProtection.mode: "enforce"` in `qa-config.json`. Configured `prodUrlPatterns` and production env-var
+checks block in **both** modes — `enforce` only changes what happens to the *heuristic*.
+
+Because enforce blocks anything that merely *looks* like production, two escape hatches exist:
+
+- **Built-in exemptions** — tracker and code-host URLs the pipeline legitimately calls (`github.com`, `gitlab.com`,
+  `bitbucket.org`, `dev.azure.com`, `api.clickup.com`, `atlassian.net`, `localhost`) never trip the heuristic.
+- **`productionProtection.allowedUrlPatterns`** — regexes for other known-safe URLs (docs sites, CDNs). These exempt
+  the heuristic **only**; they never override `prodUrlPatterns`.
+
+Layer 4 never blocks documentation files (`.md`, `.txt`, `.rst`) on the heuristic — they legitimately link out — it
+only warns. URLs are judged **one at a time**: a staging URL elsewhere in the same command does not excuse a
+production-looking one.
+
+`blockOnSuspiciousUrls: false` disables the heuristic entirely (in either mode) and is honored as an explicit opt-out;
+`scripts/preflight.sh` warns when it is combined with `enforce`.
+
+### Preflight
+
+`scripts/preflight.sh` is the go/no-go gate for an autonomous run. It checks: `jq`; config present and valid; required
+sections; staging URL set, not matching a production pattern; `prodUrlPatterns` non-empty and each a valid regex;
+ticket-source credentials (`AZURE_DEVOPS_PAT`, `CLICKUP_TOKEN`, ..., Bitbucket username); the app repo's `.env.test`
+`QA_HARNESS_DIR` resolving to this harness (so Layer 5 can find the config); and staging reachability / `gh auth`
+(skip with `--skip-network`). Exit 0 = go, 1 = no-go.
+
+```bash
+QA_AUTONOMOUS=1 bash scripts/preflight.sh
+```
+
+---
+
 ## Configuring Production Patterns
 
 Add your production URLs to `qa-config.json > productionProtection.prodUrlPatterns`. Use regex:

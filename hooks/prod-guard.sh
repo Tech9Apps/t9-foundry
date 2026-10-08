@@ -6,6 +6,7 @@
 set -euo pipefail
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/qa-config-path.sh"
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/guard-mode.sh"
 
 INPUT=$(cat)
 
@@ -83,21 +84,36 @@ SUSPICIOUS_PATTERNS=(
   "https?://app\.[a-z0-9-]+\.(com|io|app|net|org)"
 )
 
-if [ "$(jq -r '.productionProtection.blockOnSuspiciousUrls // true' "$QA_CONFIG_PATH" 2>/dev/null || echo 'true')" = "true" ]; then
-  for pattern in "${SUSPICIOUS_PATTERNS[@]}"; do
-    if echo "$COMMAND" | grep -qiE -e "$pattern"; then
-      if echo "$COMMAND" | grep -qiE "(staging|test|dev|qa|localhost|127\.0\.0\.1)"; then
-        continue
+if [ "$(jq -r 'if .productionProtection.blockOnSuspiciousUrls == false then "false" else "true" end' "$QA_CONFIG_PATH" 2>/dev/null || echo 'true')" = "true" ]; then
+  GUARD_MODE=$(resolve_guard_mode "$QA_CONFIG_PATH")
+
+  # Judge each URL on its own — a staging URL elsewhere in the same command
+  # must not excuse a production-looking one.
+  while IFS= read -r url; do
+    [ -n "$url" ] || continue
+    if url_is_exempt "$url" "$QA_CONFIG_PATH"; then continue; fi
+    if echo "$url" | grep -qiE "(staging|test|dev|qa|localhost|127\.0\.0\.1)"; then continue; fi
+
+    for pattern in "${SUSPICIOUS_PATTERNS[@]}"; do
+      if echo "$url" | grep -qiE -e "$pattern"; then
+        if [ "$GUARD_MODE" = "enforce" ]; then
+          # Unattended: a warning nobody reads is no guard. Block.
+          echo "BLOCKED: Command contains a URL that looks like production: $url"
+          echo "Guard mode is 'enforce' (QA_AUTONOMOUS=1 or productionProtection.mode), so heuristic matches block."
+          echo "If this URL is safe, add a regex for it to productionProtection.allowedUrlPatterns in qa-config.json."
+          echo "If it is production, add it to productionProtection.prodUrlPatterns and use your staging URL instead."
+          exit 2
+        fi
+        # warn mode: heuristic matches may be false positives, so only warn.
+        # Always warn, even when prodUrlPatterns is configured: a configured
+        # pattern list only covers what's been typed in, and this heuristic is
+        # meant to layer on top of it, not disable itself once any pattern exists.
+        echo "WARNING: Command may contain a production URL: $url"
+        echo "Configure productionProtection.prodUrlPatterns in qa-config.json to enable strict blocking."
+        break 2
       fi
-      # Only warn (not block) on heuristic matches — they may be false positives.
-      # Always warn, even when prodUrlPatterns is configured: a configured
-      # pattern list only covers what's been typed in, and this heuristic is
-      # meant to layer on top of it, not disable itself once any pattern exists.
-      echo "WARNING: Command may contain a production URL: $COMMAND"
-      echo "Configure productionProtection.prodUrlPatterns in qa-config.json to enable strict blocking."
-      break
-    fi
-  done
+    done
+  done < <(echo "$COMMAND" | extract_urls)
 fi
 
 exit 0

@@ -41,4 +41,7 @@ bats \
   tests/session-init.bats \
   tests/schema-validation.bats \
   tests/wording-lint.bats \
-  tests/check-prereqs.bats
+  tests/check-prereqs.bats \
+  tests/preflight.bats \
+  tests/layer5-guard.bats \
+  tests/layer5-guard-py-rb.bats

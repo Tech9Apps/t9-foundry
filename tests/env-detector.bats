@@ -8,7 +8,7 @@ DETECTOR="$REPO_ROOT/hooks/env-detector.sh"
 FIXTURES="$BATS_TEST_DIRNAME/fixtures"
 
 setup() {
-  TEST_TMP="$(mktemp -d)"
+  TEST_TMP="$(mktemp -d "${TMPDIR:-/tmp}/qa-test.XXXXXX")"
 }
 
 teardown() {
@@ -174,13 +174,42 @@ edit_input() {
   [[ "$output" =~ "WARNING" ]]
 }
 
+# ── Enforce mode (unattended runs fail closed) ───────────────────────────────
+
+@test "enforce mode via config: blocks a Write of code containing a suspicious hardcoded URL" {
+  write_input "/project/e2e/config.ts" "const other = 'https://otherapp.io/page';" "enforce-config.json"
+  run bash -c "cd '$TEST_TMP' && bash '$DETECTOR' < input.json"
+  [ "$status" -eq 2 ]
+  [[ "$output" =~ "BLOCKED" ]]
+}
+
+@test "enforce mode via QA_AUTONOMOUS=1: blocks even when the config says warn" {
+  write_input "/project/e2e/config.ts" "const other = 'https://otherapp.io/page';" "prod-url-config.json"
+  run env QA_AUTONOMOUS=1 bash -c "cd '$TEST_TMP' && bash '$DETECTOR' < input.json"
+  [ "$status" -eq 2 ]
+  [[ "$output" =~ "BLOCKED" ]]
+}
+
+@test "enforce mode: documentation files only warn (they legitimately link out)" {
+  write_input "/project/test-cases/notes.md" "See https://otherapp.io/page for details." "enforce-config.json"
+  run bash -c "cd '$TEST_TMP' && bash '$DETECTOR' < input.json"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "WARNING" ]]
+}
+
+@test "enforce mode: tracker/code-host URLs and allowedUrlPatterns are exempt" {
+  write_input "/project/e2e/links.ts" "// https://github.com/Tech9Apps/t9-foundry/issues/1 and https://partner.io/guide/setup" "enforce-config.json"
+  run bash -c "cd '$TEST_TMP' && bash '$DETECTOR' < input.json"
+  [ "$status" -eq 0 ]
+}
+
 # ── cwd-independent config resolution ─────────────────────────────────────────
 
 @test "resolves qa-config.json via CLAUDE_PROJECT_DIR when the tool's cwd has no config" {
   # qa-config.json is gitignored repo-wide, so build the CLAUDE_PROJECT_DIR
   # fixture at runtime (like write_input does for cwd) instead of committing
   # a file with that literal name under tests/fixtures/.
-  local project_dir="$(mktemp -d)"
+  local project_dir="$(mktemp -d "${TMPDIR:-/tmp}/qa-test.XXXXXX")"
   cp "$FIXTURES/prod-url-config.json" "$project_dir/qa-config.json"
   write_input "/project/e2e/config.ts" "const base = 'https://myapp.example.com/';"
   run env CLAUDE_PROJECT_DIR="$project_dir" bash -c "cd '$TEST_TMP' && bash '$DETECTOR' < input.json"

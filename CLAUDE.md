@@ -109,6 +109,9 @@ bats tests/session-init.bats
 bats tests/schema-validation.bats
 bats tests/wording-lint.bats
 bats tests/check-prereqs.bats
+bats tests/preflight.bats
+bats tests/layer5-guard.bats        # TS guards; needs Node >= 22.6 (type stripping)
+bats tests/layer5-guard-py-rb.bats  # pytest/selenium/rspec guards; needs python3 + ruby
 ```
 
 **Run a single test by name pattern:**
@@ -124,6 +127,11 @@ npm install --prefix tests/
 **Check tool prerequisites:**
 ```bash
 bash scripts/check-prereqs.sh
+```
+
+**Preflight an autonomous run** (go/no-go on config, credentials, prod patterns, staging reachability):
+```bash
+QA_AUTONOMOUS=1 bash scripts/preflight.sh
 ```
 
 ---
@@ -169,6 +177,8 @@ Hook contract: reads JSON from stdin. `exit 0` = allow. `exit 2` = block; stdout
 | `docs/e2e-patterns.md` | Page object model, data factory, and teardown patterns |
 
 ### 5-layer production safety
+
+Each guard has two modes: `warn` (default; heuristic matches only warn) and `enforce` (heuristic matches block; selected by `QA_AUTONOMOUS=1` or `productionProtection.mode`). See `docs/prod-safety.md#guard-modes-warn-and-enforce`. Shared bash helpers live in `hooks/lib/` (`qa-config-path.sh`, `guard-mode.sh`).
 
 Each layer independently prevents production execution: (1) CLAUDE.md behavioral rule, (2) `session-init.sh` startup validation, (3) `prod-guard.sh` bash command scan, (4) `env-detector.sh` file content scan, (5) framework global-setup runtime guard.
 

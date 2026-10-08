@@ -8,7 +8,7 @@ GUARD="$REPO_ROOT/hooks/prod-guard.sh"
 FIXTURES="$BATS_TEST_DIRNAME/fixtures"
 
 setup() {
-  TEST_TMP="$(mktemp -d)"
+  TEST_TMP="$(mktemp -d "${TMPDIR:-/tmp}/qa-test.XXXXXX")"
 }
 
 teardown() {
@@ -156,13 +156,76 @@ guard_input() {
   [[ "$output" =~ "WARNING" ]]
 }
 
+# ── Enforce mode (unattended runs fail closed) ───────────────────────────────
+
+@test "enforce mode via config: blocks a suspicious URL instead of warning" {
+  guard_input "curl https://otherapp.io/dashboard" "enforce-config.json"
+  run bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json"
+  [ "$status" -eq 2 ]
+  [[ "$output" =~ "BLOCKED" ]]
+  [[ "$output" =~ "allowedUrlPatterns" ]]
+}
+
+@test "enforce mode via QA_AUTONOMOUS=1: blocks even when the config says warn" {
+  guard_input "curl https://otherapp.io/dashboard" "prod-url-config.json"
+  run env QA_AUTONOMOUS=1 bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json"
+  [ "$status" -eq 2 ]
+  [[ "$output" =~ "BLOCKED" ]]
+}
+
+@test "warn mode (default) still only warns on the same URL" {
+  guard_input "curl https://otherapp.io/dashboard" "prod-url-config.json"
+  run env -u QA_AUTONOMOUS bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "WARNING" ]]
+}
+
+@test "enforce mode: tracker and code-host URLs are exempt" {
+  guard_input "curl -fsS https://github.com/Tech9Apps/t9-foundry/issues/1" "enforce-config.json"
+  run bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json"
+  [ "$status" -eq 0 ]
+}
+
+@test "enforce mode: URLs matching allowedUrlPatterns are exempt" {
+  guard_input "curl https://partner.io/guide/setup" "enforce-config.json"
+  run bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json"
+  [ "$status" -eq 0 ]
+}
+
+@test "enforce mode: a staging URL in the same command does not excuse a production-looking one" {
+  guard_input "curl https://staging.myapp.example.com/health && curl https://otherapp.io/admin" "enforce-config.json"
+  run bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json"
+  [ "$status" -eq 2 ]
+  [[ "$output" =~ "otherapp.io" ]]
+}
+
+@test "enforce mode: a staging-only command passes" {
+  guard_input "curl https://staging.myapp.example.com/health" "enforce-config.json"
+  run bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json"
+  [ "$status" -eq 0 ]
+}
+
+@test "blockOnSuspiciousUrls=false silences the heuristic in warn mode (jq '// true' used to ignore it)" {
+  guard_input "curl https://otherapp.io/dashboard" "azure-config.json"
+  run env -u QA_AUTONOMOUS bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json"
+  [ "$status" -eq 0 ]
+  ! [[ "$output" =~ "WARNING" ]]
+}
+
+@test "enforce mode never overrides an explicit blockOnSuspiciousUrls=false opt-out" {
+  # azure-config.json sets blockOnSuspiciousUrls=false; the explicit opt-out is honored.
+  guard_input "curl https://otherapp.io/dashboard" "azure-config.json"
+  run env QA_AUTONOMOUS=1 bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json"
+  [ "$status" -eq 0 ]
+}
+
 # ── cwd-independent config resolution ─────────────────────────────────────────
 
 @test "resolves qa-config.json via CLAUDE_PROJECT_DIR when the tool's cwd has no config" {
   # qa-config.json is gitignored repo-wide, so build the CLAUDE_PROJECT_DIR
   # fixture at runtime (like guard_input does for cwd) instead of committing
   # a file with that literal name under tests/fixtures/.
-  local project_dir="$(mktemp -d)"
+  local project_dir="$(mktemp -d "${TMPDIR:-/tmp}/qa-test.XXXXXX")"
   cp "$FIXTURES/prod-url-config.json" "$project_dir/qa-config.json"
   guard_input "curl https://myapp.example.com/api/health"
   run env CLAUDE_PROJECT_DIR="$project_dir" bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json"
