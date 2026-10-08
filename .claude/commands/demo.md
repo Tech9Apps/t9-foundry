@@ -71,10 +71,22 @@ synthetic input; nothing is executed against any URL. Mention enforce mode (`QA_
 runs must fail closed.
 
 ### 8. (Optional) UI-level tests with Playwright
-Offer, don't assume. This installs Playwright (~150 MB) into `demo/app`, so ask first. If they say yes:
-`/setup-e2e-framework` pointed at `demo/app`, then `/write-e2e-tests <ticket>` to generate browser specs against the
-`data-testid` selectors, run with `cd demo/app && npm start` in one terminal. Say this path is not part of the
-repo's automated checks.
+Offer, don't assume. This downloads Playwright and a browser (~150 MB), so ask first. **Keep it out of the tracked
+app:** everything goes under `demo/app/e2e/` (git-ignored) with its **own** `package.json`. Never edit
+`demo/app/package.json` or add a lockfile to `demo/app/` — a test pins the app at zero dependencies and the demo must
+stay repeatable.
+
+If they say yes:
+1. Follow `.claude/skills/setup-e2e-framework.md` with the e2e directory set to `demo/app/e2e` (the config already
+   points `testOutput.e2eTestsPath` there). Install inside that directory:
+   `cd demo/app/e2e && npm init -y && npm install -D @playwright/test dotenv && npx playwright install chromium`.
+2. `/write-e2e-tests <ticket>` — aim at the cases the API checks cannot cover (the UI-only cases, e.g. DEMO-101
+   TC-009/TC-010), using the `data-testid` selectors. Don't duplicate the API-level coverage in the browser.
+3. Start the app in one terminal (`cd demo/app && npm start`), run the specs from `demo/app/e2e` with
+   `npx playwright test`, and show the result. The demo app keeps one in-memory cart per user for the life of the
+   server, so run serially (one worker) and use a different demo user per test.
+
+Say plainly that this path is not part of the repo's automated checks.
 
 ### 9. Wrap up
 1. Offer to restore their config: `bash demo/restore-demo-config.sh` (do it if they agree).

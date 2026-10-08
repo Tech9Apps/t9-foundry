@@ -112,6 +112,18 @@ failing_ids() { grep '^not ok|' | cut -d'|' -f2 | tr '\n' ' ' | sed 's/ $//'; }
   [ "$status" -eq 0 ]
 }
 
+@test "generated demo files (including the optional Playwright step) are git-ignored" {
+  cd "$REPO_ROOT"
+  for f in demo/output/test-cases/x.md demo/app/e2e/tests/x.spec.ts demo/app/e2e/package.json \
+           demo/app/playwright-report/index.html demo/app/test-results/.last-run.json demo/app/node_modules/x/index.js; do
+    git check-ignore -q "$f"
+  done
+}
+
+@test "the demo config sends generated e2e specs to the git-ignored demo/app/e2e" {
+  [ "$(jq -r '.testOutput.e2eTestsPath' "$DEMO/qa-config.demo.json")" = "./demo/app/e2e" ]
+}
+
 @test "no file named qa-config.json is committed under demo/ (it is gitignored repo-wide)" {
   [ -z "$(find "$DEMO" -name qa-config.json)" ]
 }

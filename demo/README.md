@@ -84,8 +84,8 @@ drive in `/demo`. Simplified, on purpose:
   files (under `demo/output/`, git-ignored). With Jira, Azure DevOps, ClickUp, GitHub, GitLab or Bitbucket connected,
   the same cases are uploaded and bugs are filed there — after your approval.
 - **API-level automation.** The automated checks call the app's API in-process (plain `node --test`) so the demo
-  needs no browser download. Real projects usually add browser tests; `/demo` step 8 shows how. This path is
-  optional and is not part of the repo's automated checks.
+  needs no browser download. Real projects usually add browser tests; `/demo` step 8 generates them (installed under the
+  git-ignored `demo/app/e2e/`, never in the app's own `package.json`). Optional, and not part of the repo's automated checks.
 - **Sample outputs are illustrative.** [`expected/`](expected/) shows the *shape and quality bar* of generated
   artifacts. Your run will word things differently — that's fine.
 
