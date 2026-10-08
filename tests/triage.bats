@@ -5,13 +5,15 @@
 
 REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
 CHECK="$BATS_TEST_DIRNAME/helpers/triage-rubric-check.js"
+ORCH_CHECK="$BATS_TEST_DIRNAME/helpers/orchestrator-drift-check.js"
 
 setup() {
   TEST_TMP="$(mktemp -d "${TMPDIR:-/tmp}/qa-test.XXXXXX")"
   # a private copy of everything the checker reads, so a test can corrupt the rubric safely
   mkdir -p "$TEST_TMP/.claude/memory" "$TEST_TMP/scripts" "$TEST_TMP/schemas"
-  cp "$REPO_ROOT/.claude/memory/failure-triage-rules.md" "$TEST_TMP/.claude/memory/"
-  cp -R "$REPO_ROOT/scripts/triage" "$REPO_ROOT/scripts/results" "$TEST_TMP/scripts/"
+  cp "$REPO_ROOT/.claude/memory/failure-triage-rules.md" "$REPO_ROOT/.claude/memory/ai-usage-rules.md" "$TEST_TMP/.claude/memory/"
+  cp -R "$REPO_ROOT/.claude/commands" "$REPO_ROOT/.claude/agents" "$REPO_ROOT/.claude/skills" "$TEST_TMP/.claude/"
+  cp -R "$REPO_ROOT/scripts/triage" "$REPO_ROOT/scripts/results" "$REPO_ROOT/scripts/tracker" "$REPO_ROOT/scripts/preflight.sh" "$TEST_TMP/scripts/"
 }
 teardown() { rm -rf "$TEST_TMP"; }
 
@@ -137,4 +139,103 @@ PY
 
 @test "the memory README lists the triage rules" {
   grep -q "failure-triage-rules.md" "$REPO_ROOT/.claude/memory/README.md"
+}
+
+# ── the command and agent prose say what the code does ──────────────────────────
+
+CMD_COPY() { echo "$TEST_TMP/.claude/commands/run-and-triage.md"; }
+AGENT_COPY() { echo "$TEST_TMP/.claude/agents/QA-run-orchestrator.md"; }
+orch_check() { run env DRIFT_ROOT="$TEST_TMP" node "$ORCH_CHECK"; }
+
+@test "the run-and-triage command and the orchestrator agent match the scripts: flags, steps, re-runs, outputs, marker, tools" {
+  run node "$ORCH_CHECK"
+  [ "$status" -eq 0 ]
+  [ "$output" = "OK" ]
+}
+
+@test "orchestrator drift: a flag the script does not define is caught" {
+  sed -i.bak 's#--preflight <ok|failed> --run-id#--preflite <ok|failed> --run-id#' "$(CMD_COPY)"
+  orch_check
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "orchestrate.js has no option --preflite" ]]
+}
+
+@test "orchestrator drift: a script that does not exist is caught" {
+  sed -i.bak 's#scripts/triage/orchestrate.js --framework#scripts/triage/orchestrte.js --framework#' "$(CMD_COPY)"
+  orch_check
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "scripts/triage/orchestrte.js does not exist" ]]
+}
+
+@test "orchestrator drift: a step the plan can produce but the table does not explain is caught" {
+  grep -v '^| `report-flaky` ' "$(CMD_COPY)" > "$TEST_TMP/x" && mv "$TEST_TMP/x" "$(CMD_COPY)"
+  orch_check
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "\"report-flaky\" but the step table does not explain it" ]]
+}
+
+@test "orchestrator drift: a step the table documents but the plan never produces is caught" {
+  sed -i.bak 's#^| `propose` |#| `heal-test` | the test is fixed for you | do it |\n| `propose` |#' "$(CMD_COPY)"
+  orch_check
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "documents \"heal-test\", which plan.js never produces" ]]
+}
+
+@test "orchestrator drift: a wrong re-run range or default is caught" {
+  sed -i.bak 's#(`--reruns`, 0–5)#(`--reruns`, 0–9)#' "$(CMD_COPY)"
+  orch_check
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "states re-runs 0–9 but the code allows 0–5" ]]
+  cp "$REPO_ROOT/.claude/commands/run-and-triage.md" "$(CMD_COPY)"
+  sed -i.bak 's#Re-runs default to 2#Re-runs default to 4#' "$(CMD_COPY)"
+  orch_check
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "says re-runs default to 4 but the code defaults to 2" ]]
+}
+
+@test "orchestrator drift: an output file the code does not write is caught" {
+  sed -i.bak 's#flaky.json#flakey.json#g' "$(CMD_COPY)"
+  orch_check
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "flakey.json" ]] || [[ "$output" =~ "no longer mentions flaky.json" ]]
+}
+
+@test "orchestrator drift: dropping the fingerprint marker from the command, or from file-bug, is caught" {
+  sed -i.bak 's#qa-harness-fingerprint: <token>#fingerprint <token>#g' "$(CMD_COPY)"
+  orch_check
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "does not tell the model to put \"qa-harness-fingerprint: <token>\"" ]]
+  cp "$REPO_ROOT/.claude/commands/run-and-triage.md" "$(CMD_COPY)"
+  sed -i.bak 's#qa-harness-fingerprint: <token>#fingerprint <token>#g' "$TEST_TMP/.claude/commands/file-bug.md"
+  orch_check
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "file-bug.md does not know about the fingerprint marker" ]]
+}
+
+@test "orchestrator drift: no longer delegating filing to Bug-reporter is caught" {
+  sed -i.bak 's#\*\*Bug-reporter\*\* agent#a helper#g' "$(CMD_COPY)"
+  orch_check
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "no longer delegates filing to the Bug-reporter agent" ]]
+}
+
+@test "orchestrator drift: giving the agent an Edit tool (it must not be able to change files) is caught" {
+  sed -i.bak 's#^tools: Read, Write, Bash#tools: Read, Write, Edit, Bash#' "$(AGENT_COPY)"
+  orch_check
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "has the Edit tool" ]]
+}
+
+@test "orchestrator drift: an agent that cannot delegate to Bug-reporter is caught" {
+  sed -i.bak 's#, Agent, AskUserQuestion#, AskUserQuestion#' "$(AGENT_COPY)"
+  orch_check
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "needs the Agent tool" ]]
+}
+
+@test "orchestrator drift: an agent that no longer points at the command is caught" {
+  sed -i.bak 's#run-and-triage.md#something-else.md#g' "$(AGENT_COPY)"
+  orch_check
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "does not point at .claude/commands/run-and-triage.md" ]]
 }

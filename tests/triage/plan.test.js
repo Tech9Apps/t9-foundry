@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { main } = require('../../scripts/triage/plan');
+const { main, STEPS } = require('../../scripts/triage/plan');
 const { classify } = require('../../scripts/triage/classify');
 const { createAdapter, run: callAdapter } = require('../../scripts/tracker/adapters');
 const { MOCKS } = require('../tracker/workspace');
@@ -189,6 +189,26 @@ describe('plan: behavior that does not depend on the tracker', () => {
     const during = mock.calls.slice(callsBefore);
     assert.ok(during.length > 0, 'planning did consult the tracker');
     assert.ok(during.every((c) => c.method === 'GET'), `only reads: ${during.map((c) => c.method).join(',')}`);
+  });
+
+  test('every documented step is produced by some plan, and no plan produces an undocumented one', async () => {
+    const flaky = report([R(failing('f', ASSERT)), R(T('f', 'passed'))]);
+    const pb = report(productBug());
+    const lowPb = report([R(failing('DEMO-101/TC-005: x', ASSERT, ids(5)))]);
+    const both = () => R(failing('DEMO-101/TC-001: a', ASSERT, ids(1)), failing('DEMO-101/TC-002: b', ASSERT, ids(2)));
+    const dup = report([both(), both(), both()]); dup.verdicts[1].fingerprint = dup.verdicts[0].fingerprint; dup.verdicts[1].token = dup.verdicts[0].token;
+    const env = report([R(failing('e', E('connect ECONNREFUSED 127.0.0.1:1', 'error'))), R(failing('e', E('connect ECONNREFUSED 127.0.0.1:1', 'error')))]);
+    const crash = E('TypeError: x is not a function', 'error', 'at run (/work/tests/a.test.js:3:3)');
+    const tb = report([R(failing('t', crash)), R(failing('t', crash))]);
+    const closedMock = MOCKS.github(); await seedBug('github', closedMock, tokenOf(pb), { close: true });
+    const openMock = MOCKS.github(); await seedBug('github', openMock, tokenOf(pb));
+    const seen = new Set();
+    for (const [rep, mock] of [[flaky], [env], [tb], [lowPb], [dup], [pb, closedMock], [pb, openMock]]) {
+      for (const a of (await plan('github', rep, mock ? { mock } : {})).json.data.actions) seen.add(a.step);
+    }
+    for (const step of seen) assert.ok(STEPS.includes(step), `undocumented step: ${step}`);
+    for (const step of STEPS) assert.ok(seen.has(step), `no plan produced: ${step}`);
+    assert.equal(new Set(STEPS).size, STEPS.length);
   });
 
   test('keys: same run id → same keys (a retry is safe); a different run id → different keys; long ids are shortened', async () => {

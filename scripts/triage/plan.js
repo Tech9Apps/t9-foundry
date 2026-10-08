@@ -29,6 +29,10 @@ const { run } = require('../tracker/adapters');
 const { connect } = require('../tracker/lib/connect');
 const { TrackerError } = require('../tracker/lib/errors');
 
+// Every step a plan can contain. The prose that tells a model what to do for each one is checked against this list
+// (tests/helpers/orchestrator-drift-check.js), so a step cannot be added here without telling the model about it.
+const STEPS = ['file-bug', 'file-regression', 'comment-existing', 'duplicate-in-run', 'propose-test-fix', 'report-flaky', 'report-environment', 'propose'];
+
 const usage = (message) => Object.assign(new Error(message), { isUsage: true });
 const MAX_CANDIDATES = 5;
 const sanitize = (s) => String(s).replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
@@ -162,4 +166,4 @@ async function main({ argv = process.argv.slice(2), env = process.env, stdout = 
 
 if (require.main === module) main().then((code) => { process.exitCode = code; });
 
-module.exports = { main, plan, connectIfNeeded, sanitize };
+module.exports = { main, plan, connectIfNeeded, sanitize, STEPS };

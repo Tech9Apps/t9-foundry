@@ -184,6 +184,7 @@ Most of these are `.claude/skills/`. Two (`/file-bug`, `/generate-regression-pac
 | `/save-project NAME` | Snapshot the current config as a shared team profile |
 | `/generate-regression-pack MODULE` | Build/update a full regression suite for a module — no ticket required |
 | `/file-bug FAILURE` | Reproduce a failure on staging and file a bug in the configured tracker |
+| `/run-and-triage [SPEC…]` | Run the suite, re-run failures, classify each (product bug / test bug / flaky / environment) with evidence, and file or comment on bugs for real product defects only. See [docs/phase-2-design.md](docs/phase-2-design.md) |
 
 **Canonical workflow:**
 ```
