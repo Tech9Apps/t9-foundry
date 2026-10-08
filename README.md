@@ -275,7 +275,9 @@ See [`docs/integration-guide.md`](docs/integration-guide.md) for per-source setu
 ├── templates/
 │   └── e2e/                    # Playwright, Cypress, Selenium, WebDriverIO, pytest, RSpec scaffolds
 ├── scripts/
-│   └── check-prereqs.sh        # Verify your environment
+│   ├── check-prereqs.sh        # Verify your environment
+│   ├── tracker/                # Ticket-tracker adapters + CLIs (docs/tracker-adapters.md)
+│   └── results/                # Run tests and normalize their reports (docs/test-results.md)
 ├── projects/                    # Saved team config profiles (/switch-project, /save-project)
 └── docs/
     ├── integration-guide.md    # Per-source setup instructions

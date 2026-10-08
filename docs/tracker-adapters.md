@@ -15,6 +15,11 @@ Same operations, same JSON in and out, same error shape — whichever tracker is
 > them: `fetch-ticket.md`, `post-tests.md`, `file-bug.md` and the results step of the automation agent call the CLIs
 > below for those five sources. **Jira** deliberately has no adapter yet — it stays on the Atlassian MCP
 > (interactive only) until the headless-auth approach is decided — and `none` has no tracker.
+>
+> **Verified against mocks, not yet against real trackers.** Every adapter passes the same contract suite and its own
+> tests against an in-process mock, and the mocks were built from each tracker's documented API. Nobody has yet run
+> them against a live GitHub, ClickUp, Azure DevOps, GitLab or Bitbucket. See [Verification status](#verification-status)
+> and run the [smoke test](#real-tracker-smoke-test) before relying on one unattended.
 
 ## Operations
 
@@ -107,6 +112,47 @@ Every failure is normalized, so a caller never parses tracker-specific messages:
 | Link | `reference-in-body` | native | native relation | native "relates to" | `reference-in-body` |
 | Needs | — | — | the process must have a `Test Case` type (Basic does not); assignee lookup not done (needs a second host) | — | the repo's **issue tracker enabled**, and the account username |
 
+## Verification status
+
+| Tracker | Adapter | Verified against a mock | Verified against the real service |
+|---|:---:|:---:|:---:|
+| GitHub Issues | yes | yes | **not yet** |
+| ClickUp | yes | yes | **not yet** |
+| Azure DevOps | yes | yes | **not yet** |
+| GitLab | yes | yes | **not yet** |
+| Bitbucket | yes | yes | **not yet** |
+| Jira | no — Atlassian MCP, interactive only | n/a | n/a |
+
+"Verified against a mock" means the 23-behavior contract suite plus adapter-specific tests pass, and the evals
+(145 checks) and the demo run the real CLIs end to end. It does **not** cover what only a live tracker can tell you:
+field names or required fields that differ from the docs, process templates (Azure needs a `Test Case` work item type;
+the Basic process has none), token scopes and permissions, real rate-limit and pagination behavior, and how closely
+the real search index and error bodies match the mock. When a real run disagrees with a mock, fix the adapter **and**
+the mock so the contract suite catches it next time.
+
+To move a row to "yes": run the smoke test below against a scratch repo/project/list, put the report in the PR, and
+update this table in the same PR.
+
+## Real-tracker smoke test
+
+```bash
+node scripts/tracker/smoke.js --source github --config qa-config.json          # prints the plan: which project, nothing created
+node scripts/tracker/smoke.js --source github --config qa-config.json --yes    # actually runs it
+```
+
+Use a **scratch** repo / project / list: the script creates items and there is deliberately no delete operation, so it
+leaves them behind (labelled `qa-harness-smoke` where the tracker has labels, and titled `[qa-harness smoke <id>]`
+everywhere) and lists them at the end for you to close.
+
+It checks, in order: connect · create a bug · fetch it back · search finds it · create a test case and link it ·
+retrying the bug with the same key returns the original · same for the test case · a comment, and the same comment
+again · an unknown id is `NOT_FOUND` · an invalid token is rejected (`--skip-bad-token` skips that last one). Each is
+**pass**, **warn** or **fail**; a step that depends on a failed one shows as **skipped**, never disappears. Warnings are
+real-world behavior worth knowing (for example GitHub's search index lagging a fresh issue, or a tracker answering
+`422` where the contract says `NOT_FOUND`), not necessarily a broken adapter. Output: a readable table on stderr and one
+JSON document on stdout; exit `0` no failures, `1` at least one, `2` not run (bad flags, or `--yes` missing).
+Tokens are never printed.
+
 ## Keeping the prose honest
 
 The command prompts tell a model exactly how to call these scripts, so
@@ -132,7 +178,7 @@ replays a dropped connection mid-write. Same flow for `github`, `clickup` and `a
 ## Testing
 
 ```bash
-node --test tests/tracker/*.test.js     # 112 tests in well under a second, no network, no ports
+node --test tests/tracker/*.test.js     # 280 tests in a few seconds, no network, no ports
 bats tests/tracker.bats                 # the same, plus guardrails (no deps, no sockets, schemas valid)
 ```
 
@@ -146,7 +192,7 @@ bats tests/tracker.bats                 # the same, plus guardrails (no deps, no
 
 **Mock fidelity.** The mocks model the endpoints the adapters use, with documented approximations (e.g. the Azure mock
 understands only `CONTAINS` and work-item-type clauses in WIQL). They prove the adapters' logic, not that a real
-tracker agrees — a real-tracker smoke test against a sandbox project remains worthwhile before relying on this
+tracker agrees — a real-tracker smoke test against a sandbox project (above) is the missing half before relying on this
 unattended.
 
 ## Adding an adapter
