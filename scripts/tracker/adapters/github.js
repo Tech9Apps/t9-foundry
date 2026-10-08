@@ -88,9 +88,17 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
     return { linked: true, method: 'reference-in-body' };
   }
 
-  async function comment({ id, body }) {
-    const { json } = await call('POST', `${issuePath(id)}/comments`, { body }, `comment on GitHub issue ${id}`);
+  async function comment({ id, body, idempotencyKey }) {
+    const text = idempotencyKey ? `${body}\n\n${keyMarker(idempotencyKey)}` : body;
+    const { json } = await call('POST', `${issuePath(id)}/comments`, { body: text }, `comment on GitHub issue ${id}`);
     return { id: String(json.id), url: json.html_url };
+  }
+
+  async function findCommentByKey(id, key) {
+    const marker = keyMarker(key);
+    const { json } = await call('GET', `${issuePath(id)}/comments`, undefined, `look up idempotency key on GitHub issue ${id}`);
+    const hit = (json || []).find((c) => (c.body || '').includes(marker));
+    return hit ? { id: String(hit.id), url: hit.html_url } : null;
   }
 
   async function createBug({ title, body, labels = [], idempotencyKey }) {
@@ -99,7 +107,7 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
     return { id: String(json.number), url: json.html_url };
   }
 
-  return { source: 'github', fetchTicket, search, findByKey, createTest, link, comment, createBug };
+  return { source: 'github', fetchTicket, search, findByKey, createTest, link, comment, findCommentByKey, createBug };
 }
 
 module.exports = { create };

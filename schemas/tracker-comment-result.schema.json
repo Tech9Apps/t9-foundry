@@ -5,5 +5,9 @@
   "type": "object",
   "required": ["id"],
   "additionalProperties": false,
-  "properties": { "id": { "type": "string", "minLength": 1 }, "url": { "type": "string" } }
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "url": { "type": "string" },
+    "deduplicated": { "type": "boolean", "description": "true when a comment carrying the same idempotencyKey already existed and was returned instead of posting another" }
+  }
 }

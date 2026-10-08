@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # The 2-minute tour: no install, no AI, no network, nothing in your tree is modified.
 #
-#   bash demo/run-demo.sh               # paced — press Enter between acts
-#   bash demo/run-demo.sh --no-pause    # straight through (also automatic when not a terminal)
+#   bash demo/run-demo.sh                    # paced — press Enter between acts
+#   bash demo/run-demo.sh --no-pause         # straight through (also automatic when not a terminal)
+#   bash demo/run-demo.sh --tracker [name]   # add Act 8: post everything to an in-memory tracker
+#                                            #   (github | clickup | azure; default github)
 #
 # What it shows (all real — the same hooks, scripts and tests the harness uses):
 #   1. a ticket and the acceptance criteria a tester starts from
@@ -23,12 +25,17 @@ APP="$HERE/app"
 EXPECTED_FAILS="DEMO-101/TC-005 DEMO-102/TC-006"
 
 PAUSE=1
-for arg in "$@"; do
-  case "$arg" in
+TRACKER=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
     --no-pause|--ci) PAUSE=0 ;;
-    -h|--help) sed -n '2,17p' "${BASH_SOURCE[0]}"; exit 0 ;;
-    *) echo "Unknown option: $arg" >&2; exit 2 ;;
+    --tracker)
+      TRACKER="github"
+      case "${2:-}" in github|clickup|azure) TRACKER="$2"; shift ;; esac ;;
+    -h|--help) sed -n '2,20p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    *) echo "Unknown option: $1" >&2; exit 2 ;;
   esac
+  shift
 done
 [ -t 0 ] || PAUSE=0
 
@@ -167,6 +174,16 @@ else
 fi
 pause
 
+# ── Act 8 (opt-in) ────────────────────────────────────────────────────────────
+if [ -n "$TRACKER" ]; then
+  say ""
+  say "${D}Connecting to an in-memory tracker (no network): the real adapter CLI, schemas and idempotency logic.${N}"
+  node "$HERE/tracker-demo.js" --embedded --tracker "$TRACKER"
+  rc=$?
+  [ "$rc" -eq 0 ] || problem "the tracker demo reported a problem (exit $rc)"
+  pause
+fi
+
 # ── Wrap ──────────────────────────────────────────────────────────────────────
 echo ""
 echo "${C}${B}━━ What you just saw ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"
@@ -174,6 +191,7 @@ say "ticket → test cases → automated run → triage → bug report, with pro
 say "Done by hand, that is a lot of reading, writing, running and write-up. The harness does the legwork;"
 say "people keep the judgment calls (is this release-blocking? is the requirement itself right?)."
 echo ""
+[ -n "$TRACKER" ] || say "${B}See it post to a tracker${N}:  bash demo/run-demo.sh --tracker   ${D}(github | clickup | azure)${N}"
 say "${B}Try it for real${N} (about 15 minutes, needs Claude Code):  open this repo in Claude Code and run  ${B}/demo${N}"
 say "${B}Read more${N}: demo/README.md  ·  sample outputs: demo/expected/  ·  the app: demo/app/"
 echo ""

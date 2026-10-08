@@ -32,6 +32,15 @@ async function createOnce(adapter, input, create, complete) {
   return { ...(await create()), deduplicated: false };
 }
 
+// Comments are creates too: re-running a run must not post its results comment a second time.
+async function commentOnce(adapter, input) {
+  if (input.idempotencyKey) {
+    const existing = await adapter.findCommentByKey(input.id, input.idempotencyKey);
+    if (existing) return { ...existing, deduplicated: true };
+  }
+  return { ...(await adapter.comment(input)), deduplicated: false };
+}
+
 // The single entry point: validate, dispatch, return the normalized result.
 async function run(adapter, op, rawInput) {
   const input = validate(op, rawInput);
@@ -40,7 +49,7 @@ async function run(adapter, op, rawInput) {
     case 'search': return adapter.search(input);
     case 'create-test': return createOnce(adapter, input, () => adapter.createTest(input), adapter.completeTest && ((existing) => adapter.completeTest(existing, input)));
     case 'link': return adapter.link(input);
-    case 'comment': return adapter.comment(input);
+    case 'comment': return commentOnce(adapter, input);
     case 'create-bug': return createOnce(adapter, input, () => adapter.createBug(input));
     default: throw new TrackerError('VALIDATION', `unknown operation "${op}"`);
   }

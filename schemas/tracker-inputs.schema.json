@@ -22,7 +22,7 @@
       }
     },
     "link": { "type": "object", "required": ["childId", "parentId"], "properties": { "childId": { "type": ["string", "integer"] }, "parentId": { "type": ["string", "integer"] } } },
-    "comment": { "type": "object", "required": ["id", "body"], "properties": { "id": { "type": ["string", "integer"] }, "body": { "type": "string", "minLength": 1 } } },
+    "comment": { "type": "object", "required": ["id", "body"], "properties": { "id": { "type": ["string", "integer"] }, "body": { "type": "string", "minLength": 1 }, "idempotencyKey": { "type": "string", "pattern": "^[A-Za-z0-9._-]{1,80}$" } } },
     "create-bug": {
       "type": "object", "required": ["title", "body"],
       "properties": {

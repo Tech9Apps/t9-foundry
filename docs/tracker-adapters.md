@@ -23,7 +23,7 @@ Same operations, same JSON in and out, same error shape — whichever tracker is
 | `search` | `{ query, kind?: any\|bug\|test, limit? }` | `{ items: [{ id, title, url, status }] }` |
 | `create-test` | `{ parentId, tcId, title, description?, priority?, steps?: [{action, expected}], idempotencyKey? }` | `{ id, url, deduplicated, repaired? }` |
 | `link` | `{ childId, parentId }` | `{ linked, method: native\|reference-in-body }` |
-| `comment` | `{ id, body }` | `{ id, url? }` |
+| `comment` | `{ id, body, idempotencyKey? }` | `{ id, url?, deduplicated }` |
 | `create-bug` | `{ title, body, priority?, labels?, idempotencyKey? }` | `{ id, url, deduplicated }` |
 
 Input shapes: [`schemas/tracker-inputs.schema.json`](../schemas/tracker-inputs.schema.json). Priorities are
@@ -64,8 +64,8 @@ Every failure is normalized, so a caller never parses tracker-specific messages:
   `idempotent` (Azure's WIQL query is a POST but changes nothing).
 - **Writes never retry automatically.** A POST that timed out may have succeeded; repeating it blindly is how
   duplicate tickets get created. A failed write returns `retriable: true` and leaves the decision to the caller.
-- **`idempotencyKey` makes a manual retry safe.** Creates embed a marker for the key (a body line, or a tag on
-  Azure) and look for it first: a retry returns the original with `deduplicated: true`. This holds even when the
+- **`idempotencyKey` makes a manual retry safe.** Creates — and comments, so a re-run doesn't post its summary twice —
+  embed a marker for the key (a body line, or a tag on Azure work items) and look for it first: a retry returns the original with `deduplicated: true`. This holds even when the
   first attempt *succeeded but the response was lost* — covered by a test that injects exactly that failure.
 - **Multi-call creates can fail half-way** (ClickUp: task → checklist → steps). The error carries
   `details.partial.id`, and a retry **completes** the half-built item (`repaired: true`) rather than accepting it as
@@ -83,6 +83,12 @@ Every failure is normalized, so a caller never parses tracker-specific messages:
 | Bug is | issue titled `[BUG] …`, label `bug` | task named `[BUG] …` | a `Bug` work item |
 | Idempotency marker | `qa-harness-key:<key>` line in the body | same, in the description | tag `qa-key-<key>` |
 | Not yet | — | — | assignee lookup (needs a second host) |
+
+## See it work
+
+`bash demo/run-demo.sh --tracker` (or `node demo/tracker-demo.js --tracker clickup`) pushes the demo's tickets, 26 test
+cases, bugs and results through this CLI into an in-memory tracker, re-runs it to show nothing duplicates, and
+replays a dropped connection mid-write. Same flow for `github`, `clickup` and `azure`.
 
 ## Testing
 

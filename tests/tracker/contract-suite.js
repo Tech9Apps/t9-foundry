@@ -112,6 +112,21 @@ function runContractSuite(name, makeMock) {
 
     // ── Idempotency ────────────────────────────────────────────────────────────
 
+    test('comment with an idempotencyKey is posted once, however often it is re-run', async () => {
+      const { mock, adapter } = fresh();
+      const id = seed(mock);
+      const first = await run(adapter, 'comment', { id, body: 'Run 42: 20 passed, 2 failed.', idempotencyKey: 'run-42-summary' });
+      const again = await run(adapter, 'comment', { id, body: 'Run 42: 20 passed, 2 failed.', idempotencyKey: 'run-42-summary' });
+      assertValid('tracker-comment-result', again);
+      assert.equal(first.deduplicated, false);
+      assert.equal(again.deduplicated, true);
+      assert.equal(again.id, first.id);
+      assert.equal(mock.commentsOn(id).filter((b) => /Run 42/.test(b)).length, 1);
+      // a different key is a different comment
+      await run(adapter, 'comment', { id, body: 'Run 43: all green.', idempotencyKey: 'run-43-summary' });
+      assert.equal(mock.commentsOn(id).filter((b) => /Run 4[23]/.test(b)).length, 2);
+    });
+
     test('create-bug with an idempotencyKey does not create a duplicate on repeat', async () => {
       const { mock, adapter } = fresh();
       const first = await run(adapter, 'create-bug', bugInput({ idempotencyKey: 'run-42-bug-1' }));

@@ -132,9 +132,16 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
     return { linked: true, method: 'native' };
   }
 
-  async function comment({ id, body }) {
-    const { json } = await call('POST', `${taskPath(id)}/comment`, { comment_text: body }, `comment on ClickUp task ${id}`);
+  async function comment({ id, body, idempotencyKey }) {
+    const { json } = await call('POST', `${taskPath(id)}/comment`, { comment_text: withMarker(body, idempotencyKey) }, `comment on ClickUp task ${id}`);
     return { id: String(json.id) };
+  }
+
+  async function findCommentByKey(id, key) {
+    const marker = keyMarker(key);
+    const { json } = await call('GET', `${taskPath(id)}/comment`, undefined, `look up idempotency key on ClickUp task ${id}`);
+    const hit = ((json && json.comments) || []).find((c) => (c.comment_text || '').includes(marker));
+    return hit ? { id: String(hit.id) } : null;
   }
 
   async function createBug({ title, body, priority, labels = [], idempotencyKey }) {
@@ -144,7 +151,7 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
     return { id: String(json.id), url: json.url };
   }
 
-  return { source: 'clickup', fetchTicket, search, findByKey, createTest, completeTest, link, comment, createBug };
+  return { source: 'clickup', fetchTicket, search, findByKey, createTest, completeTest, link, comment, findCommentByKey, createBug };
 }
 
 module.exports = { create };

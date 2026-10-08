@@ -2,7 +2,7 @@
 
 const { TrackerError } = require('../lib/errors');
 const { request } = require('../lib/http');
-const { keyTag, stripHtml, escapeXml, extractAcceptanceCriteria } = require('../lib/contract');
+const { keyTag, keyMarker, stripHtml, escapeXml, extractAcceptanceCriteria } = require('../lib/contract');
 
 // Azure DevOps work-item tracking, REST 7.1, PAT auth.
 // settings = qa-config.json > ticketSource.azure  ({ organization, project, host, tokenEnvVar })
@@ -114,9 +114,18 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
     return { linked: true, method: 'native' };
   }
 
-  async function comment({ id, body }) {
-    const { json } = await call('POST', `${workItemUrl(id)}/comments?api-version=7.1-preview.3`, { text: body }, `comment on work item ${id}`);
+  async function comment({ id, body, idempotencyKey }) {
+    const text = idempotencyKey ? `${body}\n\n${keyMarker(idempotencyKey)}` : body;
+    const { json } = await call('POST', `${workItemUrl(id)}/comments?api-version=7.1-preview.3`, { text }, `comment on work item ${id}`);
     return { id: String(json.id) };
+  }
+
+  // Comments (unlike work items) have no tag field, so the marker lives in the text.
+  async function findCommentByKey(id, key) {
+    const marker = keyMarker(key);
+    const { json } = await call('GET', `${workItemUrl(id)}/comments?api-version=7.1-preview.3`, undefined, `look up idempotency key on work item ${id}`);
+    const hit = ((json && json.comments) || []).find((c) => (c.text || '').includes(marker));
+    return hit ? { id: String(hit.id) } : null;
   }
 
   async function createBug({ title, body, priority, labels = [], idempotencyKey }) {
@@ -131,7 +140,7 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
     return { id: String(json.id), url: htmlUrl(json) };
   }
 
-  return { source: 'azure', fetchTicket, search, findByKey, createTest, link, comment, createBug };
+  return { source: 'azure', fetchTicket, search, findByKey, createTest, link, comment, findCommentByKey, createBug };
 }
 
 module.exports = { create };
