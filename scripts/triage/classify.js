@@ -6,7 +6,8 @@
 // and whether it is confident enough to ACT on or should only be PROPOSED.
 //
 //   node scripts/triage/classify.js --run qa-results/result.json [--rerun qa-results/rerun-1/result.json]...
-//                                   [--preflight ok|failed] [--evidence evidence.json] [--threshold 0.8] [--out report.json]
+//                                   [--preflight ok|failed] [--evidence evidence.json] [--threshold T] [--out report.json]
+//                                   [--config qa-config.json]    (--threshold defaults to triage.confidenceThreshold there, else 0.8)
 //
 // The rules are ordered; the first that matches wins and the rest are kept as `alternatives`. They implement
 // .claude/memory/failure-triage-rules.md — the rule ids below are checked against it by a drift test.
@@ -17,6 +18,7 @@ const fs = require('fs');
 const path = require('path');
 const { fingerprint, identity } = require('./fingerprint');
 const { normalizeSignature, infraSignal, isLocatorError, testCrash, baseName } = require('./lib/text');
+const { triageConfig } = require('./lib/config');
 
 const DEFAULT_THRESHOLD = 0.8;
 // The single source of truth for every rule: its class and the confidences it may produce. Key order == precedence.
@@ -178,6 +180,7 @@ function parseArgs(argv) {
     else if (flag === '--evidence') opts.evidence = value();
     else if (flag === '--threshold') opts.threshold = Number(value());
     else if (flag === '--out') opts.out = value();
+    else if (flag === '--config') opts.config = value();
     else throw usage(`unknown option ${flag}`);
   }
   if (!opts.run) throw usage('--run <result.json> is required');
@@ -198,7 +201,7 @@ function main({ argv = process.argv.slice(2), stdout = process.stdout, stderr = 
   const out = (obj) => stdout.write(`${JSON.stringify(obj, null, 2)}\n`);
   try {
     if (!argv.length || argv[0] === '-h' || argv[0] === '--help') {
-      stderr.write('Usage: classify.js --run <result.json> [--rerun <result.json>]... [--preflight ok|failed] [--evidence <json>] [--threshold 0.8] [--out <file>]\n');
+      stderr.write('Usage: classify.js --run <result.json> [--rerun <result.json>]... [--preflight ok|failed] [--evidence <json>] [--threshold T] [--config <qa-config.json>] [--out <file>]\n');
       return argv.length ? 0 : 2;
     }
     const opts = parseArgs(argv);
@@ -207,7 +210,8 @@ function main({ argv = process.argv.slice(2), stdout = process.stdout, stderr = 
     if (opts.evidence) {
       try { evidence = JSON.parse(fs.readFileSync(opts.evidence, 'utf8')); } catch (e) { throw Object.assign(new Error(`cannot read ${opts.evidence}: ${e.message}`), { code: 'UNREADABLE' }); }
     }
-    const data = classify({ runs, preflight: opts.preflight || 'unknown', evidence, threshold: opts.threshold || DEFAULT_THRESHOLD });
+    const threshold = opts.threshold !== undefined ? opts.threshold : triageConfig({ configPath: opts.config }).confidenceThreshold;
+    const data = classify({ runs, preflight: opts.preflight || 'unknown', evidence, threshold });
     const doc = { ok: true, data };
     if (opts.out) { fs.mkdirSync(path.dirname(path.resolve(opts.out)), { recursive: true }); fs.writeFileSync(opts.out, `${JSON.stringify(doc, null, 2)}\n`); }
     out(doc);

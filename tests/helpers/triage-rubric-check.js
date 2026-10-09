@@ -3,7 +3,7 @@
 //   - every rule row (id | class | confidence) matches RULE_TABLE in the code, in the same order, none missing
 //   - every class in the code is explained in the classes table
 //   - the default threshold the prose states is the code's
-//   - every --flag the prose gives for classify.js / locators.js exists
+//   - every --flag the prose gives for classify.js / locators.js / orchestrate.js exists, and the qa-config.json keys it names are in the schema
 // Prints "OK" or the list of problems (exit 1). DRIFT_ROOT lets the tests point it at a corrupted copy.
 'use strict';
 const fs = require('fs');
@@ -42,7 +42,7 @@ else if (Number(stated[1]) !== DEFAULT_THRESHOLD) bad(`${FILE}: states a default
 
 // ── flags ───────────────────────────────────────────────────────────────────
 const flagsIn = (src) => new Set([...src.matchAll(/flag === '(--[a-z-]+)'/g)].map((m) => m[1]).concat(['--help']));
-const FLAGS = { 'classify.js': flagsIn(read('scripts/triage/classify.js')), 'locators.js': flagsIn(read('scripts/triage/locators.js')) };
+const FLAGS = { 'classify.js': flagsIn(read('scripts/triage/classify.js')), 'locators.js': flagsIn(read('scripts/triage/locators.js')), 'orchestrate.js': flagsIn(read('scripts/triage/orchestrate.js')) };
 const mentioned = new Set();
 md.split('\n').forEach((line, i) => {
   for (const script of Object.keys(FLAGS)) {
@@ -56,6 +56,11 @@ md.split('\n').forEach((line, i) => {
   }
 });
 for (const need of ['--preflight', '--threshold']) if (!mentioned.has(need)) bad(`${FILE}: no longer tells the model about ${need}`);
+const schemaTriage = JSON.parse(read('qa-config.schema.json')).properties.triage;
+for (const key of ['confidenceThreshold', 'reruns']) {
+  if (!md.includes(`triage.${key}`)) bad(`${FILE}: no longer mentions the config key triage.${key}`);
+  if (!schemaTriage || !schemaTriage.properties[key]) bad(`${FILE} names triage.${key}, which qa-config.schema.json does not define`);
+}
 
 if (problems.length) { console.log(`${problems.length} problem(s):\n  - ${problems.join('\n  - ')}`); process.exit(1); }
 console.log('OK');

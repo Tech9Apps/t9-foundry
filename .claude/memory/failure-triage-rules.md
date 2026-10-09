@@ -26,7 +26,7 @@ failure this whole file exists to prevent.
 
 Every verdict has a confidence from the table below and an `action`:
 
-- `act` — confidence **≥ the threshold** (default **0.8**, `--threshold` to change it)
+- `act` — confidence **≥ the threshold** (default **0.8**; `--threshold` or `triage.confidenceThreshold` in `qa-config.json` changes it)
 - `propose` — anything lower. Present it to the human with the evidence; do not act.
 
 A low-confidence verdict is a proposal **regardless of any autonomy setting**. Never round a confidence up.
@@ -57,7 +57,7 @@ documented expectation.
 
 1. **Run the preflight first** and pass its result (`--preflight ok|failed`). A failed preflight makes every failure an
    environment failure; do not triage past it.
-2. **Re-run every failing spec** (default 2 re-runs, into `qa-results/rerun-<n>/`) before classifying — it is what
+2. **Re-run every failing spec** (default 2 re-runs; `--reruns` or `triage.reruns` changes it; into `qa-results/rerun-<n>/`) before classifying — it is what
    separates PRD-1 (0.85) from PRD-3 (0.60) and what exposes flakes. Skip re-runs only for ENV-1, and say you did.
 3. **For a locator-not-found failure, capture the page** (a DOM snapshot of the state where the test failed) and run
    `node scripts/triage/locators.js --html <snapshot> --selector "<the failing selector or error>"`; pass its output as the

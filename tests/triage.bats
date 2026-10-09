@@ -14,6 +14,7 @@ setup() {
   cp "$REPO_ROOT/.claude/memory/failure-triage-rules.md" "$REPO_ROOT/.claude/memory/ai-usage-rules.md" "$TEST_TMP/.claude/memory/"
   cp -R "$REPO_ROOT/.claude/commands" "$REPO_ROOT/.claude/agents" "$REPO_ROOT/.claude/skills" "$TEST_TMP/.claude/"
   cp -R "$REPO_ROOT/scripts/triage" "$REPO_ROOT/scripts/results" "$REPO_ROOT/scripts/tracker" "$REPO_ROOT/scripts/preflight.sh" "$TEST_TMP/scripts/"
+  cp "$REPO_ROOT/qa-config.schema.json" "$TEST_TMP/"   # the prose names config keys; the checks verify them against the schema
 }
 teardown() { rm -rf "$TEST_TMP"; }
 

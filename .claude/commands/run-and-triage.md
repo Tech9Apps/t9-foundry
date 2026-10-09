@@ -37,7 +37,9 @@ node scripts/triage/orchestrate.js --framework <testFramework.type> --preflight 
 Add `--test-dir <testFramework.testDir>` and `--config-file <testFramework.configPath>` when those are set, and one
 `--spec <file>` per file in `$ARGUMENTS`. Generate `<run-id>` **once** for this run (a UTC timestamp such as
 `20261008T181500Z`) and reuse it if you have to run anything again: it is what makes retries safe. Re-runs default to 2
-(`--reruns`, 0–5); more re-runs cost more and give better signal.
+(`--reruns`, 0–5); more re-runs cost more and give better signal. A project sets its own defaults once in `qa-config.json`
+(`triage.reruns`, `triage.confidenceThreshold`) and a flag overrides them; the output's `settings` says which source each value
+came from, so tell the user if a re-run count or threshold came from their config.
 
 It prints one JSON document and writes `qa-results/triage.json`, `plan.json` and `flaky.json`. Exit codes:
 

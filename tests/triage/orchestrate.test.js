@@ -29,9 +29,12 @@ function scripted(answers) {
   };
   return { runResults, calls };
 }
+// Hermetic: config discovery would otherwise pick up a developer's own qa-config.json from the working directory, so every
+// test gets an explicit (empty) config unless it brings one. `reruns: 2` is passed like a flag; a test of the config sets it undefined.
+const cfgFile = (obj = {}) => { const f = path.join(tmp(), 'qa-config.json'); fs.writeFileSync(f, JSON.stringify(obj)); return f; };
 const go = async (args, deps) => {
   const out = tmp();
-  const o = { specs: [], reruns: 2, out, ...args };
+  const o = { specs: [], reruns: 2, out, config: cfgFile(), ...args };
   const r = await orchestrate(o, { env: {}, ...deps });
   return { ...r, out };
 };
@@ -158,15 +161,70 @@ describe('orchestrate: the loop', () => {
 
   test('--config and the runner flags are passed through to the results runner; the runner is always --quiet', async () => {
     const s = scripted({ main: { doc: result(T('a', 'passed')) } });
-    await go({ framework: 'playwright', testDir: 'e2e', configFile: 'pw.config.ts', cwd: '/proj', config: '/proj/qa-config.json', timeoutMs: 5000 }, { runResults: s.runResults });
+    const config = cfgFile();
+    await go({ framework: 'playwright', testDir: 'e2e', configFile: 'pw.config.ts', cwd: '/proj', config, timeoutMs: 5000 }, { runResults: s.runResults });
     const a = s.calls[0].argv;
-    for (const [flag, v] of [['--framework', 'playwright'], ['--test-dir', 'e2e'], ['--config-file', 'pw.config.ts'], ['--cwd', '/proj'], ['--config', '/proj/qa-config.json'], ['--timeout-ms', '5000']]) assert.equal(a[a.indexOf(flag) + 1], v, flag);
+    for (const [flag, v] of [['--framework', 'playwright'], ['--test-dir', 'e2e'], ['--config-file', 'pw.config.ts'], ['--cwd', '/proj'], ['--config', config], ['--timeout-ms', '5000']]) assert.equal(a[a.indexOf(flag) + 1], v, flag);
     assert.ok(a.includes('--quiet'));
+  });
+});
+
+describe('orchestrate: settings come from flag > qa-config.json > default', () => {
+  const failing = () => scripted(() => ({ doc: result(T('DEMO-101/TC-005: x', 'failed', { ...ids(5), error: ASSERT })) }));
+
+  test('with nothing set, 2 re-runs and a 0.8 threshold, both reported as defaults', async () => {
+    const s = failing();
+    const r = await go({ framework: 'node', reruns: undefined, noPlan: true }, { runResults: s.runResults });
+    assert.equal(s.calls.length, 3);
+    assert.deepEqual(r.doc.data.settings, { reruns: { value: 2, from: 'default' }, confidenceThreshold: { value: 0.8, from: 'default' } });
+  });
+
+  test('triage.reruns in qa-config.json sets the number of re-runs', async () => {
+    const s = failing();
+    const r = await go({ framework: 'node', reruns: undefined, noPlan: true, config: cfgFile({ triage: { reruns: 4 } }) }, { runResults: s.runResults });
+    assert.deepEqual(s.calls.map((c) => c.name), ['main', 'rerun-1', 'rerun-2', 'rerun-3', 'rerun-4']);
+    assert.deepEqual(r.doc.data.settings.reruns, { value: 4, from: 'config' });
+  });
+
+  test('--reruns beats the config, including --reruns 0 against a config that asks for more', async () => {
+    const s = failing();
+    const r = await go({ framework: 'node', reruns: 0, noPlan: true, config: cfgFile({ triage: { reruns: 4 } }) }, { runResults: s.runResults });
+    assert.equal(s.calls.length, 1);
+    assert.deepEqual(r.doc.data.settings.reruns, { value: 0, from: 'flag' });
+    assert.deepEqual(r.doc.data.verdicts.map((v) => v.rule), ['PRD-3']);
+  });
+
+  test('a config of 0 re-runs means none (the zero is a setting, not "missing")', async () => {
+    const s = failing();
+    await go({ framework: 'node', reruns: undefined, noPlan: true, config: cfgFile({ triage: { reruns: 0 } }) }, { runResults: s.runResults });
+    assert.equal(s.calls.length, 1);
+  });
+
+  test('triage.confidenceThreshold moves the line between act and propose; --threshold beats it', async () => {
+    const noCase = () => scripted(() => ({ doc: result(T('checkout total is wrong', 'failed', { file: '/w/tests/x.test.js', error: ASSERT })) })); // PRD-2: 0.75
+    const lowered = await go({ framework: 'node', reruns: undefined, noPlan: true, config: cfgFile({ triage: { confidenceThreshold: 0.7 } }) }, { runResults: noCase().runResults });
+    assert.deepEqual(lowered.doc.data.verdicts.map((v) => [v.rule, v.action]), [['PRD-2', 'act']]);
+    assert.deepEqual(lowered.doc.data.settings.confidenceThreshold, { value: 0.7, from: 'config' });
+    const flagWins = await go({ framework: 'node', reruns: undefined, threshold: 0.9, noPlan: true, config: cfgFile({ triage: { confidenceThreshold: 0.7 } }) }, { runResults: noCase().runResults });
+    assert.deepEqual(flagWins.doc.data.verdicts.map((v) => v.action), ['propose']);
+    assert.equal(flagWins.doc.data.settings.confidenceThreshold.from, 'flag');
   });
 });
 
 describe('orchestrate CLI', () => {
   const cli = async (argv) => { let out = ''; let e = ''; const code = await main({ argv, env: {}, stdout: { write: (s) => { out += s; } }, stderr: { write: (s) => { e += s; } }, runResults: async () => ({ code: 3, doc: noReport }) }); return { code, err: e, json: out ? JSON.parse(out) : null }; };
+
+  test('an invalid triage block in qa-config.json is a usage error (exit 2) that names the key, before anything runs', async () => {
+    let called = false;
+    for (const [triage, re] of [[{ reruns: 9 }, /triage\.reruns/], [{ confidenceThreshold: 2 }, /triage\.confidenceThreshold/], [{ rerun: 2 }, /unknown key "triage\.rerun"/]]) {
+      let err = ''; let out = '';
+      const code = await main({ argv: ['--framework', 'node', '--config', cfgFile({ triage }), '--out', tmp()], env: {}, stdout: { write: (x) => { out += x; } }, stderr: { write: (x) => { err += x; } }, runResults: async () => { called = true; return { code: 3, doc: noReport }; } });
+      assert.equal(code, 2);
+      assert.match(err, re);
+      assert.equal(out, '');
+    }
+    assert.equal(called, false, 'nothing ran');
+  });
 
   test('exit 3 when there is no trustworthy main run; exit 2 for bad invocations', async () => {
     assert.equal((await cli(['--framework', 'node', '--out', tmp()])).code, 3);

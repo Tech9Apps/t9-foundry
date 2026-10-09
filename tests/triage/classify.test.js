@@ -314,6 +314,16 @@ describe('classify CLI', () => {
     assert.equal(cli(['--run', main1, '--evidence', ev]).code, 0);
   });
 
+  test('--threshold defaults to triage.confidenceThreshold in --config, and the flag beats it', () => {
+    const noCase = write('nocase.json', run(fail('checkout total is wrong', ASSERT))); // PRD-3: 0.6
+    const cfg = (t) => write(`cfg-${Math.random().toString(36).slice(2)}.json`, { triage: { confidenceThreshold: t } });
+    assert.equal(cli(['--run', noCase]).json.data.threshold, 0.8);
+    assert.equal(cli(['--run', noCase, '--config', cfg(0.5)]).json.data.verdicts[0].action, 'act');
+    assert.equal(cli(['--run', noCase, '--config', cfg(0.5)]).json.data.threshold, 0.5);
+    assert.equal(cli(['--run', noCase, '--config', cfg(0.5), '--threshold', '0.9']).json.data.threshold, 0.9);
+    assert.equal(cli(['--run', noCase, '--config', write('bad.json', { triage: { confidenceThreshold: 5 } })]).code, 2);
+  });
+
   test('unreadable inputs exit 1 with the file named; bad invocations exit 2', () => {
     assert.equal(cli(['--run', path.join(dir, 'nope.json')]).json.error.code, 'UNREADABLE');
     assert.match(cli(['--run', write('junk.json', 'not json')]).json.error.message, /junk\.json/);

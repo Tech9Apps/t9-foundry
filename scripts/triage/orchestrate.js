@@ -6,8 +6,8 @@
 // left to the agent is judgement and the human-gated actions (/file-bug, comments).
 //
 //   node scripts/triage/orchestrate.js --framework <f> [--spec S]... [--test-dir D] [--config-file C] [--cwd D]
-//        [--reruns 2] [--preflight ok|failed|unknown] [--snapshot page.html] [--out qa-results] [--run-id ID]
-//        [--threshold 0.8] [--timeout-ms N] [--no-plan] [--config qa-config.json] [--source T] [--base-url U]
+//        [--reruns N] [--preflight ok|failed|unknown] [--snapshot page.html] [--out qa-results] [--run-id ID]
+//        [--threshold T] [--timeout-ms N] [--no-plan] [--config qa-config.json] [--source T] [--base-url U]
 //
 // Steps (each tool is the one documented elsewhere; this only wires them):
 //   1. scripts/results/run.js   the main run                       → <out>/main/
@@ -15,6 +15,8 @@
 //   3. scripts/triage/locators.js  for locator failures, if --snapshot is given
 //   4. scripts/triage/classify.js                                   → <out>/triage.json
 //   5. scripts/triage/plan.js   (read-only tracker search)          → <out>/plan.json, <out>/flaky.json
+// --reruns (default 2, 0–5) and --threshold (default 0.8) can also be set once in qa-config.json under "triage"
+// (reruns, confidenceThreshold); a flag overrides the config. The output says which source each setting came from.
 // A green run ends after step 1. Output: { ok, data } with the verdict and step for every failure.
 // Exit: 0 = completed (green, or triaged — failures are data) · 2 = bad invocation · 3 = no trustworthy main run
 // (see scripts/results/run.js: could not start, hung, wrote nothing, zero tests, or exit code contradicting the report).
@@ -22,17 +24,17 @@
 const fs = require('fs');
 const path = require('path');
 const { main: runResultsMain } = require('../results/run');
-const { classify, DEFAULT_THRESHOLD } = require('./classify');
+const { classify } = require('./classify');
 const { analyzeLocator } = require('./locators');
 const { identity } = require('./fingerprint');
 const { isLocatorError, extractTestId } = require('./lib/text');
 const { plan, connectIfNeeded } = require('./plan');
+const { triageConfig, MAX_RERUNS } = require('./lib/config');
 
 const usage = (message) => Object.assign(new Error(message), { isUsage: true });
-const MAX_RERUNS = 5;
 
 function parseArgs(argv) {
-  const opts = { specs: [], reruns: 2 };
+  const opts = { specs: [] };
   for (let n = 0; n < argv.length; n += 1) {
     const flag = argv[n];
     const value = () => { if (n + 1 >= argv.length) throw usage(`${flag} needs a value`); n += 1; return argv[n]; };
@@ -54,7 +56,7 @@ function parseArgs(argv) {
     else if (flag === '--base-url') opts.baseUrl = value();
     else throw usage(`unknown option ${flag}`);
   }
-  if (!Number.isInteger(opts.reruns) || opts.reruns < 0 || opts.reruns > MAX_RERUNS) throw usage(`--reruns must be a whole number from 0 to ${MAX_RERUNS}`);
+  if (opts.reruns !== undefined && (!Number.isInteger(opts.reruns) || opts.reruns < 0 || opts.reruns > MAX_RERUNS)) throw usage(`--reruns must be a whole number from 0 to ${MAX_RERUNS}`);
   if (opts.preflight && !['ok', 'failed', 'unknown'].includes(opts.preflight)) throw usage('--preflight must be ok, failed or unknown');
   if (opts.threshold !== undefined && !(opts.threshold > 0 && opts.threshold <= 1)) throw usage('--threshold must be between 0 and 1');
   return opts;
@@ -74,6 +76,14 @@ const needsTriage = (t) => t.status === 'failed' || t.flaky;
 
 async function orchestrate(opts, { env = process.env, fetch = globalThis.fetch, runResults = defaultRunResults, now = Date.now } = {}) {
   const out = opts.out || 'qa-results';
+  // flag > qa-config.json "triage" block > default
+  const cfg = triageConfig({ configPath: opts.config, env });
+  const reruns = opts.reruns !== undefined ? opts.reruns : cfg.reruns;
+  const threshold = opts.threshold !== undefined ? opts.threshold : cfg.confidenceThreshold;
+  const settings = {
+    reruns: { value: reruns, from: opts.reruns !== undefined ? 'flag' : cfg.explicit.reruns ? 'config' : 'default' },
+    confidenceThreshold: { value: threshold, from: opts.threshold !== undefined ? 'flag' : cfg.explicit.confidenceThreshold ? 'config' : 'default' },
+  };
   const runId = opts.runId || new Date(now()).toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
   const preflight = opts.preflight || 'unknown';
   const warnings = [];
@@ -94,17 +104,17 @@ async function orchestrate(opts, { env = process.env, fetch = globalThis.fetch, 
   }
 
   // 2. re-run only the failing specs (a failed preflight makes every failure an environment failure: don't bother)
-  const reruns = []; const rerunNotes = [];
+  const rerunResults = []; const rerunNotes = [];
   if (preflight === 'failed') rerunNotes.push('re-runs skipped: preflight reported the environment as not ready');
-  else if (opts.reruns > 0) {
+  else if (reruns > 0) {
     const files = [...new Set(targets.map((t) => t.file).filter(Boolean))];
     const everyFileKnown = targets.every((t) => t.file);
     const scope = everyFileKnown ? files : opts.specs; // no file for some failure: re-run what the main run ran
     if (!everyFileKnown) rerunNotes.push('some failures carry no file location, so each re-run repeats the whole selection');
-    for (let k = 1; k <= opts.reruns; k += 1) {
+    for (let k = 1; k <= reruns; k += 1) {
       const r = await runResults([...base, ...specArgs(scope), '--out', path.join(out, `rerun-${k}`)], env);
-      if (r.doc && r.doc.data) reruns.push(r.doc.data);
-      else warnings.push(`re-run ${k} produced no usable report (${(r.doc && r.doc.error && r.doc.error.message) || `exit ${r.code}`}); classifying with ${reruns.length + 1} run(s)`);
+      if (r.doc && r.doc.data) rerunResults.push(r.doc.data);
+      else warnings.push(`re-run ${k} produced no usable report (${(r.doc && r.doc.error && r.doc.error.message) || `exit ${r.code}`}); classifying with ${rerunResults.length + 1} run(s)`);
     }
   }
 
@@ -122,7 +132,7 @@ async function orchestrate(opts, { env = process.env, fetch = globalThis.fetch, 
   }
 
   // 4. classify
-  const report = classify({ runs: [main, ...reruns], preflight, evidence, threshold: opts.threshold || DEFAULT_THRESHOLD });
+  const report = classify({ runs: [main, ...rerunResults], preflight, evidence, threshold });
   writeJson(path.join(out, 'triage.json'), { ok: true, data: report });
   const files = { triage: path.join(out, 'triage.json') };
 
@@ -144,7 +154,7 @@ async function orchestrate(opts, { env = process.env, fetch = globalThis.fetch, 
     doc: {
       ok: true,
       data: {
-        status: 'triaged', runId, totals: main.totals, runs: 1 + reruns.length, preflight, ...(rerunNotes.length ? { rerunNotes } : {}),
+        status: 'triaged', runId, totals: main.totals, runs: 1 + rerunResults.length, preflight, settings, ...(rerunNotes.length ? { rerunNotes } : {}),
         summary: report.summary,
         verdicts: report.verdicts.map((v) => ({ test: v.test.name, key: v.key, class: v.class, rule: v.rule, confidence: v.confidence, action: v.action, ...(stepOf.has(v.key) ? { step: stepOf.get(v.key) } : {}) })),
         files, ...(warnings.length ? { warnings } : {}),

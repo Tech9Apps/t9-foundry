@@ -62,12 +62,19 @@ for (const s of documented) if (!STEPS.includes(s)) bad(`${CMD}: the step table 
 // ── re-runs, outputs, marker ─────────────────────────────────────────────────
 const orch = read('scripts/triage/orchestrate.js');
 const stated = cmd.match(/\(`--reruns`,\s*(\d)[–-](\d)\)/);
-const defaultCode = (orch.match(/reruns:\s*(\d)\s*\}/) || [])[1];
+const { DEFAULTS } = require(path.join(ROOT, 'scripts/triage/lib/config.js'));
+const defaultCode = String(DEFAULTS.reruns);
 if (!stated) bad(`${CMD}: does not state the re-run range ("(\`--reruns\`, 0–5)")`);
 else if (Number(stated[2]) !== MAX_RERUNS || stated[1] !== '0') bad(`${CMD}: states re-runs ${stated[1]}–${stated[2]} but the code allows 0–${MAX_RERUNS}`);
 const statedDefault = cmd.match(/Re-runs default to (\d)/);
 if (!statedDefault) bad(`${CMD}: does not state the default number of re-runs`);
 else if (statedDefault[1] !== defaultCode) bad(`${CMD}: says re-runs default to ${statedDefault[1]} but the code defaults to ${defaultCode}`);
+// the config keys the prose names must exist in the schema, and the schema's defaults must be the code's
+const schemaTriage = JSON.parse(read('qa-config.schema.json')).properties.triage;
+for (const key of ['reruns', 'confidenceThreshold']) {
+  if (!cmd.includes(`triage.${key}`)) bad(`${CMD}: no longer tells the model about triage.${key}`);
+  if (!schemaTriage || !schemaTriage.properties[key]) bad(`${CMD} names triage.${key}, which qa-config.schema.json does not define`);
+}
 for (const f of ['triage.json', 'plan.json', 'flaky.json']) {
   if (!cmd.includes(f)) bad(`${CMD}: no longer mentions ${f}`);
   if (!orch.includes(f)) bad(`${CMD} says ${f} is written, but orchestrate.js does not write it`);
