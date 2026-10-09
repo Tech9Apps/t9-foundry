@@ -148,6 +148,44 @@ Verified: the classifier, fingerprints and planner on real node:test output and 
 of those tools' messages, not from a corpus), tracker search behavior on real services, the orchestrator agent's prose
 under a live model. The rubric thresholds are starting values, not tuned ones.
 
+## Self-heal (v2.0)
+
+The user decided self-heal ships in v2.0. It is the one place the harness edits code, so it is built **narrow enough to verify
+mechanically**, not to trust a model's judgement.
+
+**Scope: one fix.** A `TST-1` verdict (a locator was not found, the DOM evidence says the test-id is absent, **exactly one**
+element resembles it) at `act` confidence → an exact **test-id rename** inside locator expressions in test code. `TST-2` (a crashed
+test), `TST-3` (several lookalikes) and everything else stay proposals: they need judgement.
+
+**Off by default.** `triage.selfHeal.enabled` (or `--heal`; `--no-heal` overrides the config). When off, the verdict still carries a
+concrete `proposal` (`rename-testid: from → to`), so the report says exactly what the fix would be.
+
+**What it may touch.** Only files under `triage.selfHeal.paths` (default `testFramework.testDir`, relative to the run directory, which must be
+inside the git repository), with test-code extensions, never `node_modules`/`.git`/build output, never through a symlink. Application source
+is never in scope.
+
+**The edit, and the guard that makes it safe:**
+- Only the id inside a locator expression changes: `getByTestId('x')`, `get_by_test_id("x")`, `[data-testid=x]` and its `data-cy`/`data-test-id`/`data-qa`
+  forms, in any quoting. A bare string that merely equals the id (a constant, a comment) is **not** edited, and is reported as left untouched.
+- Both ids must match `^[A-Za-z0-9_:.-]+$`. The new id comes from the page's HTML, which is not trusted: a quote or a bracket in it
+  would be code injection into a test file, so it is refused.
+- **Every changed line must equal the original line with only `new` swapped for `old`** (checked by reversing the substitution on the whole line). If a
+  matcher, an expected value, or anything else differs, the heal is refused. This is the mechanical meaning of "never edits assertions".
+- Caps: at most `maxFiles` files (default 5) and `maxLines` changed lines (default 20), else the heal is **refused**, not applied.
+
+**Git, and the rules around it:**
+1. Requires the repository's tracked files to be clean and a named branch (not detached). Otherwise refused — it never mixes its edits with yours.
+2. Works on a new branch `qa/heal-<runId>` (the prefix is always under `qa/`, so it can never be a default branch). The branch must not already exist.
+3. Applies the edit, then **validates by re-running** the failing spec files: every healed test must pass, and no test in those files that passed before may fail.
+4. Pass → commit (only the edited paths, hooks respected) and return to the original branch. Fail, or any error → **revert everything**: restore the files, return to the
+   original branch, delete the branch it created. The repository is left exactly as it was found.
+5. **It never pushes**, and it has no code path that does. A branch exists locally; opening a PR needs the user's explicit approval, and the agent
+   asks for it with the diff in view.
+6. One attempt per failing test per run, no retry loop. A cross-run attempt cap needs the Phase 3 ledger.
+
+**Not verified:** healing against real Playwright/Cypress projects (the locator patterns come from those tools' documented APIs; the real
+run is `node --test` against a throwaway repository), and any git workflow that rewrites hooks/identity in unusual ways.
+
 ## Decisions (the user's answers)
 
 1. **Self-heal: in v2.0.** Designed below, built on its own branch.
