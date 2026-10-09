@@ -50,13 +50,16 @@ It prints one JSON document and writes `qa-results/triage.json`, `plan.json` and
 | 3 | **no trustworthy result**: the runner could not start, hung, wrote nothing, listed zero tests, or its exit code contradicted its report | report `error.message` and `warnings` exactly. **Do not call it a pass, and do not guess verdicts.** |
 | 2 | bad invocation | fix the arguments |
 
-`warnings` can mean the tracker could not be searched (credentials, outage). Say so plainly: it means an existing report
+A `warnings` entry saying that most failures are **undetermined** means the evidence or the rules are missing for this suite:
+lead your report with it, and do not present those verdicts as findings. `warnings` can also mean the tracker could not be
+searched (credentials, outage). Say so plainly: it means an existing report
 for a failure could not be ruled out, so filing may duplicate.
 
 ## 3. Evidence the orchestrator asked for
 
-Any verdict whose `evidence` says to capture the page (a locator was not found and no snapshot was supplied) is
-`undetermined` until you provide it. For each such failure:
+Any verdict with `reason: "LOCATOR_NO_EVIDENCE"` (a locator was not found and no snapshot was supplied) is **not an answer
+yet** — `undetermined` is a last resort, and this one is undetermined only because the evidence has not been gathered. The same
+holds for `NOT_RERUN`: re-run it. Gather the evidence before you report. For each such failure:
 
 1. Capture the page **in the state where the test failed**, against the test environment, to
    `qa-results/snapshots/<key>.html` (the failure's screenshot/trace in `test-results/` shows the state; a short script
@@ -104,7 +107,7 @@ Tell the user, in this order:
 
 1. **Totals**: tests, passed, failed, skipped, flaky, and how many runs (1 + re-runs) the verdicts rest on.
 2. **Every verdict**: test, class, rule id, confidence, `act` or `propose`, and the evidence in one line. For proposals
-   include the alternatives.
+   include the alternatives; for `undetermined`, the `reason`.
 3. **What you did**: bugs filed or commented on (ids/urls), and what was only reported.
 4. **What you could not check**: tracker search failures, missing snapshots, anything below the threshold. Never
    present a proposal as a decision.

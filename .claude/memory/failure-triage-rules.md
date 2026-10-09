@@ -17,7 +17,7 @@ promote a `propose` to an `act` because you feel sure.
 | `test-bug` | the test is wrong (stale selector, crashed test code) | **proposed only**: name the cause and the candidate fix. Nothing is edited. |
 | `flaky` | passes and fails with no change | **never filed.** Reported with its flip counts. |
 | `environment` | the system under test or its infrastructure was down or unreachable | **never filed.** Reported, with the advice to re-run when the environment is healthy. |
-| `undetermined` | no rule has enough evidence | **proposed only**, with what evidence would settle it |
+| `undetermined` | **a last resort**: no rule found any positive evidence, for one named reason (below) | **proposed only, never acted on**, with what evidence would settle it |
 
 Only `product-bug` ever becomes a bug report. Filing a bug for a flaky test, a stale selector or an outage is the
 failure this whole file exists to prevent.
@@ -43,11 +43,37 @@ verdict is a proposal.
 | FLK-1 | flaky | 0.90 / 0.85 | the test both failed and passed with no change (0.90), or the runner's own retry made it pass (0.85) |
 | TST-1 | test-bug | 0.85 | a locator was not found in every failing attempt, the DOM evidence shows that test-id is **not** on the page, and **exactly one** element resembles it |
 | TST-2 | test-bug | 0.80 | the test **crashed** (not an assertion) with a `TypeError` / `ReferenceError` / `SyntaxError` / missing module whose first stack frame is in a test file |
+| TST-3 | test-bug | 0.55 | a locator was not found in every failing attempt, the DOM evidence shows the test-id is **not** on the page, and **two or more** elements resemble it — probably renamed, but which one? |
 | ENV-3 | environment | 0.60 | at least 3 tests and at least half the run failed with the **same** error — an outage, or one real suite-wide regression; the tests alone cannot say which |
 | PRD-1 | product-bug | 0.85 | failed in **every** attempt (≥ 2) with the same assertion, and the test traces to a documented manual case |
 | PRD-2 | product-bug | 0.75 | as PRD-1, but the test is not traceable to a manual case |
 | PRD-3 | product-bug | 0.60 | an assertion failed on a **single** attempt — no re-run was done, so a flake cannot be ruled out |
-| UND-1 | undetermined | 0.50 / 0.40 / 0.30 | none of the above has enough evidence (a locator error with no or ambiguous DOM evidence, consistent timeouts, different errors every time) |
+| PRD-4 | product-bug | 0.55 | the **application threw**: the runner reports an error (an exception, not a failed assertion) whose first stack frame is application code, not a test file or a library — the same in every attempt, or seen once |
+| UND-1 | undetermined | 0.50 / 0.40 / 0.30 | **nothing above found any positive evidence**, for one of the reasons in "Undetermined is a last resort" below |
+
+## Undetermined is a last resort
+
+A failure that is merely *different* — a new error message, an unusual page, a second lookalike element — is **not**
+undetermined. Look for the class the evidence leans towards: the weak rules (TST-3, PRD-4, PRD-3) exist so that such failures
+get a class at a low confidence, which is always a proposal. `undetermined` is reserved for when **no rule found any positive
+evidence**, and it must name exactly one of these reasons (the verdict's `reason` field):
+
+| Reason | Confidence | What it means, and what would settle it |
+|---|---|---|
+| `LOCATOR_NO_EVIDENCE` | 0.40 | a locator was not found and no DOM snapshot was supplied. **Not an answer yet:** capture the page, run `locators.js`, and re-classify |
+| `LOCATOR_PRESENT` | 0.50 | the locator IS on the page, so it is not a stale selector (visibility, timing, or a real defect) |
+| `LOCATOR_GONE` | 0.50 | the locator is not on the page and nothing resembles it: the app removed it, or the test is wrong |
+| `CONSISTENT_TIMEOUT` | 0.50 | it timed out every time with no infrastructure signature (slow app, wrong wait, or dead server) |
+| `NOT_RERUN` | 0.40 | it failed once, was not re-run, and nothing else decides it. Re-run it |
+| `UNSTABLE_ERRORS` | 0.30 | it failed every time, but with a different error each time |
+| `UNATTRIBUTED_CRASH` | 0.30 | it crashed, but there is no stack location to say whether the test or the app is at fault |
+| `UNCLASSIFIED` | 0.30 | no rule applies — the catch-all. If you see this often, the rules do not cover this suite |
+
+- An `undetermined` verdict **never acts**, whatever the threshold.
+- If a reason says more evidence is obtainable (`LOCATOR_NO_EVIDENCE`, `NOT_RERUN`), **obtain it and re-classify before you
+  report**. Report `undetermined` only for what is still undetermined afterwards.
+- If most of a run's failures are undetermined, the report carries a warning saying so. Lead with it: it means the evidence or the
+  rules are missing for this suite, and these are **not findings**.
 
 Why this order: environment signatures and pass/fail flips are the cheapest and most reliable evidence, so they come
 first. "The app is wrong" is the weakest positive claim, so it comes last and is capped lower when it cannot be tied to a
@@ -62,7 +88,8 @@ documented expectation.
 3. **For a locator-not-found failure, capture the page** (a DOM snapshot of the state where the test failed) and run
    `node scripts/triage/locators.js --html <snapshot> --selector "<the failing selector or error>"`; pass its output as the
    test's `locator` evidence. Without it the verdict is `undetermined`.
-4. **Report every verdict with its rule id, confidence and evidence.** For `propose` verdicts also show `alternatives`.
+4. **Report every verdict with its rule id, confidence and evidence.** For `propose` verdicts also show `alternatives`; for
+   `undetermined` ones, the `reason`.
 5. **Before filing**, take the fingerprint token from the verdict, search the tracker for it, and follow `plan.js`'s
    advice: comment on an open match; file a *new* bug that links a closed match (that is a regression); only then file
    fresh. Include the token in the bug body so it can be found again.

@@ -1,7 +1,8 @@
 // .claude/memory/failure-triage-rules.md is a binding contract the model follows; scripts/triage/classify.js is what
 // actually decides. If they drift, the model describes one system and the code runs another. This checks:
 //   - every rule row (id | class | confidence) matches RULE_TABLE in the code, in the same order, none missing
-//   - every class in the code is explained in the classes table
+//   - every class in the code is explained in the classes table, and the undetermined REASONS table is exactly the code's
+//     (codes and confidences) — undetermined is a closed list, not a free-text escape hatch
 //   - the default threshold the prose states is the code's
 //   - every --flag the prose gives for classify.js / locators.js / orchestrate.js exists, and the qa-config.json keys it names are in the schema
 // Prints "OK" or the list of problems (exit 1). DRIFT_ROOT lets the tests point it at a corrupted copy.
@@ -16,7 +17,7 @@ const bad = (m) => problems.push(m);
 
 const FILE = '.claude/memory/failure-triage-rules.md';
 const md = read(FILE);
-const { RULE_TABLE, RULES, CLASSES, DEFAULT_THRESHOLD } = require(path.join(ROOT, 'scripts/triage/classify.js'));
+const { RULE_TABLE, RULES, CLASSES, UND_REASONS, DEFAULT_THRESHOLD } = require(path.join(ROOT, 'scripts/triage/classify.js'));
 
 // ── rule rows ───────────────────────────────────────────────────────────────
 const rows = [...md.matchAll(/^\|\s*([A-Z]{3}-\d)\s*\|\s*([a-z-]+)\s*\|\s*([\d./\s]+?)\s*\|/gm)]
@@ -31,6 +32,16 @@ for (const r of rows) {
 }
 for (const id of RULES) if (!rows.some((r) => r.id === id)) bad(`${FILE}: the code has rule ${id}, which the prose does not document`);
 if (rows.length === RULES.length && rows.some((r, i) => r.id !== RULES[i])) bad(`${FILE}: rules are listed in the order ${rows.map((r) => r.id).join(', ')} but the code applies ${RULES.join(', ')} (order is precedence)`);
+
+// ── undetermined reasons: the closed list, with the confidences ───────────────────────────
+const reasonRows = [...md.matchAll(/^\|\s*`([A-Z][A-Z_]+)`\s*\|\s*([\d.]+)\s*\|/gm)].map((m) => ({ code: m[1], conf: Number(m[2]) }));
+if (!reasonRows.length) bad(`${FILE}: no table of undetermined reasons (rows like "| \`LOCATOR_NO_EVIDENCE\` | 0.40 | …")`);
+for (const r of reasonRows) {
+  if (!UND_REASONS[r.code]) bad(`${FILE}: documents the undetermined reason ${r.code}, which the code does not have`);
+  else if (UND_REASONS[r.code].confidence !== r.conf) bad(`${FILE}: reason ${r.code} has confidence ${r.conf} in the prose but ${UND_REASONS[r.code].confidence} in the code`);
+}
+for (const code of Object.keys(UND_REASONS)) if (!reasonRows.some((r) => r.code === code)) bad(`${FILE}: the code has the undetermined reason ${code}, which the prose does not document`);
+if (!/never acts/i.test(md)) bad(`${FILE}: no longer says an undetermined verdict never acts`);
 
 // ── classes ─────────────────────────────────────────────────────────────────
 for (const c of CLASSES) if (!new RegExp(`^\\|\\s*\`${c}\`\\s*\\|`, 'm').test(md)) bad(`${FILE}: class "${c}" is in the code but not in the classes table`);

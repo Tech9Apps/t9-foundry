@@ -159,6 +159,18 @@ describe('orchestrate: the loop', () => {
     assert.equal(mock.createdItems().length, 0, 'orchestrating files nothing');
   });
 
+  test('when most failures are undetermined the report says so (the evidence is missing, not the failures), and a few do not trigger it', async () => {
+    const slow = (n) => T(`slow ${n}`, 'failed', { file: `/w/tests/s${n}.test.js`, error: E(`Timeout 30000ms exceeded on page ${n}`, 'timeout') }); // distinct messages: identical ones would be a blast-radius pattern (ENV-3), not unknowns
+    const many = await go({ framework: 'node', noPlan: true }, { runResults: scripted(() => ({ doc: result(slow(1), slow(2), slow(3), T('ok', 'passed')) })).runResults });
+    assert.equal(many.doc.data.summary.byClass.undetermined, 3);
+    assert.match(many.doc.data.warnings.at(-1), /3 of 3 failures are undetermined \(CONSISTENT_TIMEOUT ×3\).*Do not treat these as findings/);
+    const few = await go({ framework: 'node', noPlan: true }, { runResults: scripted(() => ({ doc: result(slow(1), slow(2), T('ok', 'passed')) })).runResults });
+    assert.equal(few.doc.data.warnings, undefined, 'two is not "most of a suite"');
+    const minority = await go({ framework: 'node', noPlan: true }, { runResults: scripted(() => ({ doc: result(slow(1), slow(2), slow(3), T('DEMO-101/TC-005: x', 'failed', { ...ids(5), error: ASSERT }), T('DEMO-101/TC-006: y', 'failed', { ...ids(6), error: ASSERT }), T('DEMO-101/TC-007: z', 'failed', { ...ids(7), error: ASSERT }), T('DEMO-101/TC-008: w', 'failed', { ...ids(8), error: ASSERT })) })).runResults });
+    assert.equal(minority.doc.data.summary.byClass.undetermined, 3);
+    assert.equal(minority.doc.data.warnings, undefined, '3 of 7 is under half');
+  });
+
   test('--config and the runner flags are passed through to the results runner; the runner is always --quiet', async () => {
     const s = scripted({ main: { doc: result(T('a', 'passed')) } });
     const config = cfgFile();

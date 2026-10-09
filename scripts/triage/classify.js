@@ -17,7 +17,7 @@
 const fs = require('fs');
 const path = require('path');
 const { fingerprint, identity } = require('./fingerprint');
-const { normalizeSignature, infraSignal, isLocatorError, testCrash, baseName } = require('./lib/text');
+const { normalizeSignature, infraSignal, isLocatorError, testCrash, appCrash, baseName } = require('./lib/text');
 const { triageConfig } = require('./lib/config');
 
 const DEFAULT_THRESHOLD = 0.8;
@@ -30,11 +30,26 @@ const RULE_TABLE = {
   'FLK-1': { class: 'flaky', confidence: [0.9, 0.85] },
   'TST-1': { class: 'test-bug', confidence: [0.85] },
   'TST-2': { class: 'test-bug', confidence: [0.8] },
+  'TST-3': { class: 'test-bug', confidence: [0.55] },
   'ENV-3': { class: 'environment', confidence: [0.6] },
   'PRD-1': { class: 'product-bug', confidence: [0.85] },
   'PRD-2': { class: 'product-bug', confidence: [0.75] },
   'PRD-3': { class: 'product-bug', confidence: [0.6] },
+  'PRD-4': { class: 'product-bug', confidence: [0.55] },
   'UND-1': { class: 'undetermined', confidence: [0.5, 0.4, 0.3] },
+};
+// `undetermined` is a LAST RESORT, strictly: it is only emitted when no rule above produced any positive evidence, always
+// for one of these named reasons, and it never acts, whatever the threshold. A failure that is merely "different" gets the
+// class its evidence leans towards (TST-3, PRD-4 are the weak, always-proposed rules for that), not this.
+const UND_REASONS = {
+  LOCATOR_NO_EVIDENCE: { confidence: 0.4, means: 'a locator was not found and no DOM snapshot was supplied: capture the page, run scripts/triage/locators.js on it, and re-classify before reporting this' },
+  LOCATOR_PRESENT: { confidence: 0.5, means: 'the locator IS on the page, so this is not a stale selector (visibility, timing, or a real defect)' },
+  LOCATOR_GONE: { confidence: 0.5, means: 'the locator is not on the page and nothing resembles it: the app removed it, or the test is wrong' },
+  CONSISTENT_TIMEOUT: { confidence: 0.5, means: 'it timed out every time with no infrastructure signature (slow app, wrong wait, or dead server)' },
+  NOT_RERUN: { confidence: 0.4, means: 'it failed once and was not re-run, and nothing else decides it' },
+  UNSTABLE_ERRORS: { confidence: 0.3, means: 'it failed every time, but with a different error each time' },
+  UNATTRIBUTED_CRASH: { confidence: 0.3, means: 'it crashed, but there is no stack location to say whether the test or the app is at fault' },
+  UNCLASSIFIED: { confidence: 0.3, means: 'no rule applies (the catch-all: if this is frequent, the rules do not cover this suite)' },
 };
 const RULES = Object.keys(RULE_TABLE);
 const CLASSES = ['product-bug', 'test-bug', 'flaky', 'environment', 'undetermined'];
@@ -106,6 +121,10 @@ function evaluate({ key, attempts }, { runCount, preflight, blast, evidence }) {
     const f = testCrash(failing[0].error);
     add('TST-2', 'test-bug', 0.8, `the test crashed in its own code (${baseName(f.file)}${f.line ? `:${f.line}` : ''}): "${short(msgOf(failing[0]))}"`);
   }
+  if (locatorFails && loc && loc.present === false && Array.isArray(loc.candidates) && loc.candidates.length >= 2) {
+    const names = loc.candidates.slice(0, 3).map((c) => `"${c.testid}"`).join(', ');
+    add('TST-3', 'test-bug', 0.55, `the test looks for "${loc.target}", which is not on the page, and ${loc.candidates.length} elements resemble it (${names}${loc.candidates.length > 3 ? ', …' : ''}) — probably renamed, but which one?`);
+  }
   if (failing.length && blast.size && failing.every((a) => blast.has(normalizeSignature(msgOf(a))))) {
     add('ENV-3', 'environment', 0.6, 'most of the run failed with this one error — an outage or a single suite-wide regression; cannot tell which from the tests alone');
   }
@@ -121,21 +140,32 @@ function evaluate({ key, attempts }, { runCount, preflight, blast, evidence }) {
     add('PRD-3', 'product-bug', 0.6, `an assertion failed on the only attempt${runCount === 1 ? ' (no re-run was done)' : ' (it was not re-run)'}; a flaky test cannot be ruled out`);
   }
 
-  if (!matches.length) {
-    // nothing above applied: say why, so a human knows what evidence would settle it
-    let why; let conf = 0.3;
-    if (locatorFails && !loc) { why = 'a locator was not found, but no DOM evidence was supplied — capture the page and run scripts/triage/locators.js'; conf = 0.4; }
-    else if (locatorFails && loc && loc.present === true) { why = `the locator "${loc.target}" IS on the page, so this is not a stale selector — look at visibility/timing`; conf = 0.4; }
-    else if (locatorFails && loc && loc.candidates && loc.candidates.length > 1) { why = `the locator is not on the page and ${loc.candidates.length} elements resemble it — ambiguous`; conf = 0.5; }
-    else if (locatorFails && loc) { why = 'the locator is not on the page and nothing resembles it — the app may have removed it, or the test is wrong'; conf = 0.5; }
-    else if (failing.length > 1 && !sameSignature) why = 'it failed every time, but with different errors';
-    else if (failing.every((a) => a.error && a.error.kind === 'timeout')) why = 'it timed out every time with no infrastructure signature (slow app, wrong wait, or dead server)';
-    else if (failing.every((a) => a.error && a.error.kind === 'error')) why = 'it crashed every time, but not in test code, so the cause cannot be attributed';
-    else why = 'no rule has enough evidence';
-    add('UND-1', 'undetermined', conf, why);
+  const crashes = failing.length > 0 && failing.every((a) => appCrash(a.error));
+  if (crashes && !passing.length && (failing.length === 1 || sameSignature)) {
+    const f = appCrash(failing[0].error);
+    add('PRD-4', 'product-bug', 0.55, `the application threw (${baseName(f.file)}${f.line ? `:${f.line}` : ''}): "${short(msgOf(failing[0]))}" — an exception in application code, not an assertion; ${failing.length > 1 ? `the same in all ${failing.length} attempts` : 'seen once, so a flake cannot be ruled out'}`);
   }
-  return { matches, failing, passing, key, main };
+
+  let reason = null;
+  if (!matches.length) {
+    // STRICT: reached only when nothing above found positive evidence. Name the one reason, from the closed list.
+    if (locatorFails && !loc) reason = 'LOCATOR_NO_EVIDENCE';
+    else if (locatorFails && loc && loc.present === true) reason = 'LOCATOR_PRESENT';
+    else if (locatorFails) reason = 'LOCATOR_GONE';
+    else if (attempts.length === 1) reason = 'NOT_RERUN';
+    else if (failing.every((a) => a.error && a.error.kind === 'timeout')) reason = 'CONSISTENT_TIMEOUT';
+    else if (failing.length > 1 && !sameSignature) reason = 'UNSTABLE_ERRORS';
+    else if (failing.every((a) => a.error && a.error.kind === 'error')) reason = 'UNATTRIBUTED_CRASH';
+    else reason = 'UNCLASSIFIED';
+    const detail = reason === 'LOCATOR_PRESENT' ? ` ("${loc.target}")` : '';
+    const spec = UND_REASONS[reason];
+    if (!RULE_TABLE['UND-1'].confidence.includes(spec.confidence)) throw new Error(`internal: UND_REASONS.${reason} uses a confidence that RULE_TABLE does not list`);
+    matches.push({ rule: 'UND-1', class: 'undetermined', confidence: spec.confidence, evidence: [`${reason}: ${spec.means}${detail}`], reason });
+  }
+  return { matches, failing, passing, key, main, reason };
 }
+
+const countBy = (list, key) => list.reduce((o, x) => ({ ...o, [x[key]]: (o[x[key]] || 0) + 1 }), {});
 
 function classify({ runs, preflight = 'unknown', evidence = {}, threshold = DEFAULT_THRESHOLD }) {
   if (!runs.length) throw usage('at least one run is required');
@@ -152,7 +182,10 @@ function classify({ runs, preflight = 'unknown', evidence = {}, threshold = DEFA
     verdicts.push({
       key: entry.key,
       test: { name: main.name, ...(main.ticket ? { ticket: main.ticket } : {}), ...(main.caseId ? { caseId: main.caseId } : {}), ...(main.file ? { file: main.file } : {}), ...(main.line ? { line: main.line } : {}) },
-      class: win.class, rule: win.rule, confidence: win.confidence, action: win.confidence >= threshold ? 'act' : 'propose',
+      class: win.class, rule: win.rule, confidence: win.confidence,
+      // an undetermined verdict NEVER acts, even if the threshold is set below its confidence: "unsure" is not a basis for action
+      action: win.class !== 'undetermined' && win.confidence >= threshold ? 'act' : 'propose',
+      ...(win.reason ? { reason: win.reason } : {}),
       evidence: win.evidence,
       ...(rest.length ? { alternatives: rest.map((m) => ({ class: m.class, rule: m.rule, confidence: m.confidence })) } : {}),
       attempts: entry.attempts.map((a) => ({ run: a.run, status: a.status })),
@@ -163,7 +196,7 @@ function classify({ runs, preflight = 'unknown', evidence = {}, threshold = DEFA
   const byClass = Object.fromEntries(CLASSES.map((c) => [c, verdicts.filter((v) => v.class === c).length]));
   return {
     runs: runs.length, preflight, threshold,
-    summary: { tests: runs[0].tests.filter((t) => t.status !== 'skipped').length, triaged: verdicts.length, byClass, act: verdicts.filter((v) => v.action === 'act').length, propose: verdicts.filter((v) => v.action === 'propose').length },
+    summary: { tests: runs[0].tests.filter((t) => t.status !== 'skipped').length, triaged: verdicts.length, byClass, undeterminedReasons: countBy(verdicts.filter((v) => v.reason), 'reason'), act: verdicts.filter((v) => v.action === 'act').length, propose: verdicts.filter((v) => v.action === 'propose').length },
     verdicts,
   };
 }
@@ -225,4 +258,4 @@ function main({ argv = process.argv.slice(2), stdout = process.stdout, stderr = 
 
 if (require.main === module) process.exitCode = main();
 
-module.exports = { main, classify, RULES, RULE_TABLE, CLASSES, DEFAULT_THRESHOLD };
+module.exports = { main, classify, RULES, RULE_TABLE, CLASSES, UND_REASONS, DEFAULT_THRESHOLD };

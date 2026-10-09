@@ -138,6 +138,39 @@ PY
   [[ "$output" =~ "--preflite" ]]
 }
 
+@test "drift: an undetermined reason with a different confidence in the rubric is caught" {
+  sed -i.bak 's#| `CONSISTENT_TIMEOUT` | 0.50 |#| `CONSISTENT_TIMEOUT` | 0.90 |#' "$TEST_TMP/.claude/memory/failure-triage-rules.md"
+  run env DRIFT_ROOT="$TEST_TMP" node "$CHECK"
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "reason CONSISTENT_TIMEOUT has confidence 0.9 in the prose but 0.5 in the code" ]]
+}
+
+@test "drift: an undetermined reason dropped from the rubric, or invented in it, is caught (it is a closed list)" {
+  grep -v '^| `UNSTABLE_ERRORS` ' "$TEST_TMP/.claude/memory/failure-triage-rules.md" > "$TEST_TMP/x" && mv "$TEST_TMP/x" "$TEST_TMP/.claude/memory/failure-triage-rules.md"
+  run env DRIFT_ROOT="$TEST_TMP" node "$CHECK"
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "undetermined reason UNSTABLE_ERRORS, which the prose does not document" ]]
+  cp "$REPO_ROOT/.claude/memory/failure-triage-rules.md" "$TEST_TMP/.claude/memory/"
+  sed -i.bak 's#^| `UNCLASSIFIED` |#| `SOMETHING_ELSE` | 0.30 | made up |\n| `UNCLASSIFIED` |#' "$TEST_TMP/.claude/memory/failure-triage-rules.md"
+  run env DRIFT_ROOT="$TEST_TMP" node "$CHECK"
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "SOMETHING_ELSE, which the code does not have" ]]
+}
+
+@test "drift: the rubric no longer saying an undetermined verdict never acts is caught" {
+  sed -i.bak 's#never acts#sometimes acts#' "$TEST_TMP/.claude/memory/failure-triage-rules.md"
+  run env DRIFT_ROOT="$TEST_TMP" node "$CHECK"
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "no longer says an undetermined verdict never acts" ]]
+}
+
+@test "orchestrator drift: the command naming an undetermined reason the code does not have is caught" {
+  sed -i.bak 's#`LOCATOR_NO_EVIDENCE`#`LOCATOR_UNKNOWN`#g; s#"LOCATOR_NO_EVIDENCE"#"LOCATOR_UNKNOWN"#g' "$(CMD_COPY)"
+  orch_check
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "LOCATOR_UNKNOWN, which the code does not have" ]]
+}
+
 @test "the memory README lists the triage rules" {
   grep -q "failure-triage-rules.md" "$REPO_ROOT/.claude/memory/README.md"
 }

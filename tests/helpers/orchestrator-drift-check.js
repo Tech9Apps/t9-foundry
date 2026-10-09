@@ -59,6 +59,13 @@ for (let i = head + 2; head >= 0 && i < section.length && section[i].startsWith(
 for (const s of STEPS) if (!documented.includes(s)) bad(`${CMD}: plan.js can produce the step "${s}" but the step table does not explain it`);
 for (const s of documented) if (!STEPS.includes(s)) bad(`${CMD}: the step table documents "${s}", which plan.js never produces`);
 
+// reason codes the command names must be real ones (it tells the model what to do for LOCATOR_NO_EVIDENCE / NOT_RERUN)
+const { UND_REASONS } = require(path.join(ROOT, 'scripts/triage/classify.js'));
+for (const span of cmd.matchAll(/`([^`\n]+)`/g)) {
+  for (const w of span[1].matchAll(/\b[A-Z]{3,}(?:_[A-Z]+)+\b/g)) if (!UND_REASONS[w[0]]) bad(`${CMD}: names the undetermined reason ${w[0]}, which the code does not have`);
+}
+for (const code of ['LOCATOR_NO_EVIDENCE', 'NOT_RERUN']) if (!cmd.includes(code)) bad(`${CMD}: no longer tells the model to gather evidence for ${code}`);
+
 // ── re-runs, outputs, marker ─────────────────────────────────────────────────
 const orch = read('scripts/triage/orchestrate.js');
 const stated = cmd.match(/\(`--reruns`,\s*(\d)[–-](\d)\)/);

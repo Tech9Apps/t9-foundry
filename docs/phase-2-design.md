@@ -69,15 +69,33 @@ from) and `action: "act" | "propose"`: **`act` only when `confidence ≥ thresho
 | FLK-1 | flaky | attempts contain both a pass and a fail (flip), or the runner itself flagged `flaky` | 0.90 / 0.85 |
 | TST-1 | test-bug | locator-not-found in every failing attempt **and** evidence names exactly one candidate element under a different selector | 0.85 |
 | TST-2 | test-bug | the test **crashed** (`kind: error`, not an assertion) with a `TypeError`/`ReferenceError`/`SyntaxError`/`Cannot find module` whose first stack frame is in a test file | 0.80 |
+| TST-3 | test-bug | locator-not-found in every failing attempt, DOM evidence shows the id is absent and **two or more** elements resemble it — renamed, but which? | 0.55 |
 | ENV-3 | environment | ≥ 3 tests and ≥ 50% of the run failed with the **same** error signature (blast radius) — could equally be a real suite-wide regression, so it is only a proposal | 0.60 |
 | PRD-1 | product-bug | every attempt failed (≥ 2), assertion failures (`kind: failure`) with the **same signature**, test traceable to a manual case (`caseId`) | 0.85 |
 | PRD-2 | product-bug | as PRD-1 but not traceable to a case | 0.75 |
 | PRD-3 | product-bug | a **single** attempt (no re-run was done), assertion failure — a flake cannot be ruled out | 0.60 |
-| UND-1 | undetermined | locator-not-found with no evidence / several candidates / none; consistent timeouts with no infrastructure signature; anything else | ≤ 0.50 |
+| PRD-4 | product-bug | the **application threw**: an error (not an assertion) whose first stack frame is application code — consistent, or seen once | 0.55 |
+| UND-1 | undetermined | **nothing above found any positive evidence**, for one named reason (see "Undetermined is strict") | 0.50 / 0.40 / 0.30 |
 
 Why the order: environment signatures and flips are the cheapest, most reliable evidence, so they go first; a consistent
 assertion failure is the *weakest* positive claim ("the app is wrong" rather than "the test is wrong"), so it goes last
 and is capped lower when it cannot be tied to a documented expectation.
+
+## Undetermined is strict
+
+Decided with the user: keep the class, but make it hard to reach — "we don't want to jump straight to undetermined every time
+something is different." So:
+
+1. **A closed list of reasons**, each with its own confidence: `LOCATOR_NO_EVIDENCE`, `LOCATOR_PRESENT`, `LOCATOR_GONE`,
+   `CONSISTENT_TIMEOUT`, `NOT_RERUN`, `UNSTABLE_ERRORS`, `UNATTRIBUTED_CRASH`, `UNCLASSIFIED`. Every undetermined verdict carries exactly one.
+2. **Positive evidence wins.** Two weak rules (TST-3, PRD-4) give the common "different" cases a class at a low confidence instead:
+   a renamed locator with several lookalikes is a `test-bug`, an exception thrown in application code is a `product-bug`. Both are
+   proposals. Only when no rule finds any positive evidence is a verdict undetermined.
+3. **Never acts**, whatever the threshold (even set below its confidence).
+4. **Evidence first.** `LOCATOR_NO_EVIDENCE` and `NOT_RERUN` mean "go and get the evidence": the agent must capture the DOM snapshot or
+   re-run, and re-classify, *before* reporting.
+5. **A witness.** If at least 3 failures and at least half of a run's failures are undetermined, the output carries a warning that
+   the evidence or the rules are missing for this suite and that these are not findings. A high share is a signal about the rules.
 
 ## Fingerprints and bug dedupe
 
@@ -130,14 +148,11 @@ Verified: the classifier, fingerprints and planner on real node:test output and 
 of those tools' messages, not from a corpus), tracker search behavior on real services, the orchestrator agent's prose
 under a live model. The rubric thresholds are starting values, not tuned ones.
 
-## Questions for the user
+## Decisions (the user's answers)
 
-1. **Self-heal: v2.0 or v2.1?** This design stops at *propose* for `test-bug` (it names the candidate selector; nothing
-   is edited). Self-heal adds a branch `qa/heal-<run-id>`, edits to page objects only, re-run validation, a PR, attempt
-   caps. It is the riskiest part and shares the "agent edits code" boundary with Phase 4's tiers.
-2. **Is a fifth class, `undetermined`, acceptable?** The plan listed four.
-3. **A closed bug with the same fingerprint:** file a new regression bug that links it (this design), or comment on the
-   closed one? There is no "reopen" operation in the adapters.
-4. **Re-run budget:** default 2 re-runs of each failing spec, including product-bug candidates (it is what separates PRD-1
-   from PRD-3). More cost, much better signal. OK?
-5. **Flaky tests:** report-only in Phase 2 (this design), or tag/quarantine them now?
+1. **Self-heal: in v2.0.** Designed below, built on its own branch.
+2. **Undetermined: keep it, but strict** (above).
+3. **A closed bug with the same fingerprint: file a new regression bug that links it** (as designed).
+4. **Re-runs: default 2, configurable** — `triage.reruns` in `qa-config.json` (0–5) or `--reruns`; a flag beats the config.
+   The confidence threshold is configurable the same way (`triage.confidenceThreshold`, `--threshold`).
+5. **Flaky tests: report-only for now.**

@@ -32,6 +32,8 @@ const { plan, connectIfNeeded } = require('./plan');
 const { triageConfig, MAX_RERUNS } = require('./lib/config');
 
 const usage = (message) => Object.assign(new Error(message), { isUsage: true });
+const UND_ALARM_MIN = 3; // at least this many undetermined verdicts, and at least this share of the triaged failures,
+const UND_ALARM_SHARE = 0.5; // before the report says the rules lack what they need for this suite
 
 function parseArgs(argv) {
   const opts = { specs: [] };
@@ -133,6 +135,12 @@ async function orchestrate(opts, { env = process.env, fetch = globalThis.fetch, 
 
   // 4. classify
   const report = classify({ runs: [main, ...rerunResults], preflight, evidence, threshold });
+  // Strictness needs a witness: if most failures end up undetermined the problem is the evidence (or the rules), not the failures.
+  const und = report.summary.byClass.undetermined;
+  if (und >= UND_ALARM_MIN && und / report.summary.triaged >= UND_ALARM_SHARE) {
+    const why = Object.entries(report.summary.undeterminedReasons).map(([r, n]) => `${r} ×${n}`).join(', ');
+    warnings.push(`${und} of ${report.summary.triaged} failures are undetermined (${why}): the evidence the rules need is missing for this suite — supply DOM snapshots, allow re-runs, or extend the rules. Do not treat these as findings.`);
+  }
   writeJson(path.join(out, 'triage.json'), { ok: true, data: report });
   const files = { triage: path.join(out, 'triage.json') };
 
