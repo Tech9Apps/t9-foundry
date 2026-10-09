@@ -1,7 +1,7 @@
 # Phase 2 design: run → triage → act
 
-Status: **first implementation checkpoint done** on `v2/phase-2-closed-loop` (stacked on Phase 1, PR #8). Everything
-below is built and tested except self-heal, which is **not** built and is an open decision (see Questions).
+Status: **built and tested.** The first checkpoint is on `v2/phase-2-closed-loop` (PR #9); the user's decisions (strict `undetermined`,
+configurable re-runs, self-heal in v2.0) are on `v2/phase-2-self-heal`, stacked on it.
 
 ## What was built, and where the build changed the design
 

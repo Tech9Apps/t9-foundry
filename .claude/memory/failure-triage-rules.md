@@ -14,7 +14,7 @@ promote a `propose` to an `act` because you feel sure.
 | Class | Meaning | What happens |
 |---|---|---|
 | `product-bug` | the app does the wrong thing | a bug is filed (or an existing one is commented on) — with the human review gate |
-| `test-bug` | the test is wrong (stale selector, crashed test code) | **proposed only**: name the cause and the candidate fix. Nothing is edited. |
+| `test-bug` | the test is wrong (stale selector, crashed test code) | **proposed**: name the cause and the exact fix. You edit nothing. If self-heal is enabled, `heal.js` may make one narrow fix on a local branch (see "Self-heal"). |
 | `flaky` | passes and fails with no change | **never filed.** Reported with its flip counts. |
 | `environment` | the system under test or its infrastructure was down or unreachable | **never filed.** Reported, with the advice to re-run when the environment is healthy. |
 | `undetermined` | **a last resort**: no rule found any positive evidence, for one named reason (below) | **proposed only, never acted on**, with what evidence would settle it |
@@ -79,6 +79,24 @@ Why this order: environment signatures and pass/fail flips are the cheapest and 
 first. "The app is wrong" is the weakest positive claim, so it comes last and is capped lower when it cannot be tied to a
 documented expectation.
 
+## Self-heal
+
+Off unless `triage.selfHeal.enabled` is set in `qa-config.json` (or `--heal` is passed; `--no-heal` overrides the config). It does **one**
+thing: when a stale selector has an exact fix (a `TST-1` verdict at `act` confidence carries a `proposal`), `scripts/triage/heal.js`
+renames that test-id inside locator expressions in test code. A model never does this edit; the script does, under these guarantees:
+
+- **Only a test-id rename**, only inside locator expressions, only in the configured test directories (`triage.selfHeal.paths`,
+  default `testFramework.testDir`). Every changed line must equal the original with only the id swapped — so a matcher, an expected value
+  or any other line changing makes the heal refuse. Application code is never in scope.
+- **Caps**: at most 5 files and 20 changed lines by default (`triage.selfHeal.maxFiles`, `maxLines`); over a cap the heal is refused, not applied.
+- **A local branch under `qa/`** (`qa/heal-<run id>` by default), created from a clean tracked tree on a named branch. It is **validated by
+  re-running** the failing specs — every healed test must pass and nothing that passed before may fail — and **reverted completely** (files,
+  branch, the branch you were on) on any failure.
+- **It never pushes.** A heal is a local branch until a human decides otherwise.
+
+If `heal.status` is `refused` or `reverted`, report the reason and leave the failure as a proposal. Do **not** retry it, and do **not** make
+the edit by hand.
+
 ## What you must do
 
 1. **Run the preflight first** and pass its result (`--preflight ok|failed`). A failed preflight makes every failure an
@@ -97,7 +115,8 @@ documented expectation.
 ## What you must never do
 
 - Never file a bug for `flaky`, `environment`, `test-bug` or `undetermined`.
-- Never edit a test, a page object, or the app as part of triage. (Self-healing is a separate, not yet enabled capability.)
+- Never edit a test, a page object, or the app yourself. The only edit that ever happens is the script `heal.js`'s test-id rename ("Self-heal" below), and only when it is enabled.
+- Never push a heal branch or open a pull request for it without the user's explicit yes, after they have seen the diff.
 - Never close, reopen or re-prioritize an existing bug.
 - Never claim a failure "reproduced" or "is flaky" without the attempts that show it. The report lists them.
 - Never present a `propose` as a decision. Say "proposed" and what you would need to be sure.

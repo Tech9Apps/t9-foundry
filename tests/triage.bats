@@ -52,10 +52,28 @@ node_tests() { cd "$REPO_ROOT" && env -u NODE_TEST_CONTEXT node --test --test-re
   [[ "$output" =~ "# fail 0" ]]
 }
 
+@test "the triage settings in qa-config.json: precedence, validation, and the schema agreeing with the loader" {
+  run node_tests config.test.js
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "# fail 0" ]]
+}
+
+@test "self-heal's pure core: id validation, locator patterns, the substitution guard, what may be edited" {
+  run node_tests heal-core.test.js
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "# fail 0" ]]
+}
+
+@test "self-heal end to end on real git repositories: heals, refuses, reverts, and never publishes" {
+  run node_tests heal.test.js
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "# fail 0" ]]
+}
+
 @test "the triage scripts depend on nothing but Node built-ins" {
   mods=$(grep -rhoE "require\('[^']+'\)" "$REPO_ROOT/scripts/triage" | sed -E "s/require\('([^']+)'\)/\1/" | grep -v '^\.' | sort -u)
   for m in $mods; do
-    case "$m" in fs|path|crypto) ;; *) echo "unexpected dependency: $m"; false ;; esac
+    case "$m" in fs|path|crypto|child_process) ;; *) echo "unexpected dependency: $m"; false ;; esac
   done
 }
 
@@ -272,4 +290,58 @@ orch_check() { run env DRIFT_ROOT="$TEST_TMP" node "$ORCH_CHECK"; }
   orch_check
   [ "$status" -eq 1 ]
   [[ "$output" =~ "does not point at .claude/commands/run-and-triage.md" ]]
+}
+
+# ── self-heal: the claims that must not drift ─────────────────────────────────────
+
+@test "drift: a self-heal cap stated in the rubric that is not the default is caught" {
+  sed -i.bak 's#at most 5 files and 20 changed lines#at most 9 files and 20 changed lines#' "$TEST_TMP/.claude/memory/failure-triage-rules.md"
+  run env DRIFT_ROOT="$TEST_TMP" node "$CHECK"
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "touches at most 9 files but the default cap is 5" ]]
+}
+
+@test "drift: the rubric no longer saying self-heal never pushes, or needs an explicit yes, is caught" {
+  sed -i.bak 's#It never pushes#It rarely pushes#' "$TEST_TMP/.claude/memory/failure-triage-rules.md"
+  run env DRIFT_ROOT="$TEST_TMP" node "$CHECK"
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "no longer says self-heal never pushes" ]]
+  cp "$REPO_ROOT/.claude/memory/failure-triage-rules.md" "$TEST_TMP/.claude/memory/"
+  sed -i.bak 's#explicit yes#nod#g' "$TEST_TMP/.claude/memory/failure-triage-rules.md"
+  run env DRIFT_ROOT="$TEST_TMP" node "$CHECK"
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "never published without the user's explicit yes" ]]
+}
+
+@test "orchestrator drift: pushing a heal branch without tying it to the user's explicit yes is caught" {
+  sed -i.bak 's#Only on their explicit yes#When convenient#' "$(CMD_COPY)"
+  orch_check
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "no longer tied to \"Only on their explicit yes\"" ]]
+}
+
+@test "orchestrator drift: a heal status the table does not explain, or one that never happens, is caught" {
+  grep -v '^| `reverted` ' "$(CMD_COPY)" > "$TEST_TMP/x" && mv "$TEST_TMP/x" "$(CMD_COPY)"
+  orch_check
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "can end in \"reverted\" but the table does not explain it" ]]
+  cp "$REPO_ROOT/.claude/commands/run-and-triage.md" "$(CMD_COPY)"
+  sed -i.bak 's#^| `nothing-to-heal` |#| `partially-healed` | some of it | go on |\n| `nothing-to-heal` |#' "$(CMD_COPY)"
+  orch_check
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "documents \"partially-healed\", which a heal never ends in" ]]
+}
+
+@test "orchestrator drift: no longer telling the model not to retry or hand-edit a refused heal is caught" {
+  sed -i.bak 's#Do not retry, and do not edit by hand#Try again#g' "$(CMD_COPY)"
+  orch_check
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "no longer tells the model not to retry or hand-edit" ]]
+}
+
+@test "orchestrator drift: the agent no longer saying a heal needs an explicit yes is caught" {
+  sed -i.bak 's#explicit yes#nod#g' "$(AGENT_COPY)"
+  orch_check
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "no longer says a heal is never published without the user's explicit yes" ]]
 }

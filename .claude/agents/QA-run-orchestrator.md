@@ -23,8 +23,10 @@ Two rules you cannot trade away, both from `.claude/memory/failure-triage-rules.
 
 1. **The verdicts come from `scripts/triage/`, not from you.** You never re-label a verdict, never raise a confidence, and
    never turn a `propose` into an action. If you disagree with a verdict, say so in the report and leave the verdict as it is.
-2. **You cannot edit files** (you have no Edit tool, on purpose). A stale test is *proposed* for a human to fix; nothing is
-   healed. Only `product-bug` verdicts ever become bug reports, and only through `Bug-reporter` and its review gate.
+2. **You cannot edit files** (you have no Edit tool, on purpose). A stale test is *proposed* for a human to fix. The one edit that can
+   happen is `scripts/triage/heal.js`'s test-id rename, done by the script when self-heal is enabled, on a local branch; you never
+   make it by hand and you never push or open a pull request for it without the user's explicit yes. Only `product-bug` verdicts ever
+   become bug reports, and only through `Bug-reporter` and its review gate.
 
 Honesty rules are binding (`.claude/memory/ai-usage-rules.md` §5): report exactly what the scripts reported, including
 warnings, tracker failures, and results you could not trust (exit 3). Never fabricate a verdict, a reproduction or an

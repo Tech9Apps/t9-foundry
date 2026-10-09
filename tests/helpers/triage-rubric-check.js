@@ -43,6 +43,26 @@ for (const r of reasonRows) {
 for (const code of Object.keys(UND_REASONS)) if (!reasonRows.some((r) => r.code === code)) bad(`${FILE}: the code has the undetermined reason ${code}, which the prose does not document`);
 if (!/never acts/i.test(md)) bad(`${FILE}: no longer says an undetermined verdict never acts`);
 
+// ── self-heal: the guarantees the prose states are the ones the config enforces ──────────────────
+{
+  const { DEFAULTS } = require(path.join(ROOT, 'scripts/triage/lib/config.js'));
+  const sh = md.slice(md.indexOf('## Self-heal'));
+  const caps = sh.match(/at most (\d+) files and (\d+) changed lines/);
+  if (!caps) bad(`${FILE}: no longer states the self-heal caps ("at most N files and M changed lines")`);
+  else {
+    if (Number(caps[1]) !== DEFAULTS.selfHeal.maxFiles) bad(`${FILE}: says self-heal touches at most ${caps[1]} files but the default cap is ${DEFAULTS.selfHeal.maxFiles}`);
+    if (Number(caps[2]) !== DEFAULTS.selfHeal.maxLines) bad(`${FILE}: says self-heal changes at most ${caps[2]} lines but the default cap is ${DEFAULTS.selfHeal.maxLines}`);
+  }
+  if (!sh.includes(`\`${DEFAULTS.selfHeal.branchPrefix}`)) bad(`${FILE}: no longer names the heal branch prefix ${DEFAULTS.selfHeal.branchPrefix}`);
+  if (!/It never pushes/.test(sh)) bad(`${FILE}: no longer says self-heal never pushes`);
+  if (!/explicit yes/.test(md)) bad(`${FILE}: no longer says a heal is never published without the user's explicit yes`);
+  for (const key of ['triage.selfHeal.enabled', 'triage.selfHeal.paths', 'triage.selfHeal.maxFiles', 'triage.selfHeal.maxLines']) {
+    const leaf = key.split('.').pop();
+    if (!sh.includes(key) && !sh.includes(leaf)) bad(`${FILE}: no longer mentions ${key}`);
+    if (!JSON.parse(read('qa-config.schema.json')).properties.triage.properties.selfHeal.properties[leaf]) bad(`${FILE} names ${key}, which qa-config.schema.json does not define`);
+  }
+}
+
 // ── classes ─────────────────────────────────────────────────────────────────
 for (const c of CLASSES) if (!new RegExp(`^\\|\\s*\`${c}\`\\s*\\|`, 'm').test(md)) bad(`${FILE}: class "${c}" is in the code but not in the classes table`);
 

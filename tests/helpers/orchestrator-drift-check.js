@@ -66,6 +66,24 @@ for (const span of cmd.matchAll(/`([^`\n]+)`/g)) {
 }
 for (const code of ['LOCATOR_NO_EVIDENCE', 'NOT_RERUN']) if (!cmd.includes(code)) bad(`${CMD}: no longer tells the model to gather evidence for ${code}`);
 
+// self-heal: the statuses the command explains are exactly the ones heal.js can end in (preview is the CLI's dry run), the flags exist,
+// and the command never lets a model publish a heal without an explicit yes
+const { HEAL_STATUSES } = require(path.join(ROOT, 'scripts/triage/heal.js'));
+const healTable = cmd.slice(cmd.indexOf('### Self-heal results')).split('\n');
+const healHead = healTable.findIndex((l) => /^\|\s*`heal\.status`\s*\|/.test(l));
+const healDocumented = [];
+for (let i = healHead + 2; healHead >= 0 && i < healTable.length && healTable[i].startsWith('|'); i += 1) { const m = healTable[i].match(/^\|\s*`([a-z-]+)`\s*\|/); if (m) healDocumented.push(m[1]); }
+if (healHead < 0) bad(`${CMD}: no table of heal.status values`);
+for (const st of HEAL_STATUSES.filter((x) => x !== 'preview')) if (!healDocumented.includes(st)) bad(`${CMD}: heal.js can end in "${st}" but the table does not explain it`);
+for (const st of healDocumented) if (!HEAL_STATUSES.includes(st) || st === 'preview') bad(`${CMD}: the heal table documents "${st}", which a heal never ends in`);
+for (const f of ['--heal', '--no-heal']) if (!orchFlags.has(f)) bad(`orchestrate.js lost the ${f} flag the command depends on`);
+if (!cmd.includes('--heal')) bad(`${CMD}: no longer tells the model about --heal`);
+if (!/git push[^\n]*/.test(cmd) || !/Only on their explicit yes[\s\S]{0,80}git push/.test(cmd)) bad(`${CMD}: the push of a heal branch is no longer tied to "Only on their explicit yes"`);
+if (!/Do not retry, and do not edit by hand|\*\*Do not retry, and do not edit by hand\.\*\*/.test(cmd)) bad(`${CMD}: no longer tells the model not to retry or hand-edit after a refused/reverted heal`);
+if (!cmd.includes('triage.selfHeal.enabled')) bad(`${CMD}: no longer names triage.selfHeal.enabled`);
+if (!JSON.parse(read('qa-config.schema.json')).properties.triage.properties.selfHeal.properties.enabled) bad(`${CMD} names triage.selfHeal.enabled, which qa-config.schema.json does not define`);
+if (!/explicit yes/.test(agent)) bad(`${AGENT}: no longer says a heal is never published without the user's explicit yes`);
+
 // ── re-runs, outputs, marker ─────────────────────────────────────────────────
 const orch = read('scripts/triage/orchestrate.js');
 const stated = cmd.match(/\(`--reruns`,\s*(\d)[–-](\d)\)/);

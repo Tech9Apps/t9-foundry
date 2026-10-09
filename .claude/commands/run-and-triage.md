@@ -85,13 +85,25 @@ node scripts/triage/plan.js --report qa-results/triage.json --run-id <run-id> --
 | `file-regression` | the only matching report is **closed**: the defect came back | delegate to **Bug-reporter**; the new bug must link the closed one (`regressionOf`) |
 | `comment-existing` | an **open** report already covers it | show the user the comment and the existing report; **only on their yes**, write `commentInput` to `qa-results/comment-<key>.json` and run `node scripts/tracker/cli.js comment --input-file qa-results/comment-<key>.json` |
 | `duplicate-in-run` | the same defect as another failure in this run | nothing: it is covered by `duplicateOf` |
-| `propose-test-fix` | the test is stale or crashed (a test-bug) | **report only**: name the cause and the candidate selector. **Edit nothing** — self-healing is not enabled. |
+| `propose-test-fix` | the test is stale or crashed (a test-bug) | **report**: the cause and the `proposal` (the exact id rename, when there is one). **You edit nothing.** If the output has a `heal` section, see "Self-heal results" below. |
 | `report-flaky` | passes and fails with no change | **report only**, with the attempts. Never file it. |
 | `report-environment` | the environment was down or unreachable | **report only**, with the advice to re-run when it is healthy. Never file it. |
 | `propose` | not confident enough to act | **report only**: show the verdict, its confidence, its `alternatives`, and what evidence would settle it |
 
 Only `product-bug` verdicts at or above the confidence threshold ever reach `file-bug`, `file-regression` or
 `comment-existing`. Nothing is filed, commented or edited without the human review gate.
+
+### Self-heal results
+
+Self-heal is off unless `triage.selfHeal.enabled` is set or you passed `--heal` (add `--heal` only if the user asked for it).
+When it ran, the output has a `heal` section; `heal.status` is one of:
+
+| `heal.status` | What it means | What you do |
+|---|---|---|
+| `healed` | a test-id was renamed on a local branch (`heal.branch`), the failing specs were re-run and pass, and you are back on `heal.base`, clean | show the user the diff (`heal.review`, and `heal.changes`), the validation, and any `heal.leftovers` (stale references it did **not** edit). Then ask whether to push the branch and open a pull request. **Only on their explicit yes**: `git push -u origin <heal.branch>`, then `gh pr create --base <heal.base> --head <heal.branch>` with a body that carries the evidence. Never without it. |
+| `nothing-to-heal` | no locator for the old id was found in the allowed directories | report `heal.reason`; the verdict stays a proposal |
+| `refused` | it did not start: dirty tree, detached HEAD, a cap exceeded, an unsafe id, … Nothing was changed | report `heal.reason`; leave the verdict as a proposal. **Do not retry, and do not edit by hand.** |
+| `reverted` | it started, validation failed, and **everything was put back** | report `heal.reason` (and `heal.problems` if the restore itself had any); leave the verdict as a proposal. **Do not retry, and do not edit by hand.** |
 
 ### Handing a bug to Bug-reporter
 

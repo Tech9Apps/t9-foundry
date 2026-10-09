@@ -79,8 +79,9 @@ Fix what is wrong today and make unattended runs *safe to attempt*.
 > **Status — first checkpoint built, verified against mocks and real `node --test` runs; self-heal not started.**
 > Design and what changed while building it: [phase-2-design.md](./phase-2-design.md). Built: the orchestrator agent and
 > `/run-and-triage`, the triage rubric, the classifier (code, not prose), fingerprints, tracker dedupe, flake reporting,
-> and the four seeded scenarios. **Not built:** self-heal (open decision), flake tagging/quarantine (needs it), cross-run
-> flake rate and tracker-search-lag protection (Phase 3's ledger). **Not verified:** classification quality on real
+> and the four seeded scenarios; **self-heal** (decided for v2.0: one narrow fix, off by default, validated, reverted on failure, never
+> pushes — see the design doc); `undetermined` made strict; re-runs and threshold configurable in `qa-config.json`. **Not built:** flake
+> tagging/quarantine (report-only by decision), cross-run flake rate and tracker-search-lag protection (Phase 3's ledger). **Not verified:** classification quality on real
 > Playwright/Cypress failures, tracker search by body marker on real services (`smoke.js` now checks it), the agent's
 > prose under a live model.
 
