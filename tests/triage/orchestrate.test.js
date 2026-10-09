@@ -188,7 +188,7 @@ describe('orchestrate: settings come from flag > qa-config.json > default', () =
     const s = failing();
     const r = await go({ framework: 'node', reruns: undefined, noPlan: true }, { runResults: s.runResults });
     assert.equal(s.calls.length, 3);
-    assert.deepEqual(r.doc.data.settings, { reruns: { value: 2, from: 'default' }, confidenceThreshold: { value: 0.8, from: 'default' } });
+    assert.deepEqual(r.doc.data.settings, { reruns: { value: 2, from: 'default' }, confidenceThreshold: { value: 0.8, from: 'default' }, selfHeal: { value: false, from: 'default' } });
   });
 
   test('triage.reruns in qa-config.json sets the number of re-runs', async () => {

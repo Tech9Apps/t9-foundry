@@ -115,6 +115,8 @@ function evaluate({ key, attempts }, { runCount, preflight, blast, evidence }) {
   if (locatorFails && loc && loc.present === false && Array.isArray(loc.candidates) && loc.candidates.length === 1) {
     const c = loc.candidates[0];
     add('TST-1', 'test-bug', 0.85, `the test looks for "${loc.target}", which is not on the page, but "${c.testid}" is (similarity ${c.similarity})`, `locator error in every failing attempt: "${short(msgOf(failing[0]))}"`);
+    // the concrete fix, so even with self-heal off the report says exactly what would change
+    matches[matches.length - 1].proposal = { kind: 'rename-testid', from: loc.target, to: c.testid, similarity: c.similarity };
   }
   const crash = failing.length > 0 && failing.every((a) => testCrash(a.error));
   if (crash) {
@@ -186,6 +188,7 @@ function classify({ runs, preflight = 'unknown', evidence = {}, threshold = DEFA
       // an undetermined verdict NEVER acts, even if the threshold is set below its confidence: "unsure" is not a basis for action
       action: win.class !== 'undetermined' && win.confidence >= threshold ? 'act' : 'propose',
       ...(win.reason ? { reason: win.reason } : {}),
+      ...(win.proposal ? { proposal: win.proposal } : {}),
       evidence: win.evidence,
       ...(rest.length ? { alternatives: rest.map((m) => ({ class: m.class, rule: m.rule, confidence: m.confidence })) } : {}),
       attempts: entry.attempts.map((a) => ({ run: a.run, status: a.status })),

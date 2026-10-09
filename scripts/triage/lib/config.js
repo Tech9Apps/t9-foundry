@@ -60,6 +60,7 @@ function triageConfig({ configPath, env = process.env } = {}) {
     },
     // which values were set explicitly (a flag may only override what is documented as overridable)
     explicit: { reruns: v.reruns !== undefined, confidenceThreshold: v.confidenceThreshold !== undefined },
+    explicitSelfHeal: v.selfHeal.enabled !== undefined,
   };
 }
 

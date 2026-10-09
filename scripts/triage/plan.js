@@ -88,7 +88,7 @@ async function plan({ report, runId, adapter, trackerWarning }) {
     const base = { key: v.key, test: v.test.name, class: v.class, rule: v.rule, confidence: v.confidence, fingerprint: v.fingerprint, token: v.token };
     if (v.class === 'flaky') { actions.push({ ...base, step: v.action === 'act' ? 'report-flaky' : 'propose', reason: 'a flaky test is reported, never filed' }); continue; }
     if (v.class === 'environment') { actions.push({ ...base, step: v.action === 'act' ? 'report-environment' : 'propose', reason: 'environment problems are reported with a re-run advice, never filed' }); continue; }
-    if (v.class === 'test-bug') { actions.push({ ...base, step: v.action === 'act' ? 'propose-test-fix' : 'propose', reason: 'self-heal is not enabled: the cause is named, nothing is edited', evidence: v.evidence }); continue; }
+    if (v.class === 'test-bug') { actions.push({ ...base, step: v.action === 'act' ? 'propose-test-fix' : 'propose', reason: 'the cause is named and, unless self-heal is enabled and succeeds, nothing is edited', evidence: v.evidence, ...(v.proposal ? { proposal: v.proposal } : {}) }); continue; }
     if (v.class === 'undetermined') { actions.push({ ...base, step: 'propose', reason: 'no rule has enough evidence', evidence: v.evidence }); continue; }
 
     // product-bug

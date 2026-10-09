@@ -49,6 +49,11 @@
           "action": { "enum": ["act", "propose"], "description": "an undetermined verdict is always `propose`" },
           "reason": { "enum": ["LOCATOR_NO_EVIDENCE", "LOCATOR_PRESENT", "LOCATOR_GONE", "CONSISTENT_TIMEOUT", "NOT_RERUN", "UNSTABLE_ERRORS", "UNATTRIBUTED_CRASH", "UNCLASSIFIED"], "description": "only on undetermined verdicts: the one reason, from a closed list, that no class could be named" },
           "evidence": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+          "proposal": {
+            "type": "object", "required": ["kind", "from", "to"], "additionalProperties": false,
+            "description": "only on a test-bug the evidence can fix exactly: what would change. Self-heal applies it when enabled; otherwise it is only a proposal.",
+            "properties": { "kind": { "enum": ["rename-testid"] }, "from": { "type": "string" }, "to": { "type": "string" }, "similarity": { "type": "number" } }
+          },
           "alternatives": {
             "type": "array", "description": "other rules that also matched, in precedence order",
             "items": { "type": "object", "required": ["class", "rule", "confidence"], "additionalProperties": false, "properties": { "class": { "type": "string" }, "rule": { "type": "string" }, "confidence": { "type": "number" } } }
