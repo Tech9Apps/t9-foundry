@@ -84,7 +84,10 @@ function createAzureMock({ pat = 'test-pat', org = 'acme', project = 'shop' } = 
     ));
     return [200, { workItems: hits.map((it) => ({ id: it.id })) }];
   });
-  core.route('POST', `${W}/workitemsbatch`, ({ body }) => [200, { count: (body.ids || []).length, value: (body.ids || []).map((id) => item(id)) }]);
+  // Like the real API: only the fields that were ASKED for come back (plus the id). A mock that returned everything would let an adapter
+  // forget to request a field and still pass.
+  const only = (wi, fields) => (Array.isArray(fields) && fields.length ? { ...wi, fields: Object.fromEntries(Object.entries(wi.fields).filter(([k]) => fields.includes(k))) } : wi);
+  core.route('POST', `${W}/workitemsbatch`, ({ body }) => [200, { count: (body.ids || []).length, value: (body.ids || []).map((id) => only(item(id), body.fields)) }]);
 
   const stripTags = (s = '') => String(s).replace(/<[^>]+>/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
 
@@ -104,7 +107,8 @@ function createAzureMock({ pat = 'test-pat', org = 'acme', project = 'shop' } = 
       const f = state.items.get(id).fields;
       return { id: String(id), title: f['System.Title'], text: [f['System.Description'], f['Microsoft.VSTS.TCM.Steps'], f['Microsoft.VSTS.TCM.ReproSteps']].map(stripTags).join('\n') };
     }),
-    closeItem: (id) => { state.items.get(Number(id)).fields['System.State'] = 'Closed'; },
+    closeItem: (id) => { const w = state.items.get(Number(id)); w.fields['System.State'] = 'Closed'; w.fields['System.Reason'] = 'Fixed'; },
+    dismissItem: (id) => { const w = state.items.get(Number(id)); w.fields['System.State'] = 'Resolved'; w.fields['System.Reason'] = 'Will not Fix'; },
     commentsOn: (id) => state.comments.get(Number(id)).map((c) => c.text),
     paths: { create: '/workitems/\\$[^/]+$', search: '/wiql', ticket: '/workitems/\\d+(\\?|$)', link: '/workitems/\\d+(\\?|$)' },
     linkMethod: 'PATCH',

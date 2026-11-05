@@ -65,12 +65,16 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
     const { json } = await call('POST', `${wit}/wiql?$top=${limit}&api-version=7.1`, { query: wiql }, 'query Azure DevOps work items', {}, true);
     const ids = ((json && json.workItems) || []).map((w) => w.id).slice(0, limit);
     if (!ids.length) return [];
-    const { json: batch } = await call('POST', `${wit}/workitemsbatch?api-version=7.1`, { ids, fields: ['System.Id', 'System.Title', 'System.State', 'System.Tags'] }, 'load Azure DevOps work items', {}, true);
+    const { json: batch } = await call('POST', `${wit}/workitemsbatch?api-version=7.1`, { ids, fields: ['System.Id', 'System.Title', 'System.State', 'System.Reason', 'System.Tags'] }, 'load Azure DevOps work items', {}, true);
     return batch.value || [];
   }
 
   // Resolved counts as closed: a defect that comes back after "resolved" is a regression, not a live report
   const AZ_CLOSED = /^(closed|done|removed|resolved)$/i;
+  // Dismissed: removed from the backlog, or closed/resolved with a reason that says nobody will fix it. ("Cannot Reproduce" and "Deferred"
+  // are deliberately NOT here: a recurrence there is worth a new report.)
+  const AZ_DISMISS_REASON = /\b(?:as designed|duplicate|will not fix|won'?t fix|obsolete|not a bug)\b/i;
+  const azDismissed = (wi) => /^removed$/i.test(f(wi, 'System.State') || '') || (AZ_CLOSED.test(f(wi, 'System.State') || '') && AZ_DISMISS_REASON.test(f(wi, 'System.Reason') || ''));
 
   async function search({ query, kind = 'any', limit = 10 }) {
     const q = wiqlString(query);
@@ -80,7 +84,7 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
     if (kind === 'bug') where = `([System.Title] CONTAINS '${q}' OR [System.Description] CONTAINS '${q}' OR [Microsoft.VSTS.TCM.ReproSteps] CONTAINS '${q}') AND [System.WorkItemType] = 'Bug'`;
     if (kind === 'test') where += " AND [System.WorkItemType] = 'Test Case'";
     const items = await runQuery(where, limit);
-    return { items: items.map((wi) => ({ id: String(wi.id), title: f(wi, 'System.Title'), url: htmlUrl(wi), status: f(wi, 'System.State'), open: !AZ_CLOSED.test(f(wi, 'System.State') || '') })) };
+    return { items: items.map((wi) => ({ id: String(wi.id), title: f(wi, 'System.Title'), url: htmlUrl(wi), status: f(wi, 'System.State'), open: !AZ_CLOSED.test(f(wi, 'System.State') || ''), ...(azDismissed(wi) ? { dismissed: true } : {}) })) };
   }
 
   async function findByKey(key) {

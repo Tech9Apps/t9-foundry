@@ -29,7 +29,11 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
   };
   // ClickUp statuses are per-list and custom: trust the status `type` (done/closed) when present, else the usual words
   const clickupClosed = (s) => !!s && (s.type === 'closed' || s.type === 'done' || /^(closed|complete|completed|done|resolved)$/i.test(s.status || ''));
-  const summarize = (t) => ({ id: String(t.id), title: t.name, url: t.url, status: t.status && t.status.status, open: !clickupClosed(t.status) });
+  // ClickUp statuses are whatever the workspace named them, and a custom one ("Rejected", "Won't do", "Cancelled") has type "custom", not
+  // "closed" — so it used to read as OPEN and a bug that came back was commented on forever. Match the wording instead.
+  const DISMISSED_STATUS = /\b(?:won'?t|wont|reject(?:ed)?|declined?|cancel(?:l?ed)?|invalid|duplicate|not (?:a )?(?:bug|issue|defect)|by design|obsolete|dismissed)\b/i;
+  const clickupDismissed = (s) => !!s && DISMISSED_STATUS.test(s.status || '');
+  const summarize = (t) => ({ id: String(t.id), title: t.name, url: t.url, status: t.status && t.status.status, open: !clickupClosed(t.status) && !clickupDismissed(t.status), ...(clickupDismissed(t.status) ? { dismissed: true } : {}) });
   const iso = (ms) => (/^\d+$/.test(String(ms)) ? new Date(Number(ms)).toISOString() : null);
 
   async function fetchTicket(id) {
