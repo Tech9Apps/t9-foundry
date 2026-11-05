@@ -37,6 +37,13 @@ export function loadQAConfig(): Record<string, unknown> {
   }
 
   if (foundButMalformed) {
+    // Unattended runs fail closed: continuing would silently run WITHOUT the production patterns this file holds.
+    if (process.env.QA_AUTONOMOUS === '1') {
+      throw new Error(
+        `BLOCKED: qa-config.json found at ${foundButMalformed.configPath} but could not be parsed (${foundButMalformed.error}), ` +
+        'so its production patterns cannot be applied. Fix the file; unattended runs (QA_AUTONOMOUS=1) do not continue without it.'
+      );
+    }
     console.warn(
       `qa-config.json found at ${foundButMalformed.configPath} but could not be parsed ` +
       `(${foundButMalformed.error}). Using environment variables only.`
