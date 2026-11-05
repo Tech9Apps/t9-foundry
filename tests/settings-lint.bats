@@ -47,7 +47,8 @@ curl_commands() {
 
 @test "curl calls to hosts that have allowlist rules still match a rule" {
   # Hosts that were allowlisted before the -fsS/--max-time hardening. Azure (-u) was
-  # never allowlisted and intentionally still prompts.
+  # never allowlisted and intentionally still prompts. So does GitLab: its host is configurable (self-hosted),
+  # so no rule can name it, and a rule on "/api/v4/" alone would approve ANY host that has such a path.
   rules=()
   while IFS= read -r r; do rules+=("$r"); done < <(
     jq -r '.permissions.allow[] | select(startswith("Bash(curl")) | sub("^Bash\\("; "") | sub("\\)$"; "")' "$SETTINGS"
@@ -57,7 +58,7 @@ curl_commands() {
   unmatched=""
   while IFS= read -r cmd; do
     case "$cmd" in
-      *api.clickup.com*|*/api/v4/*|*api.bitbucket.org*) ;;
+      *api.clickup.com*|*api.bitbucket.org*) ;;
       *) continue ;;
     esac
     matched=0
@@ -73,4 +74,15 @@ curl_commands() {
     echo "$unmatched"
   fi
   [ -z "$unmatched" ]
+}
+
+@test "allowlist rules name the real API URL, so a string in a query or another host cannot satisfy them" {
+  # `*api.clickup.com*` approved any command containing that text anywhere (a query string, another host's path).
+  bad=$(jq -r '.permissions.allow[] | select(startswith("Bash(curl")) | select(test("https://api\\.(clickup\\.com|bitbucket\\.org)/") | not)' "$SETTINGS")
+  if [ -n "$bad" ] && [ -f "$REPO_ROOT/docs/settings.proposed.json" ] && [ -z "${QA_SETTINGS_FILE:-}" ]; then
+    # .claude/settings.json is write-protected for the agent that prepared the fix, so the fix waits in docs/ for a person to apply:
+    #   cp docs/settings.proposed.json .claude/settings.json && rm docs/settings.proposed.json
+    skip "broad curl rules still in .claude/settings.json — apply docs/settings.proposed.json (this test is enforced once it is removed)"
+  fi
+  [ -z "$bad" ] || { echo "curl rules that do not anchor on https://<host>/ :"; echo "$bad"; false; }
 }
