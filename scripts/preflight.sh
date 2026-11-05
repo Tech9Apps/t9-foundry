@@ -95,19 +95,32 @@ else
   ok "staging URL: $STAGING_URL"
 fi
 
+# Does the staging URL match a production pattern? Judged exactly as the guard hooks judge a URL (case, userinfo, port, trailing dot,
+# query/fragment, numeric IPs), by the same code. Without node it falls back to a plain case-insensitive match.
+STAGING_IS_PROD=0
+STAGING_PROD_PATTERN=""
+if [ -n "$STAGING_URL" ] && command -v node >/dev/null 2>&1 && [ -f "$REPO_ROOT/hooks/lib/url-guard.js" ]; then
+  STAGING_PROD_PATTERN=$(printf '%s' "$STAGING_URL" | node "$REPO_ROOT/hooks/lib/url-guard.js" --config "$CFG" --mode enforce 2>/dev/null \
+    | jq -r '[.findings[]? | select(.reason == "PROD_PATTERN")][0].detail // empty' 2>/dev/null || true)
+fi
+
 if [ "${#PATTERNS[@]}" -eq 0 ]; then
   fail "productionProtection.prodUrlPatterns is empty" "add your production URL regexes with /reconfigure"
 else
   ok "${#PATTERNS[@]} production URL pattern(s) configured"
   for p in "${PATTERNS[@]}"; do
     rc=0
-    echo "" | grep -qE -e "$p" 2>/dev/null || rc=$?
+    echo "" | grep -qiE -e "$p" 2>/dev/null || rc=$?
     if [ "$rc" -eq 2 ]; then
       fail "invalid production URL regex: $p" "fix productionProtection.prodUrlPatterns"
-    elif [ -n "$STAGING_URL" ] && echo "$STAGING_URL" | grep -qE -e "$p"; then
-      fail "staging URL matches production pattern: $p" "your config points at production — fix environments.testEnvironmentBaseUrl"
+    elif [ -z "$STAGING_PROD_PATTERN" ] && [ -n "$STAGING_URL" ] && ! command -v node >/dev/null 2>&1 && echo "$STAGING_URL" | grep -qiE -e "$p"; then
+      STAGING_PROD_PATTERN="$p" # no node: the plain match is all we have
     fi
   done
+  if [ -n "$STAGING_PROD_PATTERN" ]; then
+    STAGING_IS_PROD=1
+    fail "staging URL matches production pattern: $STAGING_PROD_PATTERN" "your config points at production — fix environments.testEnvironmentBaseUrl"
+  fi
 fi
 
 # ── Ticket source credentials ────────────────────────────────────────────────
@@ -134,7 +147,7 @@ case "$TYPE" in
     else fail "gh CLI is not authenticated" "gh auth login (or set GH_TOKEN in CI)"; fi ;;
   jira)
     if [ "${QA_AUTONOMOUS:-}" = "1" ]; then
-      warn "Jira is accessed through the Atlassian MCP connector, which needs an interactive login" "headless Jira needs the REST adapter (v2 Phase 1); until then run Jira projects interactively"
+      warn "Jira is accessed through the Atlassian MCP connector, which needs an interactive login" "headless Jira is not supported yet: run Jira projects interactively"
     else
       ok "Jira via Atlassian MCP (interactive)"
     fi ;;
@@ -170,7 +183,9 @@ fi
 
 # ── Staging reachability ─────────────────────────────────────────────────────
 if [ -n "$STAGING_URL" ]; then
-  if [ "$SKIP_NETWORK" -eq 1 ]; then
+  if [ "$STAGING_IS_PROD" -eq 1 ]; then
+    warn "staging reachability not checked" "the URL matches a production pattern; preflight will not send a request to it"
+  elif [ "$SKIP_NETWORK" -eq 1 ]; then
     warn "staging reachability not checked (--skip-network)"
   else
     CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$STAGING_URL" 2>/dev/null || echo "000")

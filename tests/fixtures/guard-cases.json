@@ -1,0 +1,1091 @@
+{
+ "_note": "Shared by the shell hooks (hooks/lib/url-guard.js) and the runtime guards in templates/e2e (TypeScript, Python, Ruby): every implementation must give every case the same decision AND reason. Expectations were written from the design (docs/prod-safety.md), not copied from any implementation's output. `expect` is the decision per guard mode.",
+ "configs": {
+  "bare": {},
+  "prod": {
+   "prodUrlPatterns": [
+    "://myapp\\.example\\.com/",
+    "myapp\\.com$",
+    "^http://203\\.0\\.113\\.7"
+   ],
+   "allowedUrlPatterns": [
+    "://partner\\.io/guide"
+   ],
+   "testEnvironmentBaseUrl": "https://check9.tech9app.com"
+  },
+  "noheuristic": {
+   "prodUrlPatterns": [
+    "myapp\\.com$"
+   ],
+   "blockOnSuspiciousUrls": false
+  }
+ },
+ "cases": [
+  {
+   "group": "prod-pattern-spellings",
+   "url": "https://myapp.example.com/x",
+   "config": "prod",
+   "expect": {
+    "enforce": "block",
+    "warn": "block"
+   },
+   "reason": "PROD_PATTERN"
+  },
+  {
+   "group": "prod-pattern-spellings",
+   "url": "https://MyApp.Example.com/x",
+   "config": "prod",
+   "expect": {
+    "enforce": "block",
+    "warn": "block"
+   },
+   "reason": "PROD_PATTERN"
+  },
+  {
+   "group": "prod-pattern-spellings",
+   "url": "https://staging@myapp.example.com/x",
+   "config": "prod",
+   "expect": {
+    "enforce": "block",
+    "warn": "block"
+   },
+   "reason": "PROD_PATTERN"
+  },
+  {
+   "group": "prod-pattern-spellings",
+   "url": "https://user:pw@myapp.example.com/x",
+   "config": "prod",
+   "expect": {
+    "enforce": "block",
+    "warn": "block"
+   },
+   "reason": "PROD_PATTERN"
+  },
+  {
+   "group": "prod-pattern-spellings",
+   "url": "https://myapp.example.com:8443/x",
+   "config": "prod",
+   "expect": {
+    "enforce": "block",
+    "warn": "block"
+   },
+   "reason": "PROD_PATTERN"
+  },
+  {
+   "group": "prod-pattern-spellings",
+   "url": "https://myapp.example.com",
+   "config": "prod",
+   "expect": {
+    "enforce": "block",
+    "warn": "block"
+   },
+   "reason": "PROD_PATTERN"
+  },
+  {
+   "group": "prod-pattern-spellings",
+   "url": "https://myapp.example.com?x=1",
+   "config": "prod",
+   "expect": {
+    "enforce": "block",
+    "warn": "block"
+   },
+   "reason": "PROD_PATTERN"
+  },
+  {
+   "group": "prod-pattern-spellings",
+   "url": "https://myapp.example.com#frag",
+   "config": "prod",
+   "expect": {
+    "enforce": "block",
+    "warn": "block"
+   },
+   "reason": "PROD_PATTERN"
+  },
+  {
+   "group": "prod-pattern-spellings",
+   "url": "https://myapp.example.com./x",
+   "config": "prod",
+   "expect": {
+    "enforce": "block",
+    "warn": "block"
+   },
+   "reason": "PROD_PATTERN"
+  },
+  {
+   "group": "prod-pattern-spellings",
+   "url": "https://myapp.com",
+   "config": "prod",
+   "expect": {
+    "enforce": "block",
+    "warn": "block"
+   },
+   "reason": "PROD_PATTERN"
+  },
+  {
+   "group": "prod-pattern-spellings",
+   "url": "https://myapp.com:8443",
+   "config": "prod",
+   "expect": {
+    "enforce": "block",
+    "warn": "block"
+   },
+   "reason": "PROD_PATTERN"
+  },
+  {
+   "group": "prod-pattern-spellings",
+   "url": "https://myapp.com?x=1",
+   "config": "prod",
+   "expect": {
+    "enforce": "block",
+    "warn": "block"
+   },
+   "reason": "PROD_PATTERN"
+  },
+  {
+   "group": "prod-pattern-spellings",
+   "url": "https://MYAPP.COM/",
+   "config": "prod",
+   "expect": {
+    "enforce": "block",
+    "warn": "block"
+   },
+   "reason": "PROD_PATTERN"
+  },
+  {
+   "group": "prod-pattern-spellings",
+   "url": "https://shop.myapp.com/x#a",
+   "config": "prod",
+   "expect": {
+    "enforce": "block",
+    "warn": "block"
+   },
+   "reason": "PROD_PATTERN"
+  },
+  {
+   "group": "prod-pattern-spellings",
+   "url": "http://3405803783/",
+   "config": "prod",
+   "expect": {
+    "enforce": "block",
+    "warn": "block"
+   },
+   "reason": "PROD_PATTERN"
+  },
+  {
+   "group": "prod-pattern-spellings",
+   "url": "http://0xcb007107/x",
+   "config": "prod",
+   "expect": {
+    "enforce": "block",
+    "warn": "block"
+   },
+   "reason": "PROD_PATTERN"
+  },
+  {
+   "group": "prod-pattern-spellings",
+   "url": "http://0313.0.0161.7/",
+   "config": "prod",
+   "expect": {
+    "enforce": "block",
+    "warn": "block"
+   },
+   "reason": "PROD_PATTERN"
+  },
+  {
+   "group": "prod-pattern-spellings",
+   "url": "http://203.1.113.7/",
+   "config": "prod",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNRECOGNIZED_HOST",
+   "note": "a different public address is not the configured one, but it is not recognizably safe either"
+  },
+  {
+   "group": "allowed-patterns",
+   "url": "https://partner.io/guide",
+   "config": "prod",
+   "expect": {
+    "enforce": "allow",
+    "warn": "allow"
+   },
+   "reason": "ALLOWED_PATTERN"
+  },
+  {
+   "group": "allowed-patterns",
+   "url": "https://partner.io:8443/guide",
+   "config": "prod",
+   "expect": {
+    "enforce": "allow",
+    "warn": "allow"
+   },
+   "reason": "ALLOWED_PATTERN",
+   "note": "a port does not change which host this is"
+  },
+  {
+   "group": "allowed-patterns",
+   "url": "https://evil.com/?x=://partner.io/guide",
+   "config": "prod",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNRECOGNIZED_HOST",
+   "note": "the allowed text is in the query string, not the URL"
+  },
+  {
+   "group": "allowed-patterns",
+   "url": "https://evil.com/x#://partner.io/guide",
+   "config": "prod",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNRECOGNIZED_HOST",
+   "note": "...or the fragment"
+  },
+  {
+   "group": "allowed-patterns",
+   "url": "https://sub.partner.io/guide",
+   "config": "prod",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNRECOGNIZED_HOST"
+  },
+  {
+   "group": "heuristic-bypasses",
+   "url": "https://prod.mybank.com/api/latest",
+   "config": "bare",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNRECOGNIZED_HOST"
+  },
+  {
+   "group": "heuristic-bypasses",
+   "url": "https://shop.acme.com/login?x=test",
+   "config": "bare",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNRECOGNIZED_HOST"
+  },
+  {
+   "group": "heuristic-bypasses",
+   "url": "https://shop.acme.com/dev/x",
+   "config": "bare",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNRECOGNIZED_HOST"
+  },
+  {
+   "group": "heuristic-bypasses",
+   "url": "https://shop.acme.com/qa/x#staging",
+   "config": "bare",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNRECOGNIZED_HOST"
+  },
+  {
+   "group": "heuristic-bypasses",
+   "url": "https://acme.dev/x",
+   "config": "bare",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNRECOGNIZED_HOST"
+  },
+  {
+   "group": "heuristic-bypasses",
+   "url": "https://devices.acme.com/",
+   "config": "bare",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNRECOGNIZED_HOST"
+  },
+  {
+   "group": "heuristic-bypasses",
+   "url": "https://aqua.com/",
+   "config": "bare",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNRECOGNIZED_HOST"
+  },
+  {
+   "group": "heuristic-bypasses",
+   "url": "https://attestation.acme.com/",
+   "config": "bare",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNRECOGNIZED_HOST"
+  },
+  {
+   "group": "heuristic-bypasses",
+   "url": "https://test-prod.acme.com/",
+   "config": "bare",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNRECOGNIZED_HOST"
+  },
+  {
+   "group": "heuristic-bypasses",
+   "url": "https://www.acme.com/x",
+   "config": "bare",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNRECOGNIZED_HOST"
+  },
+  {
+   "group": "heuristic-bypasses",
+   "url": "https://api.acme.com/v1/users",
+   "config": "bare",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNRECOGNIZED_HOST"
+  },
+  {
+   "group": "heuristic-bypasses",
+   "url": "https://acme.com",
+   "config": "bare",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNRECOGNIZED_HOST"
+  },
+  {
+   "group": "heuristic-bypasses",
+   "url": "https://acme.co.uk/",
+   "config": "bare",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNRECOGNIZED_HOST"
+  },
+  {
+   "group": "heuristic-bypasses",
+   "url": "https://acme.com:8443/",
+   "config": "bare",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNRECOGNIZED_HOST"
+  },
+  {
+   "group": "heuristic-bypasses",
+   "url": "https://x@acme.com/",
+   "config": "bare",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNRECOGNIZED_HOST"
+  },
+  {
+   "group": "heuristic-bypasses",
+   "url": "https://prod.acme.com/",
+   "config": "bare",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNRECOGNIZED_HOST"
+  },
+  {
+   "group": "heuristic-bypasses",
+   "url": "https://app.acme.com",
+   "config": "bare",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNRECOGNIZED_HOST"
+  },
+  {
+   "group": "heuristic-bypasses",
+   "url": "https://[2001:db8::1]/",
+   "config": "bare",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNRECOGNIZED_HOST"
+  },
+  {
+   "group": "heuristic-bypasses",
+   "url": "http://134744072/",
+   "config": "bare",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNRECOGNIZED_HOST"
+  },
+  {
+   "group": "heuristic-bypasses",
+   "url": "http://0x08080808/",
+   "config": "bare",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNRECOGNIZED_HOST"
+  },
+  {
+   "group": "heuristic-bypasses",
+   "url": "https://xn--mnchen-3ya.de/",
+   "config": "bare",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNRECOGNIZED_HOST"
+  },
+  {
+   "group": "heuristic-bypasses",
+   "url": "https://github.com.evil.com/",
+   "config": "bare",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNRECOGNIZED_HOST"
+  },
+  {
+   "group": "heuristic-bypasses",
+   "url": "https://evilgithub.com/",
+   "config": "bare",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNRECOGNIZED_HOST"
+  },
+  {
+   "group": "heuristic-bypasses",
+   "url": "https://staging.evil.com@acme.com/x",
+   "config": "bare",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNRECOGNIZED_HOST"
+  },
+  {
+   "group": "heuristic-bypasses",
+   "url": "https://staging.acme.com@evil.com/",
+   "config": "bare",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNRECOGNIZED_HOST"
+  },
+  {
+   "group": "heuristic-bypasses",
+   "url": "http://172.32.0.1/",
+   "config": "bare",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNRECOGNIZED_HOST"
+  },
+  {
+   "group": "heuristic-bypasses",
+   "url": "http://11.0.0.1/",
+   "config": "bare",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNRECOGNIZED_HOST"
+  },
+  {
+   "group": "heuristic-bypasses",
+   "url": "http://localhost.evil.com/",
+   "config": "bare",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNRECOGNIZED_HOST"
+  },
+  {
+   "group": "heuristic-bypasses",
+   "url": "http://staging/",
+   "config": "bare",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNRECOGNIZED_HOST"
+  },
+  {
+   "group": "heuristic-bypasses",
+   "url": "http://devbox/",
+   "config": "bare",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNRECOGNIZED_HOST"
+  },
+  {
+   "group": "unverifiable-hosts",
+   "url": "https://$H/x",
+   "config": "bare",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNVERIFIABLE_HOST"
+  },
+  {
+   "group": "unverifiable-hosts",
+   "url": "https://${HOST}/x",
+   "config": "bare",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNVERIFIABLE_HOST"
+  },
+  {
+   "group": "unverifiable-hosts",
+   "url": "https://$(hostname",
+   "config": "bare",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNVERIFIABLE_HOST"
+  },
+  {
+   "group": "unverifiable-hosts",
+   "url": "https://`hostname`/x",
+   "config": "bare",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNVERIFIABLE_HOST"
+  },
+  {
+   "group": "unverifiable-hosts",
+   "url": "https://%73taging.acme.com/",
+   "config": "bare",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNVERIFIABLE_HOST"
+  },
+  {
+   "group": "unverifiable-hosts",
+   "url": "https://stäging.acme.com/",
+   "config": "bare",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNVERIFIABLE_HOST"
+  },
+  {
+   "group": "unverifiable-hosts",
+   "url": "https://evil.com\\@staging.acme.com/",
+   "config": "bare",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNPARSEABLE"
+  },
+  {
+   "group": "unverifiable-hosts",
+   "url": "ftp://acme.com",
+   "config": "bare",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNPARSEABLE"
+  },
+  {
+   "group": "unverifiable-hosts",
+   "url": "acme.com",
+   "config": "bare",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNPARSEABLE"
+  },
+  {
+   "group": "unverifiable-hosts",
+   "url": "https://",
+   "config": "bare",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNPARSEABLE"
+  },
+  {
+   "group": "unverifiable-hosts",
+   "url": "file:///etc/passwd",
+   "config": "bare",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNPARSEABLE"
+  },
+  {
+   "group": "not-production",
+   "url": "https://staging.acme.com/x",
+   "config": "bare",
+   "expect": {
+    "enforce": "allow",
+    "warn": "allow"
+   },
+   "reason": "NONPROD_HOST"
+  },
+  {
+   "group": "not-production",
+   "url": "https://acme-staging.com/",
+   "config": "bare",
+   "expect": {
+    "enforce": "allow",
+    "warn": "allow"
+   },
+   "reason": "NONPROD_HOST"
+  },
+  {
+   "group": "not-production",
+   "url": "https://qa.acme.com",
+   "config": "bare",
+   "expect": {
+    "enforce": "allow",
+    "warn": "allow"
+   },
+   "reason": "NONPROD_HOST"
+  },
+  {
+   "group": "not-production",
+   "url": "https://dev.acme.io",
+   "config": "bare",
+   "expect": {
+    "enforce": "allow",
+    "warn": "allow"
+   },
+   "reason": "NONPROD_HOST"
+  },
+  {
+   "group": "not-production",
+   "url": "https://acme.test",
+   "config": "bare",
+   "expect": {
+    "enforce": "allow",
+    "warn": "allow"
+   },
+   "reason": "NONPROD_HOST"
+  },
+  {
+   "group": "not-production",
+   "url": "http://localhost:3000",
+   "config": "bare",
+   "expect": {
+    "enforce": "allow",
+    "warn": "allow"
+   },
+   "reason": "NONPROD_HOST"
+  },
+  {
+   "group": "not-production",
+   "url": "http://127.0.0.1:8080",
+   "config": "bare",
+   "expect": {
+    "enforce": "allow",
+    "warn": "allow"
+   },
+   "reason": "NONPROD_HOST"
+  },
+  {
+   "group": "not-production",
+   "url": "http://10.1.2.3",
+   "config": "bare",
+   "expect": {
+    "enforce": "allow",
+    "warn": "allow"
+   },
+   "reason": "NONPROD_HOST"
+  },
+  {
+   "group": "not-production",
+   "url": "http://192.168.1.5/x",
+   "config": "bare",
+   "expect": {
+    "enforce": "allow",
+    "warn": "allow"
+   },
+   "reason": "NONPROD_HOST"
+  },
+  {
+   "group": "not-production",
+   "url": "http://[::1]:3000",
+   "config": "bare",
+   "expect": {
+    "enforce": "allow",
+    "warn": "allow"
+   },
+   "reason": "NONPROD_HOST"
+  },
+  {
+   "group": "not-production",
+   "url": "http://[fd12::1]/",
+   "config": "bare",
+   "expect": {
+    "enforce": "allow",
+    "warn": "allow"
+   },
+   "reason": "NONPROD_HOST"
+  },
+  {
+   "group": "not-production",
+   "url": "http://[::ffff:127.0.0.1]/",
+   "config": "bare",
+   "expect": {
+    "enforce": "allow",
+    "warn": "allow"
+   },
+   "reason": "NONPROD_HOST"
+  },
+  {
+   "group": "not-production",
+   "url": "http://myhost.local",
+   "config": "bare",
+   "expect": {
+    "enforce": "allow",
+    "warn": "allow"
+   },
+   "reason": "NONPROD_HOST"
+  },
+  {
+   "group": "not-production",
+   "url": "https://uat.acme.com",
+   "config": "bare",
+   "expect": {
+    "enforce": "allow",
+    "warn": "allow"
+   },
+   "reason": "NONPROD_HOST"
+  },
+  {
+   "group": "not-production",
+   "url": "https://sandbox.acme.com",
+   "config": "bare",
+   "expect": {
+    "enforce": "allow",
+    "warn": "allow"
+   },
+   "reason": "NONPROD_HOST"
+  },
+  {
+   "group": "not-production",
+   "url": "https://staging.acme.com:8443/x",
+   "config": "bare",
+   "expect": {
+    "enforce": "allow",
+    "warn": "allow"
+   },
+   "reason": "NONPROD_HOST"
+  },
+  {
+   "group": "not-production",
+   "url": "http://2130706433/",
+   "config": "bare",
+   "expect": {
+    "enforce": "allow",
+    "warn": "allow"
+   },
+   "reason": "NONPROD_HOST"
+  },
+  {
+   "group": "not-production",
+   "url": "http://0x7f.1/",
+   "config": "bare",
+   "expect": {
+    "enforce": "allow",
+    "warn": "allow"
+   },
+   "reason": "NONPROD_HOST"
+  },
+  {
+   "group": "not-production",
+   "url": "https://UAT.ACME.COM/",
+   "config": "bare",
+   "expect": {
+    "enforce": "allow",
+    "warn": "allow"
+   },
+   "reason": "NONPROD_HOST"
+  },
+  {
+   "group": "not-production",
+   "url": "https://acme.com@staging.acme.com/",
+   "config": "bare",
+   "expect": {
+    "enforce": "allow",
+    "warn": "allow"
+   },
+   "reason": "NONPROD_HOST"
+  },
+  {
+   "group": "not-production",
+   "url": "http://172.16.0.1/",
+   "config": "bare",
+   "expect": {
+    "enforce": "allow",
+    "warn": "allow"
+   },
+   "reason": "NONPROD_HOST"
+  },
+  {
+   "group": "not-production",
+   "url": "http://172.31.255.255/",
+   "config": "bare",
+   "expect": {
+    "enforce": "allow",
+    "warn": "allow"
+   },
+   "reason": "NONPROD_HOST"
+  },
+  {
+   "group": "not-production",
+   "url": "http://169.254.169.254/",
+   "config": "bare",
+   "expect": {
+    "enforce": "allow",
+    "warn": "allow"
+   },
+   "reason": "NONPROD_HOST"
+  },
+  {
+   "group": "not-production",
+   "url": "http://0.0.0.0:3000",
+   "config": "bare",
+   "expect": {
+    "enforce": "allow",
+    "warn": "allow"
+   },
+   "reason": "NONPROD_HOST"
+  },
+  {
+   "group": "not-production",
+   "url": "https://sub.test.acme.com/",
+   "config": "bare",
+   "expect": {
+    "enforce": "allow",
+    "warn": "allow"
+   },
+   "reason": "NONPROD_HOST"
+  },
+  {
+   "group": "not-production",
+   "url": "https://app.preview.acme.com/",
+   "config": "bare",
+   "expect": {
+    "enforce": "allow",
+    "warn": "allow"
+   },
+   "reason": "NONPROD_HOST"
+  },
+  {
+   "group": "not-production",
+   "url": "https://acme.example.org/",
+   "config": "bare",
+   "expect": {
+    "enforce": "allow",
+    "warn": "allow"
+   },
+   "reason": "NONPROD_HOST"
+  },
+  {
+   "group": "known-hosts",
+   "url": "https://api.github.com/repos/x",
+   "config": "bare",
+   "expect": {
+    "enforce": "allow",
+    "warn": "allow"
+   },
+   "reason": "EXEMPT_HOST"
+  },
+  {
+   "group": "known-hosts",
+   "url": "https://github.com/a/b",
+   "config": "bare",
+   "expect": {
+    "enforce": "allow",
+    "warn": "allow"
+   },
+   "reason": "EXEMPT_HOST"
+  },
+  {
+   "group": "known-hosts",
+   "url": "https://raw.githubusercontent.com/x",
+   "config": "bare",
+   "expect": {
+    "enforce": "allow",
+    "warn": "allow"
+   },
+   "reason": "EXEMPT_HOST"
+  },
+  {
+   "group": "known-hosts",
+   "url": "https://registry.npmjs.org/lodash",
+   "config": "bare",
+   "expect": {
+    "enforce": "allow",
+    "warn": "allow"
+   },
+   "reason": "EXEMPT_HOST"
+  },
+  {
+   "group": "known-hosts",
+   "url": "https://dev.azure.com/org",
+   "config": "bare",
+   "expect": {
+    "enforce": "allow",
+    "warn": "allow"
+   },
+   "reason": "EXEMPT_HOST"
+  },
+  {
+   "group": "known-hosts",
+   "url": "https://acme.atlassian.net/browse/X-1",
+   "config": "bare",
+   "expect": {
+    "enforce": "allow",
+    "warn": "allow"
+   },
+   "reason": "EXEMPT_HOST"
+  },
+  {
+   "group": "known-hosts",
+   "url": "https://api.clickup.com/api/v2/task/1",
+   "config": "bare",
+   "expect": {
+    "enforce": "allow",
+    "warn": "allow"
+   },
+   "reason": "EXEMPT_HOST"
+  },
+  {
+   "group": "known-hosts",
+   "url": "https://pypi.org/simple/",
+   "config": "bare",
+   "expect": {
+    "enforce": "allow",
+    "warn": "allow"
+   },
+   "reason": "EXEMPT_HOST"
+  },
+  {
+   "group": "known-hosts",
+   "url": "https://gitlab.com/a/b",
+   "config": "bare",
+   "expect": {
+    "enforce": "allow",
+    "warn": "allow"
+   },
+   "reason": "EXEMPT_HOST"
+  },
+  {
+   "group": "known-hosts",
+   "url": "https://bitbucket.org/a/b",
+   "config": "bare",
+   "expect": {
+    "enforce": "allow",
+    "warn": "allow"
+   },
+   "reason": "EXEMPT_HOST"
+  },
+  {
+   "group": "test-environment",
+   "url": "https://check9.tech9app.com/api",
+   "config": "prod",
+   "expect": {
+    "enforce": "allow",
+    "warn": "allow"
+   },
+   "reason": "TEST_ENV_HOST"
+  },
+  {
+   "group": "test-environment",
+   "url": "https://api.check9.tech9app.com/",
+   "config": "prod",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNRECOGNIZED_HOST",
+   "note": "only the exact host is declared the test environment"
+  },
+  {
+   "group": "heuristic-off",
+   "url": "https://www.acme.com/x",
+   "config": "noheuristic",
+   "expect": {
+    "enforce": "allow",
+    "warn": "allow"
+   },
+   "reason": "HEURISTIC_DISABLED"
+  },
+  {
+   "group": "heuristic-off",
+   "url": "https://$H/x",
+   "config": "noheuristic",
+   "expect": {
+    "enforce": "allow",
+    "warn": "allow"
+   },
+   "reason": "HEURISTIC_DISABLED"
+  },
+  {
+   "group": "heuristic-off",
+   "url": "https://myapp.com/",
+   "config": "noheuristic",
+   "expect": {
+    "enforce": "block",
+    "warn": "block"
+   },
+   "reason": "PROD_PATTERN",
+   "note": "a configured pattern still blocks"
+  }
+ ]
+}

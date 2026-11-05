@@ -43,9 +43,12 @@ r = run(() => validateNotProduction('https://otherapp.io/', ['x']));
 expect('QA_AUTONOMOUS=1 enforces by default', r.error && r.error.message.includes('PRODUCTION GUARD'));
 delete process.env.QA_AUTONOMOUS;
 
-// 6. A staging URL passes in enforce mode.
-r = run(() => validateNotProduction('https://staging.myapp.example.com', ['myapp\\.example\\.com/'], { enforce: true }));
+// 6. A staging URL passes in enforce mode when the production pattern is anchored to the production host ...
+r = run(() => validateNotProduction('https://staging.myapp.example.com', ['://myapp\\.example\\.com/'], { enforce: true }));
 expect('staging URL passes in enforce mode', r.error === null && r.warnings.length === 0);
+// ... and an UNANCHORED pattern matches every host that merely ends in it, staging included: authors should anchor theirs.
+r = run(() => validateNotProduction('https://staging.myapp.example.com', ['myapp\\.example\\.com/'], { enforce: true }));
+expect('an unanchored pattern also catches the staging subdomain (documented: anchor your patterns)', r.error && r.error.message.includes('PRODUCTION GUARD'));
 
 // 7. allowedUrlPatterns exempts a URL from the heuristic only.
 r = run(() => validateNotProduction('https://partner.io/guide', [], { enforce: true, allowedUrlPatterns: ['partner\\.io/guide'] }));

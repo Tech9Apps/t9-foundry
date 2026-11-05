@@ -131,3 +131,43 @@ go_config() {
   run bash "$PREFLIGHT" --bogus
   [ "$status" -eq 2 ]
 }
+
+# ── Review findings ───────────────────────────────────────────────────────────────────────────────────────────────────
+
+@test "NO-GO when the staging URL matches a production pattern in a different spelling (case, userinfo, port, trailing dot)" {
+  for url in 'https://MyApp.Example.com/' 'https://qa@myapp.example.com/' 'https://myapp.example.com:8443/' 'https://myapp.example.com./' 'https://myapp.example.com'; do
+    jq --arg u "$url" '.environments.testEnvironmentBaseUrl = $u | .codeRepository.localPath = "" | .productionProtection.prodUrlPatterns = ["://myapp\\.example\\.com/"]' \
+      "$FIXTURES/enforce-config.json" > "$TEST_TMP/spelled.json"
+    run bash "$PREFLIGHT" --skip-network --config "$TEST_TMP/spelled.json"
+    echo "$url -> $status: $output"
+    [ "$status" -eq 1 ]
+    [[ "$output" =~ "matches production pattern" ]]
+  done
+}
+
+@test "a staging URL that matches a production pattern is NEVER contacted (preflight used to curl it after failing it)" {
+  mkdir -p "$TEST_TMP/bin"
+  printf '#!/bin/sh\necho called >> "%s/curl-calls"\necho 200\n' "$TEST_TMP" > "$TEST_TMP/bin/curl"
+  chmod +x "$TEST_TMP/bin/curl"
+  run env PATH="$TEST_TMP/bin:$PATH" bash "$PREFLIGHT" --config "$FIXTURES/prod-staging-url-config.json"
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "matches production pattern" ]]
+  [[ "$output" =~ "will not send a request to it" ]]
+  [ ! -e "$TEST_TMP/curl-calls" ]
+}
+
+@test "the reachability check still runs for a staging URL that is NOT production" {
+  mkdir -p "$TEST_TMP/bin"
+  printf '#!/bin/sh\necho called >> "%s/curl-calls"\necho 200\n' "$TEST_TMP" > "$TEST_TMP/bin/curl"
+  chmod +x "$TEST_TMP/bin/curl"
+  run env QA_AUTONOMOUS=1 PATH="$TEST_TMP/bin:$PATH" bash "$PREFLIGHT" --config "$(go_config)"
+  [ "$status" -eq 0 ]
+  [ -e "$TEST_TMP/curl-calls" ]
+}
+
+@test "the Jira warning for autonomous runs does not point at a Phase 1 adapter that does not exist" {
+  jq '.ticketSource = {"type":"jira","jira":{"cloudId":"x.atlassian.net","projectKey":"ABC"}} | .codeRepository.localPath = ""' "$FIXTURES/enforce-config.json" > "$TEST_TMP/jira.json"
+  run env QA_AUTONOMOUS=1 bash "$PREFLIGHT" --skip-network --config "$TEST_TMP/jira.json"
+  [[ "$output" =~ "run Jira projects interactively" ]]
+  [[ ! "$output" =~ "Phase 1" ]]
+}

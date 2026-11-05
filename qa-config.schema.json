@@ -157,7 +157,7 @@
         "allowedUrlPatterns": {
           "type": "array",
           "items": { "type": "string" },
-          "description": "Regex patterns for URLs that are known-safe and exempt from the suspicious-URL heuristic (e.g. docs or CDN links). Never overrides prodUrlPatterns. Tracker/code-host URLs (github.com, dev.azure.com, api.clickup.com, ...) are already exempt."
+          "description": "Regex patterns for URLs that are known-safe and exempt from the unrecognized-host check (e.g. docs or CDN links). Matched against the URL without its query string and fragment, so write them anchored (^https://partner\\.io/guide). Never override prodUrlPatterns. Tracker/code-host/registry URLs (github.com, dev.azure.com, api.clickup.com, registry.npmjs.org, ...) and the host of environments.testEnvironmentBaseUrl are already exempt."
         }
       }
     },
