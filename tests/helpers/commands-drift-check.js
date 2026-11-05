@@ -10,6 +10,10 @@
 //     `totals.*` / `error.*` field it tells the model to read is in schemas/run-result.schema.json
 //   - file-bug.md's receipt example validates against schemas/bug-receipt.schema.json, and its tracker list
 //     is exactly the schema's
+//   - a command split over backslash-continued lines is checked as ONE command (so a flag on line 2 is not missed)
+//   - an inline --input '{…}' may not contain $VARS or <placeholders>: text from a ticket/failure/user must never be
+//     pasted into a shell string (a quote in it would end the string) — it goes in a file written with the Write tool
+//   - any command file that puts $ARGUMENTS on a shell line must state an anchored allow-list (^[…]…$) for it
 // Prints "OK" or the list of problems (exit 1).
 'use strict';
 const fs = require('fs');
@@ -58,12 +62,23 @@ function checkReceipt(example, md, file) {
   if (!validateReceipt(filled)) bad(`${file}: receipt example is invalid — ${ajv.errorsText(validateReceipt.errors)}`);
 }
 
+// a command split with trailing backslashes is one command: join the pieces, keep the first line's number
+const logicalLines = (md) => {
+  const out = []; const raw = md.split('\n');
+  for (let i = 0; i < raw.length; i++) {
+    let text = raw[i]; const start = i;
+    while (/\\\s*$/.test(text) && i + 1 < raw.length) text = text.replace(/\\\s*$/, ' ') + raw[++i].trim();
+    out.push({ text, n: start + 1 });
+  }
+  return out;
+};
+
 for (const [name, file] of Object.entries(FILES)) {
   const md = read(file);
-  const lines = md.split('\n');
 
   // 1+2. operations and flags
-  lines.forEach((line, i) => {
+  logicalLines(md).forEach(({ text: line, n }) => {
+    const i = n - 1;
     const cmd = line.match(/node scripts\/tracker\/(cli\.js|post-tests\.js)(.*)$/);
     if (!cmd) return;
     const [, script, rest] = cmd;
@@ -76,6 +91,7 @@ for (const [name, file] of Object.entries(FILES)) {
     }
     // 3a. inline --input '{…}'
     const inline = rest.match(/--input '(\{.*\})'/);
+    if (inline && /\$[A-Za-z{]|<[^>\n]+>|\{testCasesDir\}/.test(inline[1])) bad(`${file}:${i + 1}: --input '…' holds a $VAR or <placeholder> — untrusted text must never be pasted into a shell string; write the JSON with the Write tool and pass --input-file`);
     if (inline && script === 'cli.js') {
       const op = rest.trim().split(/\s+/)[0];
       try { validateInput(op, JSON.parse(fill(inline[1])), `${file}:${i + 1}`); } catch (e) { bad(`${file}:${i + 1}: example --input is not valid JSON (${e.message})`); }
@@ -122,7 +138,8 @@ for (const [name, file] of Object.entries(FILES)) {
   const md = read(file);
   const runFlags = flagsIn(read('scripts/results/run.js'));
   const { SUPPORTED: FRAMEWORKS } = require(path.join(ROOT, 'scripts/results/frameworks.js'));
-  md.split('\n').forEach((line, i) => {
+  logicalLines(md).forEach(({ text: line, n }) => {
+    const i = n - 1;
     const cmd = line.match(/node scripts\/results\/run\.js(.*)$/);
     if (!cmd) return;
     for (const f of cmd[1].matchAll(/(?:^|\s)(--[a-z-]+)/g)) if (!runFlags.has(f[1])) bad(`${file}:${i + 1}: run.js has no option ${f[1]}`);
@@ -142,6 +159,13 @@ for (const [name, file] of Object.entries(FILES)) {
   for (const m of md.matchAll(/`(flaky|durationMs|ticket|caseId|status)\b[^`]*`/g)) {
     if (!(m[1] in testProps) && !(m[1] in resultSchema.properties)) bad(`${file}: mentions result field "${m[1]}", which the schema does not define`);
   }
+}
+
+// ── $ARGUMENTS on a shell line needs a stated allow-list ────────────────────────────────────
+for (const f of fs.readdirSync(path.join(ROOT, '.claude/commands')).filter((x) => x.endsWith('.md'))) {
+  const file = '.claude/commands/' + f; const md = read(file);
+  const onShell = logicalLines(md).filter(({ text }) => /(^|[\s`(])(node|cp|find|diff|jq|mkdir|ls|rm|git)\s[^\n]*\$ARGUMENTS/.test(text));
+  if (onShell.length && !/`\^\[[^`\n]*\$`/.test(md)) bad(`${file}:${onShell[0].n}: puts $ARGUMENTS on a shell line but never states an anchored allow-list for it (a ^[…]…$ pattern in backticks)`);
 }
 
 if (problems.length) { console.log(`${problems.length} problem(s):\n  - ${problems.join('\n  - ')}`); process.exit(1); }
