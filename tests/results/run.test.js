@@ -150,6 +150,88 @@ test('a hung run is killed at --timeout-ms and reported as incomplete', async ()
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+// ── review findings ─────────────────────────────────────────────────────────────────────────────
+
+const skippedDoc = (n = 3) => {
+  const doc = { config: {}, stats: {}, suites: [{ title: 'a.spec.ts', specs: [], suites: [{ title: 's', specs: Array.from({ length: n }, (_, i) => ({ title: `skipped ${i}`, file: 'a.spec.ts', line: i + 1, tests: [{ projectName: 'chromium', status: 'skipped', results: [] }] })), suites: [] }] }] };
+  return doc;
+};
+
+test('a run in which EVERY test was skipped is exit 3, not a pass (nothing was verified)', async () => {
+  const dir = tmp();
+  const file = path.join(dir, 'skipped.json'); fs.writeFileSync(file, JSON.stringify(skippedDoc(3)));
+  const r = await run(base(dir), { code: 0, report: file });
+  assert.equal(r.code, 3);
+  assert.equal(r.json.ok, false);
+  assert.equal(r.json.error.code, 'NO_REPORT');
+  assert.match(r.json.error.message, /every one of the 3 test\(s\) was skipped, so nothing was verified/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('--allow-all-skipped lets an intentionally all-skipped run through; a mix of skipped and passed never needed it', async () => {
+  const dir = tmp();
+  const file = path.join(dir, 'skipped.json'); fs.writeFileSync(file, JSON.stringify(skippedDoc(2)));
+  const allowed = await run(base(dir, ['--allow-all-skipped']), { code: 0, report: file });
+  assert.equal(allowed.code, 0);
+  assert.equal(allowed.json.ok, true);
+  assert.deepEqual(allowed.json.data.totals, { total: 2, passed: 0, failed: 0, skipped: 2 });
+  const mixed = await run(base(dir), { code: 1, report: 'playwright.json' }); // has passed, failed and skipped tests
+  assert.equal(mixed.code, 1);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('a run in which every test FAILED is still a failure (exit 1) — the all-skipped guard must not relabel it', async () => {
+  const dir = tmp();
+  const doc = { config: {}, stats: {}, suites: [{ title: 'a.spec.ts', specs: [], suites: [{ title: 's', specs: [1, 2].map((i) => ({ title: `fails ${i}`, file: 'a.spec.ts', line: i, tests: [{ projectName: 'chromium', status: 'unexpected', results: [{ status: 'failed', error: { message: 'Error: expected 1 to be 2' } }] }] })), suites: [] }] }] };
+  const file = path.join(dir, 'failed.json'); fs.writeFileSync(file, JSON.stringify(doc));
+  const r = await run(base(dir), { code: 1, report: file });
+  assert.equal(r.code, 1);
+  assert.equal(r.json.ok, false, 'the suite did not pass');
+  assert.equal(r.json.error, undefined, 'but a real report was read: this is a failing run, not a NO_REPORT');
+  assert.deepEqual(r.json.data.totals, { total: 2, passed: 0, failed: 2, skipped: 0 });
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('a value that starts with "-" cannot reach the test runner as an option (a spec of --import=./x.js would make node load it)', async () => {
+  for (const flag of ['--spec', '--test-dir', '--config-file']) {
+    for (const value of ['--import=./evil.js', '-r evil', '--config=evil']) {
+      const r = await run(['--framework', 'node', flag, value, '--out', tmp()]);
+      assert.equal(r.code, 2, `${flag} ${value}`);
+      assert.match(r.err, /starts with "-"/);
+      assert.equal(r.calls.length, 0, 'the runner was never started');
+    }
+  }
+  const ok = await run(['--framework', 'node', '--spec', './-odd-name.test.js', '--spec', 'tests/a.test.js', '--out', tmp(), '--dry-run']);
+  assert.equal(ok.code, 0, 'a path that really starts with "-" is fine when written ./-name');
+  assert.match(ok.json.command, /\.\/-odd-name\.test\.js tests\/a\.test\.js/);
+});
+
+test('it will not clear a raw/ directory that holds files that are not test reports (--out is caller-controlled)', async () => {
+  const dir = tmp();
+  const raw = path.join(dir, 'qa', 'raw'); fs.mkdirSync(raw, { recursive: true });
+  fs.writeFileSync(path.join(raw, 'precious.txt'), 'somebody\'s file');
+  const r = await run(base(dir), { code: 0, report: 'playwright.json' });
+  assert.equal(r.code, 2);
+  assert.match(r.err, /refusing to clear .*raw: it holds files that are not test reports \(precious\.txt\)/);
+  assert.equal(r.calls.length, 0);
+  assert.equal(fs.readFileSync(path.join(raw, 'precious.txt'), 'utf8'), 'somebody\'s file', 'untouched');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('it still clears a raw/ directory that holds only reports, an empty one, or one it created itself (marker) — whatever the reports are named', async () => {
+  const dir = tmp();
+  const raw = path.join(dir, 'qa', 'raw'); fs.mkdirSync(raw, { recursive: true });
+  fs.copyFileSync(path.join(FIX, 'playwright.json'), path.join(raw, 'results.json'));   // a previous report
+  const first = await run(base(dir), { code: 1, report: 'playwright.json' });
+  assert.equal(first.code, 1);
+  assert.ok(fs.existsSync(path.join(raw, '.qa-results-raw')), 'the marker is written');
+  fs.writeFileSync(path.join(raw, 'wdio-0-0-reporter.log'), 'a framework chose its own file name');
+  const second = await run(base(dir), { code: 1, report: 'playwright.json' });
+  assert.equal(second.code, 1, 'a marked directory is ours, so it is cleared');
+  assert.ok(!fs.existsSync(path.join(raw, 'wdio-0-0-reporter.log')));
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test('--dry-run prints the plan and runs nothing, creates nothing', async () => {
   const dir = tmp();
   const r = await run(base(dir, ['--spec', 'login.spec.ts', '--headed', '--dry-run']));

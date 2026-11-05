@@ -15,6 +15,8 @@ Read `testFramework.type` from `qa-config.json`.
 
 ## Find the Spec File
 
+**Check the argument first.** It becomes a `find` pattern and a path on a command line, so it must match `^[A-Za-z0-9][A-Za-z0-9._/-]*$` and must not contain `..`. If it does not (a space, quote, `;`, `$`, a leading `-`…), stop and tell the user it is not a spec file name or path. Do not "clean it up" and carry on.
+
 Resolve `$ARGUMENTS` to a concrete path directly:
 ```bash
 find tests/ -iname "*$ARGUMENTS*" --include="*.spec.ts" 2>/dev/null || find tests/ -iname "*$ARGUMENTS*"
@@ -38,8 +40,8 @@ node scripts/results/run.js --framework playwright --spec <path-to-spec-file> --
 
 Playwright's own list output streams to the terminal as it runs. When it finishes, stdout is one JSON document and
 `qa-results/result.json` holds the same thing. Exit codes: **0** every test passed · **1** some failed · **2** bad
-invocation · **3** no trustworthy report (Playwright could not start, was killed, wrote nothing, or its exit code
-contradicts its report — read `error.message` or `warnings`; never report that as a pass).
+invocation · **3** no trustworthy report (Playwright could not start, was killed, wrote nothing, **skipped every test**, or
+its exit code contradicts its report — read `error.message` or `warnings`; never report that as a pass).
 
 ### Handle Failures (max 3 retries):
 

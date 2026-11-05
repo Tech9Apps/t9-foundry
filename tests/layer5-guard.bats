@@ -5,6 +5,7 @@
 
 REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
 CHECK="$BATS_TEST_DIRNAME/helpers/layer5-guard-check.mjs"
+LOADER_CHECK="$BATS_TEST_DIRNAME/helpers/layer5-loader-check.mjs"
 
 setup() {
   local major minor
@@ -37,4 +38,13 @@ setup() {
   body() { sed -n '/^export interface ProdGuardOptions/,$p' "$1"; }
   [ "$(body "$REPO_ROOT/templates/e2e/playwright/support/prod-guard.ts")" = "$(body "$REPO_ROOT/templates/e2e/cypress/support/prod-guard.ts")" ]
   [ "$(body "$REPO_ROOT/templates/e2e/playwright/support/prod-guard.ts")" = "$(body "$REPO_ROOT/templates/e2e/webdriverio/support/prod-guard.ts")" ]
+}
+
+@test "TS qa-config loaders (playwright, cypress, webdriverio): a malformed config blocks an unattended run instead of dropping the production patterns" {
+  for fw in playwright cypress webdriverio; do
+    run bash -c "node --experimental-strip-types '$LOADER_CHECK' '$REPO_ROOT/templates/e2e/$fw/support/qa-config-loader.ts' 2>/dev/null"
+    echo "$fw: $output"
+    [ "$status" -eq 0 ]
+    [ "$output" = "OK" ]
+  done
 }

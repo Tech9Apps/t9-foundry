@@ -64,14 +64,14 @@ if [ "${#PROD_PATTERNS[@]}" -gt 0 ]; then
     if [ -z "$pattern" ]; then continue; fi
     # Pre-validate regex — grep exits 2 on invalid pattern, 1 on no match, 0 on match
     grep_rc=0
-    echo "" | grep -qE -e "$pattern" 2>/dev/null || grep_rc=$?
+    echo "" | grep -qiE -e "$pattern" 2>/dev/null || grep_rc=$?
     if [ "$grep_rc" -eq 2 ]; then
       echo "WARNING: Skipping invalid production URL pattern: $pattern"
       echo "Fix productionProtection.prodUrlPatterns in qa-config.json to use valid regex."
       continue
     fi
-    if echo "$CONTENT" | grep -qE -e "$pattern"; then
-      MATCHED_LINE=$(echo "$CONTENT" | grep -nE -e "$pattern" | head -5)
+    if echo "$CONTENT" | grep -qiE -e "$pattern"; then
+      MATCHED_LINE=$(echo "$CONTENT" | grep -niE -e "$pattern" | head -5)
       echo "BLOCKED: File content contains a production URL matching pattern: $pattern"
       echo "Matched content:"
       echo "$MATCHED_LINE"
@@ -104,34 +104,57 @@ for pattern in "${PROD_ENV_PATTERNS[@]}"; do
   fi
 done
 
-# Warn about hardcoded URLs (not configured prod patterns) — don't block, just warn.
-# This heuristic always runs as an additional layer, even once prodUrlPatterns
-# is configured — a configured list only covers what's been typed in, and
-# should not disable the fallback check for everything else.
-if [ "$(jq -r 'if .productionProtection.blockOnSuspiciousUrls == false then "false" else "true" end' "$QA_CONFIG_PATH" 2>/dev/null || echo 'true')" = "true" ] \
-  && echo "$CONTENT" | grep -qE "https?://[a-z0-9.-]+\.(com|io|net|app|org)"; then
-  URLS=$(echo "$CONTENT" | grep -oE "https?://[a-z0-9.-]+\.(com|io|net|app|org)[^'\"[:space:]]*" | head -20 || true)
-  if [ -n "$URLS" ]; then
-    # Only consider bare non-localhost, non-staging URLs that aren't known-safe hosts
+# Hardcoded URLs that are not recognizably a test environment. Configured production patterns are matched against every normalized
+# spelling of each URL (case, userinfo, port, trailing dot, query/fragment, numeric IPs) and the heuristic reads the HOST's labels,
+# never the whole URL — one implementation, hooks/lib/url-guard.js, shared with the runtime guards' test table. This always runs
+# as an additional layer, even once prodUrlPatterns is configured: a configured list only covers what has been typed in.
+GUARD_MODE=$(resolve_guard_mode "$QA_CONFIG_PATH")
+HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Documentation files legitimately link to external sites; they only ever warn.
+case "$FILE_PATH" in
+  *.md|*.markdown|*.txt|*.rst) IS_DOC_FILE=1 ;;
+  *) IS_DOC_FILE=0 ;;
+esac
+
+unverified() { # <message> — enforce blocks (except documentation); otherwise only a warning
+  if [ "$GUARD_MODE" = "enforce" ] && [ "$IS_DOC_FILE" -eq 0 ]; then
+    echo "BLOCKED: $1"
+    echo "Guard mode is 'enforce' (QA_AUTONOMOUS=1 or productionProtection.mode), so the guard fails closed."
+    exit 2
+  fi
+  echo "WARNING: $1"
+}
+
+NODE_BIN=$(command -v node || true)
+if [ -z "$NODE_BIN" ]; then
+  unverified "node is not installed, so URLs in this file content cannot be checked (only the configured regexes above were applied)."
+else
+  RESULT=$(printf '%s' "$CONTENT" | "$NODE_BIN" "$HOOK_DIR/lib/url-guard.js" --config "$QA_CONFIG_PATH" --mode "$GUARD_MODE" 2>/dev/null || true)
+  if ! echo "$RESULT" | jq -e . >/dev/null 2>&1; then
+    unverified "the URL check failed to run, so URLs in this file content cannot be verified."
+  else
+    CONFIG_ERROR=$(echo "$RESULT" | jq -r '.configError // empty')
+    [ -z "$CONFIG_ERROR" ] || unverified "$CONFIG_ERROR — its production patterns cannot be applied. Fix qa-config.json."
+
     SUSPICIOUS=""
-    while IFS= read -r url; do
-      [ -n "$url" ] || continue
-      if echo "$url" | grep -qiE "(staging|test|dev|qa|localhost|127\.0\.0\.1|example\.com)"; then continue; fi
-      if url_is_exempt "$url" "$QA_CONFIG_PATH"; then continue; fi
+    while IFS=$'\t' read -r decision reason url detail; do
+      [ -n "$decision" ] || continue
+      if [ "$reason" = "PROD_PATTERN" ]; then
+        echo "BLOCKED: File content contains a production URL matching pattern: $detail"
+        echo "URL: $url"
+        echo "Tests and test configuration must never reference production environments."
+        echo "Use process.env.BASE_URL or qa-config.json's testEnvironmentBaseUrl instead."
+        exit 2
+      fi
       SUSPICIOUS="${SUSPICIOUS}${SUSPICIOUS:+ }${url}"
-    done <<< "$URLS"
+    done < <(echo "$RESULT" | jq -r '.findings[] | [.decision, .reason, .url, (.detail // "")] | @tsv')
 
     if [ -n "$SUSPICIOUS" ]; then
-      # Documentation files legitimately link to external sites; never block those.
-      case "$FILE_PATH" in
-        *.md|*.markdown|*.txt|*.rst) IS_DOC_FILE=1 ;;
-        *) IS_DOC_FILE=0 ;;
-      esac
-
-      if [ "$(resolve_guard_mode "$QA_CONFIG_PATH")" = "enforce" ] && [ "$IS_DOC_FILE" -eq 0 ]; then
+      if [ "$GUARD_MODE" = "enforce" ] && [ "$IS_DOC_FILE" -eq 0 ]; then
         # Unattended: a warning nobody reads is no guard. Block.
         echo "BLOCKED: File content contains hardcoded URLs that may be production: $SUSPICIOUS"
-        echo "Guard mode is 'enforce' (QA_AUTONOMOUS=1 or productionProtection.mode), so heuristic matches block."
+        echo "Guard mode is 'enforce' (QA_AUTONOMOUS=1 or productionProtection.mode), so anything not recognizably a test environment blocks."
         echo "Use process.env.BASE_URL instead of hardcoding. If a URL is safe, add a regex for it to productionProtection.allowedUrlPatterns in qa-config.json."
         exit 2
       fi

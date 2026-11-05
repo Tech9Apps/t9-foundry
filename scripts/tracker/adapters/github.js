@@ -1,8 +1,9 @@
 'use strict';
 
 const { TrackerError } = require('../lib/errors');
+const { checkBaseUrl } = require('../lib/base-url');
 const { request } = require('../lib/http');
-const { keyMarker, stepsAsMarkdown, extractAcceptanceCriteria } = require('../lib/contract');
+const { keyMarker, hasMarker, stepsAsMarkdown, extractAcceptanceCriteria } = require('../lib/contract');
 
 // GitHub Issues over the REST API (token auth) — works headless, unlike the `gh` CLI path.
 // settings = qa-config.json > ticketSource.github  ({ repo: "owner/repo", testLabelName, tokenEnvVar, apiBaseUrl })
@@ -16,7 +17,7 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
   const tokenVar = settings.tokenEnvVar || 'GITHUB_TOKEN';
   const token = env[tokenVar] || env.GITHUB_TOKEN || env.GH_TOKEN;
   if (!token) throw new TrackerError('CONFIG', `${tokenVar} (or GH_TOKEN) is not set`);
-  const base = (baseUrl || settings.apiBaseUrl || 'https://api.github.com').replace(/\/$/, '');
+  const base = checkBaseUrl(baseUrl || settings.apiBaseUrl || 'https://api.github.com', 'the GitHub API base URL');
   const testLabel = settings.testLabelName || 'test-case';
 
   const call = (method, path, body, what) => request({
@@ -71,13 +72,12 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
   // is read-after-write consistent. It is scoped by label (a test case carries the test label and
   // its parent id; a bug carries `bug`) so it stays cheap and finds items however old they are.
   async function findByKey(key, { op, input } = {}) {
-    const marker = keyMarker(key);
     const labels = op === 'create-test' ? [testLabel, String(input.parentId)] : op === 'create-bug' ? ['bug'] : [];
     for (let page = 1; page <= LIST_PAGES; page += 1) {
       const query = `state=all&sort=created&direction=desc&per_page=100&page=${page}${labels.length ? `&labels=${encodeURIComponent(labels.join(','))}` : ''}`;
       const { json } = await call('GET', `/repos/${repo}/issues?${query}`, undefined, 'look up idempotency key');
       const batch = json || [];
-      const hit = batch.find((i) => !i.pull_request && (i.body || '').includes(marker));
+      const hit = batch.find((i) => !i.pull_request && hasMarker(i.body, key));
       if (hit) return { id: String(hit.number), url: hit.html_url };
       if (batch.length < 100) break;
     }
@@ -109,9 +109,8 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
   }
 
   async function findCommentByKey(id, key) {
-    const marker = keyMarker(key);
     const { json } = await call('GET', `${issuePath(id)}/comments`, undefined, `look up idempotency key on GitHub issue ${id}`);
-    const hit = (json || []).find((c) => (c.body || '').includes(marker));
+    const hit = (json || []).find((c) => hasMarker(c.body, key));
     return hit ? { id: String(hit.id), url: hit.html_url } : null;
   }
 

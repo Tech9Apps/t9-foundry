@@ -1,8 +1,9 @@
 'use strict';
 
 const { TrackerError } = require('../lib/errors');
+const { checkBaseUrl } = require('../lib/base-url');
 const { request } = require('../lib/http');
-const { keyTag, keyMarker, stripHtml, escapeXml, extractAcceptanceCriteria } = require('../lib/contract');
+const { keyTag, keyMarker, hasMarker, hasTag, stripHtml, escapeXml, extractAcceptanceCriteria } = require('../lib/contract');
 
 // Azure DevOps work-item tracking, REST 7.1, PAT auth.
 // settings = qa-config.json > ticketSource.azure  ({ organization, project, host, tokenEnvVar })
@@ -19,7 +20,7 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
   const pat = env[tokenVar];
   if (!pat) throw new TrackerError('CONFIG', `${tokenVar} is not set`);
 
-  const host = (baseUrl || settings.host || 'https://dev.azure.com').replace(/\/$/, '');
+  const host = checkBaseUrl(baseUrl || settings.host || 'https://dev.azure.com', 'the Azure DevOps host');
   const root = `${host}/${encodeURIComponent(organization)}/${encodeURIComponent(project)}`;
   const wit = `${root}/_apis/wit`;
   const auth = `Basic ${Buffer.from(`:${pat}`).toString('base64')}`;
@@ -64,7 +65,7 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
     const { json } = await call('POST', `${wit}/wiql?$top=${limit}&api-version=7.1`, { query: wiql }, 'query Azure DevOps work items', {}, true);
     const ids = ((json && json.workItems) || []).map((w) => w.id).slice(0, limit);
     if (!ids.length) return [];
-    const { json: batch } = await call('POST', `${wit}/workitemsbatch?api-version=7.1`, { ids, fields: ['System.Id', 'System.Title', 'System.State'] }, 'load Azure DevOps work items', {}, true);
+    const { json: batch } = await call('POST', `${wit}/workitemsbatch?api-version=7.1`, { ids, fields: ['System.Id', 'System.Title', 'System.State', 'System.Tags'] }, 'load Azure DevOps work items', {}, true);
     return batch.value || [];
   }
 
@@ -83,7 +84,9 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
   }
 
   async function findByKey(key) {
-    const [hit] = await runQuery(`[System.Tags] CONTAINS '${wiqlString(keyTag(key))}'`, 1);
+    // A tag query can also return items whose tag merely CONTAINS ours (qa-key-bug-10 for qa-key-bug-1), so ask for several and keep the exact one.
+    const hits = await runQuery(`[System.Tags] CONTAINS '${wiqlString(keyTag(key))}'`, 20);
+    const hit = hits.find((wi) => hasTag(f(wi, 'System.Tags'), key));
     return hit ? { id: String(hit.id), url: htmlUrl(hit) } : null;
   }
 
@@ -128,9 +131,8 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
 
   // Comments (unlike work items) have no tag field, so the marker lives in the text.
   async function findCommentByKey(id, key) {
-    const marker = keyMarker(key);
     const { json } = await call('GET', `${workItemUrl(id)}/comments?api-version=7.1-preview.3`, undefined, `look up idempotency key on work item ${id}`);
-    const hit = ((json && json.comments) || []).find((c) => (c.text || '').includes(marker));
+    const hit = ((json && json.comments) || []).find((c) => hasMarker(c.text, key));
     return hit ? { id: String(hit.id) } : null;
   }
 

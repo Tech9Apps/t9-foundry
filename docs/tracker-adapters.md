@@ -49,7 +49,14 @@ Output is one JSON document on stdout — `{ "ok": true, "data": … }` or `{ "o
 Exit codes: **0** success · **1** the operation failed (read `error.code`) · **2** bad invocation (message on stderr).
 
 Credentials come from environment variables named in the config (`GITHUB_TOKEN`, `CLICKUP_TOKEN`, `AZURE_DEVOPS_PAT`,
-or `ticketSource.<type>.tokenEnvVar`) and are **never printed** — not in output, errors or URLs. stdin is only read
+or `ticketSource.<type>.tokenEnvVar`) and are **never printed** — not in output, errors or URLs. Upstream error text is
+scrubbed of the token (raw, and in the `Authorization` header forms) before it is quoted, so a tracker that echoes a
+request back cannot leak one.
+
+**Where a token may be sent.** The base URL (from `--base-url`, `$QA_TRACKER_BASE_URL` or the config) is checked before
+the first request: `https` only, with plain `http` allowed solely for loopback (`localhost`, `127.x.x.x`, `[::1]`,
+`*.localhost`, i.e. local mocks); no embedded `user:pass@`, no query string or fragment. **Redirects are never followed**
+— a `3xx` is a `CONFIG` error naming where it pointed — so the credentials in a request cannot be forwarded elsewhere. stdin is only read
 with `--stdin`, so an inherited pipe can never hang an unattended run.
 
 ## Posting test cases in bulk: `post-tests.js`
@@ -91,7 +98,7 @@ Every failure is normalized, so a caller never parses tracker-specific messages:
 - **Writes never retry automatically.** A POST that timed out may have succeeded; repeating it blindly is how
   duplicate tickets get created. A failed write returns `retriable: true` and leaves the decision to the caller.
 - **`idempotencyKey` makes a manual retry safe.** Creates — and comments, so a re-run doesn't post its summary twice —
-  embed a marker for the key (a body line, or a tag on Azure work items) and look for it first: a retry returns the original with `deduplicated: true`. This holds even when the
+  embed a marker for the key (a body line, or a tag on Azure work items) and look for it first: a retry returns the original with `deduplicated: true`. The match is on the **whole key**: `bug-login` is not found inside `bug-login-2`, so a key that is a prefix of another cannot adopt that other item. This holds even when the
   first attempt *succeeded but the response was lost* — covered by a test that injects exactly that failure.
 - **Multi-call creates can fail half-way** (ClickUp: task → checklist → steps). The error carries
   `details.partial.id`, and a retry **completes** the half-built item (`repaired: true`) rather than accepting it as
@@ -179,7 +186,7 @@ replays a dropped connection mid-write. Same flow for `github`, `clickup` and `a
 ## Testing
 
 ```bash
-node --test tests/tracker/*.test.js     # 280 tests in a few seconds, no network, no ports
+node --test tests/tracker/*.test.js     # 323 tests in a few seconds, no network, no ports
 bats tests/tracker.bats                 # the same, plus guardrails (no deps, no sockets, schemas valid)
 ```
 

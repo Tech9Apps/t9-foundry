@@ -6,6 +6,8 @@ You are given a ticket/task/work-item ID: **$ARGUMENTS**
 > "A ticket ID is required. Usage: `/post-tests <TICKET-ID>`"
 **Do not proceed.**
 
+**Check the id before using it anywhere.** It is typed by a person (or passed on from a ticket) and ends up in file paths and a shell command. It must match `^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$` — letters, digits, `_` and `-`, nothing else. If it does not (a space, quote, `/`, `.`, `;`, `$`, a leading `-`…), stop and tell the user: "That does not look like a ticket id (letters, digits, `-` and `_` only)." Do not "clean it up" and carry on.
+
 ## Prerequisites
 
 Read `qa-config.json > ticketSource.type` to determine the upload target. If `qa-config.json` is missing or `ticketSource.type` is unset, stop and tell the user to run `/init` or `/switch-project <profile>` first.

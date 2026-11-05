@@ -7,18 +7,19 @@
 //   node scripts/results/run.js [--framework playwright|cypress|pytest|rspec|jest|webdriverio|node]
 //                               [--test-dir D] [--config-file F] [--spec S]... [--headed]
 //                               [--out qa-results] [--cwd D] [--config qa-config.json]
-//                               [--timeout-ms N] [--quiet] [--dry-run]
+//                               [--timeout-ms N] [--quiet] [--allow-all-skipped] [--dry-run]
 //
 //   --framework / --test-dir / --config-file default to testFramework.* in qa-config.json
 //   --out       the report goes to <out>/raw (cleared first, so a stale report can never pass for this run);
 //               the normalized result to <out>/result.json
 //   --quiet     discard the runner's own console output (it goes to stderr otherwise)
+//   --allow-all-skipped   a run in which every test was skipped is exit 3 (nothing was verified); pass this if that is intended
 //   --dry-run   print the command and the report location; run nothing
 //
 // The runner's own output goes to stderr; stdout is ONE JSON document:
 //   { ok, exitCode, command, durationMs, resultPath, data?: <run result>, warnings?, error? }
 // Exit: 0 every test passed · 1 tests failed · 2 bad invocation · 3 no trustworthy report (the runner
-// could not start, timed out, wrote nothing, or its exit code contradicts its report).
+// could not start, timed out, wrote nothing, listed no tests, EVERY test was skipped, or its exit code contradicts its report).
 
 const fs = require('fs');
 const path = require('path');
@@ -29,6 +30,9 @@ const { findConfig } = require('../tracker/lib/connect');
 
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000;
 const usage = (message) => Object.assign(new Error(message), { isUsage: true });
+const MARKER = '.qa-results-raw';
+// Only reports this tool (or the frameworks it drives) writes. Used to refuse clearing a directory that holds anything else.
+const OURS = /^(results[-\w.]*\.(xml|json|tap)|\.qa-results-raw)$/;
 
 function parseArgs(argv) {
   const opts = { specs: [] };
@@ -39,16 +43,24 @@ function parseArgs(argv) {
       n += 1;
       return argv[n];
     };
+    // These values are handed to the test runner as arguments. A value that starts with "-" would be read by the runner as one of ITS options
+    // (a spec of "--import=./x.js" would make node load that file), so it is refused; write ./-name for a file that really starts with "-".
+    const runnerArg = () => {
+      const v = value();
+      if (v.startsWith('-')) throw usage(`${flag} "${v.slice(0, 40)}" starts with "-", so the test runner would read it as an option; write it as ./${v} if it really is a path`);
+      return v;
+    };
     if (flag === '--framework') opts.framework = value();
-    else if (flag === '--test-dir') opts.testDir = value();
-    else if (flag === '--config-file') opts.configFile = value();
-    else if (flag === '--spec') opts.specs.push(value());
+    else if (flag === '--test-dir') opts.testDir = runnerArg();
+    else if (flag === '--config-file') opts.configFile = runnerArg();
+    else if (flag === '--spec') opts.specs.push(runnerArg());
     else if (flag === '--headed') opts.headed = true;
     else if (flag === '--out') opts.out = value();
     else if (flag === '--cwd') opts.cwd = value();
     else if (flag === '--config') opts.config = value();
     else if (flag === '--timeout-ms') opts.timeoutMs = Number(value());
     else if (flag === '--quiet') opts.quiet = true;
+    else if (flag === '--allow-all-skipped') opts.allowAllSkipped = true;
     else if (flag === '--dry-run') opts.dryRun = true;
     else throw usage(`unknown option ${flag}`);
   }
@@ -84,7 +96,7 @@ async function main({ argv = process.argv.slice(2), env = process.env, stdout = 
   const out = (obj) => stdout.write(`${JSON.stringify(obj, null, 2)}\n`);
   try {
     if (!argv.length || argv[0] === '-h' || argv[0] === '--help') {
-      stderr.write('Usage: run.js [--framework F] [--test-dir D] [--config-file F] [--spec S]... [--headed] [--out DIR] [--cwd D] [--config P] [--timeout-ms N] [--quiet] [--dry-run]\n');
+      stderr.write('Usage: run.js [--framework F] [--test-dir D] [--config-file F] [--spec S]... [--headed] [--out DIR] [--cwd D] [--config P] [--timeout-ms N] [--quiet] [--allow-all-skipped] [--dry-run]\n');
       return argv.length ? 0 : 2;
     }
     const opts = parseArgs(argv);
@@ -105,8 +117,17 @@ async function main({ argv = process.argv.slice(2), env = process.env, stdout = 
       return 0;
     }
 
-    fs.rmSync(rawDir, { recursive: true, force: true }); // never let a previous run's report stand in for this one
+    // never let a previous run's report stand in for this one — but --out is caller-controlled, so only clear a directory that holds nothing
+    // except reports (ours or the frameworks'). Anything else in there is somebody's, and is not ours to delete.
+    if (fs.existsSync(rawDir)) {
+      const entries = fs.readdirSync(rawDir);
+      // the marker means this tool made the directory (whatever a framework chose to name its report files); without it, only reports qualify
+      const foreign = entries.includes(MARKER) ? [] : entries.filter((name) => !OURS.test(name));
+      if (foreign.length) throw usage(`refusing to clear ${rawDir}: it holds files that are not test reports (${foreign.slice(0, 3).join(', ')}). Choose another --out, or remove it yourself.`);
+    }
+    fs.rmSync(rawDir, { recursive: true, force: true });
     fs.mkdirSync(rawDir, { recursive: true });
+    fs.writeFileSync(path.join(rawDir, MARKER), 'created by scripts/results/run.js; it is cleared before every run\n');
 
     const started = now();
     const run = await runChild({ spawn, command: p.command, args: p.args, env: { ...env, ...p.env }, cwd: opts.cwd, timeoutMs: opts.timeoutMs || DEFAULT_TIMEOUT_MS, quiet: opts.quiet });
@@ -132,6 +153,10 @@ async function main({ argv = process.argv.slice(2), env = process.env, stdout = 
     }
     if (data.totals.total === 0) {
       return noReport(`${framework} exited ${run.code} and its report lists zero tests — the run executed nothing`, { exitCode: run.code });
+    }
+
+    if (data.totals.passed === 0 && data.totals.failed === 0 && !opts.allowAllSkipped) {
+      return noReport(`every one of the ${data.totals.total} test(s) was skipped, so nothing was verified — that is not a pass (pass --allow-all-skipped if it is intended)`, { exitCode: run.code });
     }
 
     const warnings = [];
