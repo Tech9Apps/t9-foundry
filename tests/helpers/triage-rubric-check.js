@@ -2,7 +2,7 @@
 // actually decides. If they drift, the model describes one system and the code runs another. This checks:
 //   - every rule row (id | class | confidence) matches RULE_TABLE in the code, in the same order, none missing
 //   - every class in the code is explained in the classes table
-//   - the default threshold the prose states is the code's
+//   - the default threshold the prose states is the code's, and so are the runner formats it says are trusted by default
 //   - every --flag the prose gives for classify.js / locators.js exists
 // Prints "OK" or the list of problems (exit 1). DRIFT_ROOT lets the tests point it at a corrupted copy.
 'use strict';
@@ -16,7 +16,7 @@ const bad = (m) => problems.push(m);
 
 const FILE = '.claude/memory/failure-triage-rules.md';
 const md = read(FILE);
-const { RULE_TABLE, RULES, CLASSES, DEFAULT_THRESHOLD } = require(path.join(ROOT, 'scripts/triage/classify.js'));
+const { RULE_TABLE, RULES, CLASSES, DEFAULT_THRESHOLD, DEFAULT_TRUSTED_FORMATS } = require(path.join(ROOT, 'scripts/triage/classify.js'));
 
 // ── rule rows ───────────────────────────────────────────────────────────────
 const rows = [...md.matchAll(/^\|\s*([A-Z]{3}-\d)\s*\|\s*([a-z-]+)\s*\|\s*([\d./\s]+?)\s*\|/gm)]
@@ -40,6 +40,12 @@ const stated = md.match(/default\s+\*\*(\d(?:\.\d+)?)\*\*/i);
 if (!stated) bad(`${FILE}: does not state the default threshold ("default **0.8**")`);
 else if (Number(stated[1]) !== DEFAULT_THRESHOLD) bad(`${FILE}: states a default threshold of ${stated[1]} but the code uses ${DEFAULT_THRESHOLD}`);
 
+// ── trusted formats ─────────────────────────────────────────────────────────
+const trusted = md.match(/trusted by default:\s*\*\*([^*]+)\*\*/i);
+if (!trusted) bad(`${FILE}: does not state which runner formats are trusted by default ("Formats trusted by default: **tap**")`);
+else if (trusted[1].split(/[,\s]+/).filter(Boolean).sort().join(',') !== [...DEFAULT_TRUSTED_FORMATS].sort().join(',')) bad(`${FILE}: says "${trusted[1]}" is trusted by default but the code trusts ${DEFAULT_TRUSTED_FORMATS.join(', ')}`);
+if (!/\bcap: unverified-format\b/.test(md)) bad(`${FILE}: no longer explains the \`cap: unverified-format\` marker`);
+
 // ── flags ───────────────────────────────────────────────────────────────────
 const flagsIn = (src) => new Set([...src.matchAll(/flag === '(--[a-z-]+)'/g)].map((m) => m[1]).concat(['--help']));
 const FLAGS = { 'classify.js': flagsIn(read('scripts/triage/classify.js')), 'locators.js': flagsIn(read('scripts/triage/locators.js')) };
@@ -55,7 +61,7 @@ md.split('\n').forEach((line, i) => {
     if (![...Object.values(FLAGS)].some((set) => set.has(f[1]))) bad(`${FILE}:${i + 1}: no triage script has an option ${f[1]}`);
   }
 });
-for (const need of ['--preflight', '--threshold']) if (!mentioned.has(need)) bad(`${FILE}: no longer tells the model about ${need}`);
+for (const need of ['--preflight', '--threshold', '--trusted-formats']) if (!mentioned.has(need)) bad(`${FILE}: no longer tells the model about ${need}`);
 
 if (problems.length) { console.log(`${problems.length} problem(s):\n  - ${problems.join('\n  - ')}`); process.exit(1); }
 console.log('OK');

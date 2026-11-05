@@ -16,7 +16,7 @@ const dir = fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), 'qa-plan
 // ── realistic reports, built by the real classifier from visible runs ────────────────────────────
 const E = (message, kind = 'failure', details = '') => ({ kind, message, details });
 const T = (name, status, error, extra = {}) => ({ name, status, ...(error ? { error } : {}), ...extra });
-const R = (...tests) => ({ format: 'junit', totals: {}, tests });
+const R = (...tests) => ({ format: 'tap', totals: {}, tests });
 const failing = (name, error, extra = {}) => T(name, 'failed', error, extra);
 const ids = (n) => ({ ticket: 'DEMO-101', caseId: `TC-00${n}` });
 const ASSERT = E('a second application of the code should be rejected');
@@ -40,10 +40,11 @@ async function plan(type, rep, { mock = MOCKS[type](), args = [], env, fetch, no
   return { code, err, json: out ? JSON.parse(out) : null, mock, cfg };
 }
 // file a bug the way the orchestrator would: with the fingerprint marker in the body
-async function seedBug(type, mock, token, { title = '[BUG] Second code accepted', close = false, inTitleOnly = false } = {}) {
+async function seedBug(type, mock, token, { title = '[BUG] Second code accepted', close = false, dismiss = false, inTitleOnly = false } = {}) {
   const adapter = createAdapter(type, { settings: mock.settings, env: { [mock.tokenEnv]: mock.token }, fetch: mock.fetch, baseUrl: mock.baseUrl, timeoutMs: 500, retryDelayMs: 0 });
   const created = await callAdapter(adapter, 'create-bug', { title: inTitleOnly ? `${title} ${token}` : title, body: `Steps: apply BREW10 twice.\n\nqa-harness-fingerprint: ${inTitleOnly ? 'none' : token}`, priority: 'High' });
-  if (close) mock.closeItem(created.id);
+  if (close) mock.closeItem(created.id);       // closed because it was fixed
+  if (dismiss) mock.dismissItem(created.id);   // closed because nobody will fix it (the tracker's native "won't fix")
   return created;
 }
 const stepOf = (r, n = 0) => r.json.data.actions[n];
@@ -88,13 +89,59 @@ for (const type of Object.keys(MOCKS)) {
       assert.equal(a.existing.id, live.id);
     });
 
+    test('only a DISMISSED report matches (closed as won\'t fix) → report it, file nothing, comment nothing: it is not a regression of a fix', async () => {
+      const mock = MOCKS[type]();
+      const rep = report(productBug());
+      const wont = await seedBug(type, mock, tokenOf(rep), { dismiss: true });
+      const before = mock.createdItems().length;
+      const r = await plan(type, rep, { mock });
+      const a = stepOf(r);
+      assert.equal(a.step, 'report-dismissed');
+      assert.equal(a.dismissedAs.id, wont.id);
+      assert.match(a.reason, new RegExp(`report #${wont.id} .* closed WITHOUT a fix`));
+      assert.equal(a.commentInput, undefined, 'no comment is prepared');
+      assert.equal(a.idempotencyKey, undefined, 'and no bug is prepared');
+      assert.equal(mock.createdItems().length, before);
+    });
+
+    test('a dismissed report AND a fixed one: the fix came back, so it IS a regression (of the fixed one)', async () => {
+      const mock = MOCKS[type]();
+      const rep = report(productBug());
+      await seedBug(type, mock, tokenOf(rep), { dismiss: true, title: '[BUG] Old, dismissed' });
+      const fixed = await seedBug(type, mock, tokenOf(rep), { close: true, title: '[BUG] Old, fixed' });
+      const a = stepOf(await plan(type, rep, { mock }));
+      assert.equal(a.step, 'file-regression');
+      assert.equal(a.regressionOf.id, fixed.id);
+    });
+
+    test('a dismissed report AND an open one: the open one gets the comment', async () => {
+      const mock = MOCKS[type]();
+      const rep = report(productBug());
+      await seedBug(type, mock, tokenOf(rep), { dismiss: true, title: '[BUG] Old, dismissed' });
+      const live = await seedBug(type, mock, tokenOf(rep), { title: '[BUG] Live' });
+      const a = stepOf(await plan(type, rep, { mock }));
+      assert.equal(a.step, 'comment-existing');
+      assert.equal(a.existing.id, live.id);
+    });
+
+    test('comment-existing comes with its input already written, named by the fingerprint token', async () => {
+      const mock = MOCKS[type]();
+      const rep = report(productBug());
+      await seedBug(type, mock, tokenOf(rep));
+      const commentsDir = path.join(dir, `comments-${type}-${Math.random().toString(36).slice(2)}`);
+      const a = stepOf(await plan(type, rep, { mock, args: ['--comments-dir', commentsDir] }));
+      assert.equal(a.commentInputFile, path.join(commentsDir, `${tokenOf(rep)}.json`));
+      assert.deepEqual(JSON.parse(fs.readFileSync(a.commentInputFile, 'utf8')), a.commentInput);
+      assertValidInput('comment', JSON.parse(fs.readFileSync(a.commentInputFile, 'utf8')));
+    });
+
     test('nothing matches → file-bug, with the marker to include and a run-scoped idempotency key', async () => {
       const rep = report(productBug());
       const a = stepOf(await plan(type, rep));
       assert.equal(a.step, 'file-bug');
       assert.equal(a.marker, `qa-harness-fingerprint: ${tokenOf(rep)}`);
       assert.match(a.idempotencyKey, /^[A-Za-z0-9._-]{1,80}$/);
-      assert.deepEqual(a.lookup, { open: [], closed: [] });
+      assert.deepEqual(a.lookup, { open: [], closed: [], dismissed: [] });
     });
 
     test('a search hit whose BODY lacks the token (it was only in the title) does not count', async () => {
@@ -105,6 +152,70 @@ for (const type of Object.keys(MOCKS)) {
     });
   });
 }
+
+describe('plan: comment input files and held verdicts', () => {
+  // a test whose key is free text from a test title: slash, pipe, space, apostrophe — it must never reach a file name or a shell
+  const NASTY = "login.spec.ts|user can't log in / see \"home\"";
+  const nastyBug = () => [R(failing(NASTY, ASSERT, { file: 'login.spec.ts' })), R(failing(NASTY, ASSERT, { file: 'login.spec.ts' })), R(failing(NASTY, ASSERT, { file: 'login.spec.ts' }))];
+  // no manual case id, so this is PRD-2 at 0.75: lower the threshold so it acts and reaches the comment path
+  const nastyReport = () => report(nastyBug(), { threshold: 0.7 });
+
+  test('the file is named by the fingerprint token, never by the test key (which can hold / | spaces and quotes)', async () => {
+    const mock = MOCKS.github();
+    const rep = nastyReport();
+    assert.equal(rep.verdicts[0].action, 'act');
+    assert.match(rep.verdicts[0].key, /['|\/ "]/, 'the key really is unsafe as a file name');
+    await seedBug('github', mock, tokenOf(rep));
+    const commentsDir = path.join(dir, 'comments-nasty');
+    const a = stepOf(await plan('github', rep, { mock, args: ['--comments-dir', commentsDir] }));
+    assert.equal(path.basename(a.commentInputFile), `${tokenOf(rep)}.json`);
+    assert.match(path.basename(a.commentInputFile), /^qafp[0-9a-f]{12}\.json$/);
+    assert.deepEqual(fs.readdirSync(commentsDir), [path.basename(a.commentInputFile)], 'nothing else was written');
+  });
+
+  test('without --out or --comments-dir nothing is written and no file is promised', async () => {
+    const mock = MOCKS.github();
+    const rep = report(productBug());
+    await seedBug('github', mock, tokenOf(rep));
+    const a = stepOf(await plan('github', rep, { mock }));
+    assert.equal(a.step, 'comment-existing');
+    assert.equal(a.commentInputFile, undefined);
+    assert.ok(a.commentInput, 'the input is still in the plan');
+  });
+
+  test('with --out, the inputs go to a comments/ directory next to the plan', async () => {
+    const mock = MOCKS.github();
+    const rep = report(productBug());
+    await seedBug('github', mock, tokenOf(rep));
+    const outDir = path.join(dir, 'out-next-to'); const out = path.join(outDir, 'plan.json');
+    const a = stepOf(await plan('github', rep, { mock, args: ['--out', out] }));
+    assert.equal(a.commentInputFile, path.join(outDir, 'comments', `${tokenOf(rep)}.json`));
+    assert.ok(fs.existsSync(a.commentInputFile));
+  });
+
+  test('a verdict held at propose because its runner format is unverified says so, and is never filed or commented on', async () => {
+    const mock = MOCKS.github();
+    const rep = report(productBug().map((r) => ({ ...r, format: 'playwright-json' })));
+    assert.equal(rep.verdicts[0].cap, 'unverified-format');
+    await seedBug('github', mock, tokenOf(rep));
+    const before = mock.createdItems().length;
+    const a = stepOf(await plan('github', rep, { mock }));
+    assert.equal(a.step, 'propose');
+    assert.match(a.reason, /held at propose: classification of this runner format has not been verified/);
+    assert.equal(a.commentInput, undefined);
+    assert.equal(mock.createdItems().length, before);
+  });
+  test('a held TEST-bug (a stale selector with DOM evidence, from an unverified format) is proposed with the same reason — nothing is offered as a fix to act on', async () => {
+    const stale = E("locator.click: Timeout 5000ms exceeded.\nCall log:\n  - waiting for getByTestId('add-btn')");
+    const evidence = { 'DEMO-101/TC-005': { locator: { target: 'add-btn', present: false, candidates: [{ testid: 'add-button', similarity: 0.8, tag: 'button', text: 'Add' }] } } };
+    const runs = [1, 2, 3].map(() => ({ format: 'playwright-json', totals: {}, tests: [failing('DEMO-101/TC-005: x', stale, ids(5))] }));
+    const rep = report(runs, { evidence });
+    assert.deepEqual([rep.verdicts[0].class, rep.verdicts[0].rule, rep.verdicts[0].cap], ['test-bug', 'TST-1', 'unverified-format']);
+    const a = stepOf(await plan('github', rep));
+    assert.equal(a.step, 'propose', 'not propose-test-fix: that step means "the cause is established"');
+    assert.match(a.reason, /held at propose: classification of this runner format has not been verified/);
+  });
+});
 
 describe('plan: behavior that does not depend on the tracker', () => {
   test('GitHub search lags writes: a fresh bug is NOT found (the documented limit), and is once the index catches up', async () => {
@@ -201,9 +312,10 @@ describe('plan: behavior that does not depend on the tracker', () => {
     const crash = E('TypeError: x is not a function', 'error', 'at run (/work/tests/a.test.js:3:3)');
     const tb = report([R(failing('t', crash)), R(failing('t', crash))]);
     const closedMock = MOCKS.github(); await seedBug('github', closedMock, tokenOf(pb), { close: true });
+    const dismissedMock = MOCKS.github(); await seedBug('github', dismissedMock, tokenOf(pb), { dismiss: true });
     const openMock = MOCKS.github(); await seedBug('github', openMock, tokenOf(pb));
     const seen = new Set();
-    for (const [rep, mock] of [[flaky], [env], [tb], [lowPb], [dup], [pb, closedMock], [pb, openMock]]) {
+    for (const [rep, mock] of [[flaky], [env], [tb], [lowPb], [dup], [pb, closedMock], [pb, dismissedMock], [pb, openMock]]) {
       for (const a of (await plan('github', rep, mock ? { mock } : {})).json.data.actions) seen.add(a.step);
     }
     for (const step of seen) assert.ok(STEPS.includes(step), `undocumented step: ${step}`);

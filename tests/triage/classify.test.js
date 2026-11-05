@@ -17,7 +17,8 @@ const err = (message, kind = 'failure', details = '') => ({ kind, message, detai
 const T = (name, status, error, extra = {}) => ({ name, status, ...(error ? { error } : {}), ...extra });
 const pass = (name, extra) => T(name, 'passed', undefined, extra);
 const fail = (name, error, extra) => T(name, 'failed', error, extra);
-const run = (...tests) => ({ format: 'junit', totals: {}, tests });
+// 'tap' is the one format trusted by default; the gate for every other format has its own tests below
+const run = (...tests) => ({ format: 'tap', totals: {}, tests });
 const only = (report) => { assert.equal(report.verdicts.length, 1, JSON.stringify(report.verdicts.map((v) => v.test.name))); return report.verdicts[0]; };
 const ok = (report) => { assert.ok(validateReport(report), JSON.stringify(validateReport.errors)); return report; };
 const triage = (runs, opts = {}) => ok(classify({ runs, ...opts }));

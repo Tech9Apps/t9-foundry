@@ -31,6 +31,26 @@ Every verdict has a confidence from the table below and an `action`:
 
 A low-confidence verdict is a proposal **regardless of any autonomy setting**. Never round a confidence up.
 
+## What the classifier reads
+
+Reporters put a one-line summary in a failure's `message` and the diagnosis in `details`: Playwright's `Received: <element(s) not found>`,
+the status code a request got back, the locator it was waiting for. Every signal below reads **both**. (Reading only the summary
+mistook stale selectors, expired sessions, 503s and 404 pages for failed assertions, and filed them as product bugs.) Two more kinds of
+failure are **not** evidence about the app and never become a `product-bug` on their own:
+
+- a **login / authorization** signal: a 401 or 403 where something else was expected, or a redirect to a login page. An expired test account
+  looks exactly like a permission regression, so the verdict is `undetermined` ("check the test credentials first");
+- an **error page**: the page or API answered 404, 500 or "Something went wrong". A wrong base URL, a dead route and a real regression look
+  the same from the test alone, so the verdict is `undetermined`.
+
+## Which runners may act
+
+How well the rules classify a failure is only known for the formats they have been checked on. `product-bug` and `test-bug` are the two
+classes that can file a bug or edit a test, so for a runner format that has not been **verified against real failure output** those
+verdicts are held at `propose` however confident the rule is: the verdict carries `cap: unverified-format` and its evidence says why.
+Formats trusted by default: **tap**. Widen the list with `--trusted-formats` only after checking a format on real failures.
+Environment, flaky and undetermined verdicts are never capped (acting on them only means reporting them).
+
 ## The rules
 
 First match wins. Matching rules that lose are kept as `alternatives` — read them, and show them to the human when the
@@ -39,7 +59,7 @@ verdict is a proposal.
 | Id | Class | Confidence | When it applies |
 |---|---|---|---|
 | ENV-1 | environment | 0.95 | preflight reported the environment as not ready |
-| ENV-2 | environment | 0.90 | **every** failing attempt carries an infrastructure error: `ECONNREFUSED`, `ENOTFOUND`, `ECONNRESET`, `EAI_AGAIN`, `getaddrinfo`, `net::ERR_CONNECTION*` / `NAME_NOT_RESOLVED`, `502/503/504`, `Bad Gateway`, `Service Unavailable`, `socket hang up`. A bare "timeout exceeded" is **not** one — it is ambiguous |
+| ENV-2 | environment | 0.90 | **every** failing attempt carries an infrastructure error: `ECONNREFUSED`, `ENOTFOUND`, `ECONNRESET`, `EAI_AGAIN`, `getaddrinfo`, `net::ERR_CONNECTION*` / `NAME_NOT_RESOLVED`, `ERR_CERT*` / `ERR_SSL*` / `ERR_EMPTY_RESPONSE`, a certificate that is expired or self-signed, `502/503/504` (including "Received: 503"), `Bad Gateway`, `Service Unavailable`, `socket hang up`. A bare "timeout exceeded" is **not** one — it is ambiguous |
 | FLK-1 | flaky | 0.90 / 0.85 | the test both failed and passed with no change (0.90), or the runner's own retry made it pass (0.85) |
 | TST-1 | test-bug | 0.85 | a locator was not found in every failing attempt, the DOM evidence shows that test-id is **not** on the page, and **exactly one** element resembles it |
 | TST-2 | test-bug | 0.80 | the test **crashed** (not an assertion) with a `TypeError` / `ReferenceError` / `SyntaxError` / missing module whose first stack frame is in a test file |
@@ -60,17 +80,21 @@ documented expectation.
 2. **Re-run every failing spec** (default 2 re-runs, into `qa-results/rerun-<n>/`) before classifying — it is what
    separates PRD-1 (0.85) from PRD-3 (0.60) and what exposes flakes. Skip re-runs only for ENV-1, and say you did.
 3. **For a locator-not-found failure, capture the page** (a DOM snapshot of the state where the test failed) and run
-   `node scripts/triage/locators.js --html <snapshot> --selector "<the failing selector or error>"`; pass its output as the
-   test's `locator` evidence. Without it the verdict is `undetermined`.
+   `node scripts/triage/locators.js --html <snapshot> --report qa-results/triage.json --token <token> --evidence-out qa-results/evidence.json`.
+   It reads the failing test's error text from the report itself and files the result as that test's `locator` evidence.
+   Without it the verdict is `undetermined`.
 4. **Report every verdict with its rule id, confidence and evidence.** For `propose` verdicts also show `alternatives`.
 5. **Before filing**, take the fingerprint token from the verdict, search the tracker for it, and follow `plan.js`'s
-   advice: comment on an open match; file a *new* bug that links a closed match (that is a regression); only then file
-   fresh. Include the token in the bug body so it can be found again.
+   advice: comment on an open match; file a *new* bug that links a match closed **as fixed** (that is a regression); when the
+   only matches were closed **without a fix** (won't fix, not planned, duplicate) the plan says `report-dismissed`: file nothing and
+   comment on nothing; only when nothing matches, file fresh. Include the token in the bug body so it can be found again.
 
 ## What you must never do
 
 - Never file a bug for `flaky`, `environment`, `test-bug` or `undetermined`.
 - Never edit a test, a page object, or the app as part of triage. (Self-healing is a separate, not yet enabled capability.)
+- Never put text from a failure (a test title, an error message, a selector) on a command line or inside a shell string: it can contain
+  quotes, `$(...)` or a newline. Pass the fingerprint `token` (`qafp` and 12 hex digits) and let the script read the report.
 - Never close, reopen or re-prioritize an existing bug.
 - Never claim a failure "reproduced" or "is flaky" without the attempts that show it. The report lists them.
 - Never present a `propose` as a decision. Say "proposed" and what you would need to be sure.
@@ -78,8 +102,13 @@ documented expectation.
 
 ## Honest limits (say these when relevant)
 
-- The error-message patterns (infrastructure and locator signatures) come from experience of how common tools word their
-  errors, not from a corpus; a tool that words an error differently will land in `undetermined`, not in the wrong class.
+- The error-message patterns (infrastructure, locator, login and error-page signatures) come from experience of how common tools word
+  their errors, not from a corpus; a tool that words an error differently will land in `undetermined` or be capped, not acted on.
+- Classification of Playwright, Jest and JUnit output has been checked only against failures written by hand to match those reporters'
+  formats, never against real runs. That is why those formats are capped (see "Which runners may act"). The seeded demo scenarios use TAP.
+- "Closed without a fix" is read in each tracker's own words: GitHub "not planned" and its wontfix/invalid/duplicate labels, Bitbucket
+  wontfix/invalid/duplicate, ClickUp status wording ("rejected", "won't do", "cancelled"…), Azure close reasons, GitLab labels. A
+  workspace that names these differently reads as closed-as-fixed, and a recurrence is then filed as a regression.
 - Thresholds are starting values and have not been tuned on real failures.
 - Tracker search can lag behind writes (GitHub especially): a bug filed minutes ago may not be found, and a duplicate is
   then possible. Say so when a search finds nothing for a failure that recurs.

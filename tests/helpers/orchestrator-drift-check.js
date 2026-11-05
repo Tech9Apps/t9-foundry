@@ -5,7 +5,10 @@
 //   - the re-run default/range the prose states match orchestrate.js; the files it says are written, are
 //   - the fingerprint marker the prose says to include is the one plan.js emits, and file-bug.md knows about it
 //   - every file the prose points at exists
-//   - the agent cannot edit files (no Edit/NotebookEdit tool), can delegate (Agent), and points at the command
+//   - the agent has no Edit/Write/NotebookEdit tool, can delegate (Agent), points at the command, and does not claim a guarantee it
+//     does not have (it has Bash, so "cannot edit files" would be false: the prose must say it is a rule, not a sandbox)
+//   - nothing free-text from a failure is ever a file name or a command-line value: the prose uses the fingerprint <token>, never <key>;
+//     the comment input and the evidence file are written BY SCRIPTS (the prose points at commentInputFile and --evidence-out)
 // Prints "OK" or the list of problems (exit 1). DRIFT_ROOT lets the tests point it at a corrupted copy.
 'use strict';
 const fs = require('fs');
@@ -86,13 +89,21 @@ for (const f of ['.claude/memory/failure-triage-rules.md', '.claude/memory/ai-us
 }
 for (const f of ['.claude/memory/failure-triage-rules.md', '.claude/skills/run-tests.md', '.claude/agents/Bug-reporter.md']) if (!cmd.includes(f.replace(/^\.claude\/agents\//, '').replace(/\.md$/, '')) && !cmd.includes(f)) bad(`${CMD}: no longer points at ${f}`);
 if (!/\*\*Bug-reporter\*\* agent/.test(cmd)) bad(`${CMD}: no longer delegates filing to the Bug-reporter agent`);
+if (/<key>/.test(cmd)) bad(`${CMD}: uses <key> as a file name or argument — a test key is free text (a slash, a pipe, a quote); use the fingerprint <token>`);
+if (!/--evidence-out/.test(cmd)) bad(`${CMD}: no longer has the locators.js script write the evidence file (--evidence-out)`);
+if (!/commentInputFile/.test(cmd)) bad(`${CMD}: no longer points at the plan's commentInputFile (the plan writes the comment input; the agent has no Write tool)`);
+if (!orch.includes("'comments'")) bad('orchestrate.js no longer writes the comments/ directory the prose reads');
+if (!read('scripts/triage/plan.js').includes('commentInputFile')) bad('scripts/triage/plan.js no longer emits commentInputFile, which the prose tells the agent to use');
 
 // ── the agent ────────────────────────────────────────────────────────────────
 const fm = (agent.match(/^---\n([\s\S]*?)\n---/) || [])[1] || '';
 const tools = ((fm.match(/^tools:\s*(.*)$/m) || [])[1] || '').split(',').map((t) => t.trim());
 if (!fm) bad(`${AGENT}: no frontmatter`);
 if ((fm.match(/^name:\s*(.*)$/m) || [])[1] !== 'QA-run-orchestrator') bad(`${AGENT}: name must be QA-run-orchestrator`);
-for (const forbidden of ['Edit', 'NotebookEdit']) if (tools.includes(forbidden)) bad(`${AGENT}: has the ${forbidden} tool — the orchestrator must not be able to edit files (self-heal is not enabled)`);
+for (const forbidden of ['Edit', 'Write', 'NotebookEdit']) if (tools.includes(forbidden)) bad(`${AGENT}: has the ${forbidden} tool — the scripts write every file this pipeline needs, and self-heal is not enabled`);
+if (/\bcannot edit files\b/i.test(agent)) bad(`${AGENT}: claims the agent "cannot edit files", but it has Bash, which can — say it is a rule it keeps, not a sandbox`);
+if (!/not a sandbox/i.test(agent)) bad(`${AGENT}: no longer says plainly that the no-editing rule is a rule, not a sandbox (the agent has Bash)`);
+if (!/never `git commit` or `git push`/.test(agent)) bad(`${AGENT}: no longer tells the agent never to commit or push`);
 if (!tools.includes('Agent')) bad(`${AGENT}: needs the Agent tool to hand bugs to Bug-reporter`);
 if (!tools.includes('Bash')) bad(`${AGENT}: needs Bash to run the scripts`);
 if (!agent.includes('.claude/commands/run-and-triage.md')) bad(`${AGENT}: does not point at .claude/commands/run-and-triage.md`);

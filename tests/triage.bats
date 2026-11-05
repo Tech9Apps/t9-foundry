@@ -25,6 +25,12 @@ node_tests() { cd "$REPO_ROOT" && env -u NODE_TEST_CONTEXT node --test --test-re
   [[ "$output" =~ "# fail 0" ]]
 }
 
+@test "failures as real reporters emit them (through the real parser) are not misfiled as product bugs, and unverified runner formats cannot act" {
+  run node_tests realworld.test.js
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "# fail 0" ]]
+}
+
 @test "fingerprints, text signals and locator evidence pass their tests" {
   for f in fingerprint.test.js text.test.js locators.test.js; do
     run node_tests "$f"
@@ -110,14 +116,12 @@ node_tests() { cd "$REPO_ROOT" && env -u NODE_TEST_CONTEXT node --test --test-re
 }
 
 @test "drift: rules listed in a different order than the code applies them is caught (order is precedence)" {
-  python3 - "$TEST_TMP/.claude/memory/failure-triage-rules.md" <<'PY'
-import sys
-p = sys.argv[1]
-lines = open(p).read().split('\n')
-i = next(n for n, l in enumerate(lines) if l.startswith('| ENV-1 '))
-lines[i], lines[i + 1] = lines[i + 1], lines[i]
-open(p, 'w').write('\n'.join(lines))
-PY
+  # swap the ENV-1 and ENV-2 rows (Node, not Python: this suite needs no interpreter beyond the one it already requires)
+  node -e '
+    const fs = require("fs"); const p = process.argv[1]; const lines = fs.readFileSync(p, "utf8").split("\n");
+    const i = lines.findIndex((l) => l.startsWith("| ENV-1 "));
+    [lines[i], lines[i + 1]] = [lines[i + 1], lines[i]];
+    fs.writeFileSync(p, lines.join("\n"));' "$TEST_TMP/.claude/memory/failure-triage-rules.md"
   run env DRIFT_ROOT="$TEST_TMP" node "$CHECK"
   [ "$status" -eq 1 ]
   [[ "$output" =~ "order is precedence" ]]
@@ -128,6 +132,20 @@ PY
   run env DRIFT_ROOT="$TEST_TMP" node "$CHECK"
   [ "$status" -eq 1 ]
   [[ "$output" =~ "states a default threshold of 0.7" ]]
+}
+
+@test "drift: a different trusted-by-default format in the rubric is caught" {
+  corrupt "$TEST_TMP/.claude/memory/failure-triage-rules.md" "trusted by default: **tap**" "trusted by default: **tap, junit**"
+  run env DRIFT_ROOT="$TEST_TMP" node "$CHECK"
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "is trusted by default but the code trusts tap" ]]
+}
+
+@test "drift: a rubric that stops explaining the cap marker is caught" {
+  corrupt "$TEST_TMP/.claude/memory/failure-triage-rules.md" "cap: unverified-format" "capped"
+  run env DRIFT_ROOT="$TEST_TMP" node "$CHECK"
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "no longer explains the" ]]
 }
 
 @test "drift: a flag the rubric tells the model to pass but the script lacks is caught" {
@@ -219,11 +237,77 @@ orch_check() { run env DRIFT_ROOT="$TEST_TMP" node "$ORCH_CHECK"; }
   [[ "$output" =~ "no longer delegates filing to the Bug-reporter agent" ]]
 }
 
+# edit a copy of the prose with node (sed would need to escape every backtick, $ and quote in the text being corrupted)
+corrupt() { # <file> <from> <to>
+  node -e '
+    const fs = require("fs"); const [f, from, to] = process.argv.slice(1);
+    const s = fs.readFileSync(f, "utf8"); if (!s.includes(from)) { console.error("test setup: text not found: " + from); process.exit(9); }
+    fs.writeFileSync(f, s.split(from).join(to));' "$1" "$2" "$3"
+}
+
 @test "orchestrator drift: giving the agent an Edit tool (it must not be able to change files) is caught" {
-  sed -i.bak 's#^tools: Read, Write, Bash#tools: Read, Write, Edit, Bash#' "$(AGENT_COPY)"
+  corrupt "$(AGENT_COPY)" "tools: Read, Bash" "tools: Read, Edit, Bash"
   orch_check
   [ "$status" -eq 1 ]
   [[ "$output" =~ "has the Edit tool" ]]
+}
+
+@test "orchestrator drift: giving the agent a Write tool back is caught (the scripts write every file the pipeline needs)" {
+  corrupt "$(AGENT_COPY)" "tools: Read, Bash" "tools: Read, Write, Bash"
+  orch_check
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "has the Write tool" ]]
+}
+
+@test "orchestrator drift: claiming the agent \"cannot edit files\" (it has Bash, so that is false) is caught" {
+  corrupt "$(AGENT_COPY)" "You do not edit project files." "You cannot edit files."
+  orch_check
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "claims the agent \"cannot edit files\"" ]]
+}
+
+@test "orchestrator drift: no longer saying the no-editing rule is a rule, not a sandbox, is caught" {
+  corrupt "$(AGENT_COPY)" "this is a rule you keep, not a sandbox" "this is guaranteed"
+  orch_check
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "no longer says plainly that the no-editing rule is a rule, not a sandbox" ]]
+}
+
+@test "orchestrator drift: no longer telling the agent never to commit or push is caught" {
+  corrupt "$(AGENT_COPY)" 'never `git commit` or `git push`' "be careful with git"
+  orch_check
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "no longer tells the agent never to commit or push" ]]
+}
+
+@test "orchestrator drift: a test <key> used as a file name in the command (free text: slash, pipe, quote) is caught" {
+  corrupt "$(CMD_COPY)" "qa-results/snapshots/<token>.html --report" "qa-results/snapshots/<key>.html --report"
+  orch_check
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "uses <key> as a file name or argument" ]]
+}
+
+@test "orchestrator drift: the agent going back to writing the evidence file itself (no --evidence-out) is caught" {
+  corrupt "$(CMD_COPY)" "--evidence-out" "--evidence-file"
+  orch_check
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "no longer has the locators.js script write the evidence file" ]]
+}
+
+@test "orchestrator drift: the command no longer pointing at the plan's commentInputFile is caught" {
+  corrupt "$(CMD_COPY)" "commentInputFile" "commentInput"
+  orch_check
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "no longer points at the plan's commentInputFile" ]]
+}
+
+@test "orchestrator drift: a plan step the table does not explain (the new report-dismissed) is caught" {
+  node -e '
+    const fs = require("fs"); const f = process.argv[1]; const lines = fs.readFileSync(f, "utf8").split("\n");
+    fs.writeFileSync(f, lines.filter((l) => !l.startsWith("| `report-dismissed`")).join("\n"));' "$(CMD_COPY)"
+  orch_check
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "plan.js can produce the step \"report-dismissed\"" ]]
 }
 
 @test "orchestrator drift: an agent that cannot delegate to Bug-reporter is caught" {
