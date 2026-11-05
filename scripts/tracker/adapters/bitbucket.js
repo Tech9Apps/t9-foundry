@@ -1,8 +1,9 @@
 'use strict';
 
 const { TrackerError } = require('../lib/errors');
+const { checkBaseUrl } = require('../lib/base-url');
 const { request } = require('../lib/http');
-const { keyMarker, stepsAsMarkdown, extractAcceptanceCriteria } = require('../lib/contract');
+const { keyMarker, hasMarker, stepsAsMarkdown, extractAcceptanceCriteria } = require('../lib/contract');
 
 // Bitbucket Cloud issue tracker, REST 2.0, app-password auth.
 // settings = qa-config.json > ticketSource.bitbucket  ({ workspace, repo, username, tokenEnvVar })
@@ -22,7 +23,7 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
   const tokenVar = settings.tokenEnvVar || 'BITBUCKET_TOKEN';
   const secret = env[tokenVar];
   if (!secret) throw new TrackerError('CONFIG', `${tokenVar} is not set`);
-  const api = (baseUrl || 'https://api.bitbucket.org/2.0').replace(/\/$/, '');
+  const api = checkBaseUrl(baseUrl || 'https://api.bitbucket.org/2.0', 'the Bitbucket API base URL');
   const issues = `/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(repo)}/issues`;
   const auth = `Basic ${Buffer.from(`${username}:${secret}`).toString('base64')}`;
 
@@ -70,13 +71,12 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
 
   // Lists newest-first by kind (a plain filtered listing, not text search) and checks the marker.
   async function findByKey(key, { op, input } = {}) {
-    const marker = keyMarker(key);
     let q = op === 'create-test' ? `kind = "task" AND title ~ "${bbql(input.tcId)}:"` : 'kind = "bug"';
     if (op !== 'create-test' && op !== 'create-bug') q = 'kind != "none"';
     for (let page = 1; page <= LIST_PAGES; page += 1) {
       const { json } = await call('GET', `${issues}?q=${encodeURIComponent(q)}&sort=-created_on&pagelen=100&page=${page}`, undefined, 'look up idempotency key');
       const batch = (json && json.values) || [];
-      const hit = batch.find((i) => ((i.content && i.content.raw) || '').includes(marker));
+      const hit = batch.find((i) => hasMarker(i.content && i.content.raw, key));
       if (hit) return { id: String(hit.id), url: href(hit) };
       if (batch.length < 100) break;
     }
@@ -107,9 +107,8 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
   }
 
   async function findCommentByKey(id, key) {
-    const marker = keyMarker(key);
     const { json } = await call('GET', `${issuePath(id)}/comments?pagelen=100`, undefined, `look up idempotency key on Bitbucket issue ${id}`);
-    const hit = ((json && json.values) || []).find((c) => !c.deleted && ((c.content && c.content.raw) || '').includes(marker));
+    const hit = ((json && json.values) || []).find((c) => !c.deleted && hasMarker(c.content && c.content.raw, key));
     return hit ? { id: String(hit.id) } : null;
   }
 

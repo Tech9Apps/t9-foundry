@@ -1,8 +1,9 @@
 'use strict';
 
 const { TrackerError } = require('../lib/errors');
+const { checkBaseUrl } = require('../lib/base-url');
 const { request } = require('../lib/http');
-const { keyMarker, extractAcceptanceCriteria } = require('../lib/contract');
+const { keyMarker, hasMarker, extractAcceptanceCriteria } = require('../lib/contract');
 
 // ClickUp v2 REST API.
 // settings = qa-config.json > ticketSource.clickup  ({ listId, tokenEnvVar, assignToSelf, apiBaseUrl })
@@ -15,7 +16,7 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
   const tokenVar = settings.tokenEnvVar || 'CLICKUP_TOKEN';
   const token = env[tokenVar];
   if (!token) throw new TrackerError('CONFIG', `${tokenVar} is not set`);
-  const base = (baseUrl || settings.apiBaseUrl || 'https://api.clickup.com/api/v2').replace(/\/$/, '');
+  const base = checkBaseUrl(baseUrl || settings.apiBaseUrl || 'https://api.clickup.com/api/v2', 'the ClickUp API base URL');
 
   const call = (method, path, body, what) => request({
     fetch, method, url: `${base}${path}`, body, timeoutMs, retryDelayMs, what,
@@ -72,8 +73,7 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
   }
 
   async function findByKey(key) {
-    const marker = keyMarker(key);
-    const hit = (await listTasks()).find((t) => (t.description || t.text_content || '').includes(marker));
+    const hit = (await listTasks()).find((t) => hasMarker(t.description || t.text_content, key));
     return hit ? { id: String(hit.id), url: hit.url } : null;
   }
 
@@ -138,9 +138,8 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
   }
 
   async function findCommentByKey(id, key) {
-    const marker = keyMarker(key);
     const { json } = await call('GET', `${taskPath(id)}/comment`, undefined, `look up idempotency key on ClickUp task ${id}`);
-    const hit = ((json && json.comments) || []).find((c) => (c.comment_text || '').includes(marker));
+    const hit = ((json && json.comments) || []).find((c) => hasMarker(c.comment_text, key));
     return hit ? { id: String(hit.id) } : null;
   }
 
