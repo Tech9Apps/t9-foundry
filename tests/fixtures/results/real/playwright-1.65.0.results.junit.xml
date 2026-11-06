@@ -1,0 +1,284 @@
+<testsuites id="" name="" tests="23" failures="5" skipped="0" errors="4" time="9.021714">
+<testsuite name="api.spec.js" timestamp="2026-11-06T16:58:06.257Z" hostname="" tests="20" failures="4" skipped="0" time="1.638" errors="3">
+<testcase name="DEMO-9/TC-900: filler 0" classname="api.spec.js" time="0.022">
+</testcase>
+<testcase name="DEMO-9/TC-901: filler 1" classname="api.spec.js" time="0.003">
+</testcase>
+<testcase name="DEMO-9/TC-902: filler 2" classname="api.spec.js" time="0.003">
+</testcase>
+<testcase name="DEMO-9/TC-903: filler 3" classname="api.spec.js" time="0.003">
+</testcase>
+<testcase name="DEMO-9/TC-904: filler 4" classname="api.spec.js" time="0.001">
+</testcase>
+<testcase name="DEMO-9/TC-905: filler 5" classname="api.spec.js" time="0.001">
+</testcase>
+<testcase name="DEMO-9/TC-906: filler 6" classname="api.spec.js" time="0.002">
+</testcase>
+<testcase name="DEMO-9/TC-907: filler 7" classname="api.spec.js" time="0.001">
+</testcase>
+<testcase name="DEMO-9/TC-908: filler 8" classname="api.spec.js" time="0.002">
+</testcase>
+<testcase name="DEMO-9/TC-909: filler 9" classname="api.spec.js" time="0.002">
+</testcase>
+<testcase name="DEMO-9/TC-910: filler 10" classname="api.spec.js" time="0.001">
+</testcase>
+<testcase name="DEMO-9/TC-911: filler 11" classname="api.spec.js" time="0.001">
+</testcase>
+<testcase name="DEMO-1/TC-001: health is ok" classname="api.spec.js" time="0.001">
+</testcase>
+<testcase name="DEMO-1/TC-002: the cart total is 11" classname="api.spec.js" time="0.002">
+<system-out>
+<![CDATA[
+[[ATTACHMENT|/work/demo-app/test-results/api-DEMO-1-TC-002-the-cart-total-is-11/error-context.md]]
+]]>
+</system-out>
+<failure message="expect(received).toBe(expected) // Object.is equality" type="expect.toBe">
+<![CDATA[  api.spec.js:4:1 › DEMO-1/TC-002: the cart total is 11 ────────────────────────────────────────────
+
+    Error: expect(received).toBe(expected) // Object.is equality
+
+    Expected: 11
+    Received: 10
+
+      2 | for (let i = 0; i < 12; i += 1) test('DEMO-9/TC-9' + String(i).padStart(2, '0') + ': filler ' + i, async ({ request }) => { expect((await request.get('/health')).status()).toBe(200); });
+      3 | test('DEMO-1/TC-001: health is ok', async ({ request }) => { expect((await request.get('/health')).status()).toBe(200); });
+    > 4 | test('DEMO-1/TC-002: the cart total is 11', async ({ request }) => { const r = await (await request.get('/api/total')).json(); expect(r.total).toBe(11); });
+        |                                                                                                                                                ^
+      5 | test('DEMO-1/TC-003: the reports service answers 200', async ({ request }) => { expect((await request.get('/api/unavailable')).status()).toBe(200); });
+      6 | test('DEMO-1/TC-004: the secure endpoint is reachable', async ({ request }) => { expect((await request.get('/api/secure')).status()).toBe(200); });
+      7 | test('DEMO-1/TC-005: the archive page exists', async ({ request }) => { expect((await request.get('/api/missing')).status()).toBe(200); });
+        at /work/demo-app/tests/pw/api.spec.js:4:144
+
+    Error Context: ../../test-results/api-DEMO-1-TC-002-the-cart-total-is-11/error-context.md
+]]>
+</failure>
+</testcase>
+<testcase name="DEMO-1/TC-003: the reports service answers 200" classname="api.spec.js" time="0.019">
+<system-out>
+<![CDATA[
+[[ATTACHMENT|/work/demo-app/test-results/api-DEMO-1-TC-003-the-reports-service-answers-200/error-context.md]]
+]]>
+</system-out>
+<failure message="expect(received).toBe(expected) // Object.is equality" type="expect.toBe">
+<![CDATA[  api.spec.js:5:1 › DEMO-1/TC-003: the reports service answers 200 ─────────────────────────────────
+
+    Error: expect(received).toBe(expected) // Object.is equality
+
+    Expected: 200
+    Received: 503
+
+      3 | test('DEMO-1/TC-001: health is ok', async ({ request }) => { expect((await request.get('/health')).status()).toBe(200); });
+      4 | test('DEMO-1/TC-002: the cart total is 11', async ({ request }) => { const r = await (await request.get('/api/total')).json(); expect(r.total).toBe(11); });
+    > 5 | test('DEMO-1/TC-003: the reports service answers 200', async ({ request }) => { expect((await request.get('/api/unavailable')).status()).toBe(200); });
+        |                                                                                                                                          ^
+      6 | test('DEMO-1/TC-004: the secure endpoint is reachable', async ({ request }) => { expect((await request.get('/api/secure')).status()).toBe(200); });
+      7 | test('DEMO-1/TC-005: the archive page exists', async ({ request }) => { expect((await request.get('/api/missing')).status()).toBe(200); });
+      8 | test('DEMO-1/TC-006: the payment service is reachable', async ({ request }) => { expect((await request.get('http://127.0.0.1:9/pay')).status()).toBe(200); });
+        at /work/demo-app/tests/pw/api.spec.js:5:138
+
+    Error Context: ../../test-results/api-DEMO-1-TC-003-the-reports-service-answers-200/error-context.md
+]]>
+</failure>
+</testcase>
+<testcase name="DEMO-1/TC-004: the secure endpoint is reachable" classname="api.spec.js" time="0.018">
+<system-out>
+<![CDATA[
+[[ATTACHMENT|/work/demo-app/test-results/api-DEMO-1-TC-004-the-secure-endpoint-is-reachable/error-context.md]]
+]]>
+</system-out>
+<failure message="expect(received).toBe(expected) // Object.is equality" type="expect.toBe">
+<![CDATA[  api.spec.js:6:1 › DEMO-1/TC-004: the secure endpoint is reachable ────────────────────────────────
+
+    Error: expect(received).toBe(expected) // Object.is equality
+
+    Expected: 200
+    Received: 401
+
+      4 | test('DEMO-1/TC-002: the cart total is 11', async ({ request }) => { const r = await (await request.get('/api/total')).json(); expect(r.total).toBe(11); });
+      5 | test('DEMO-1/TC-003: the reports service answers 200', async ({ request }) => { expect((await request.get('/api/unavailable')).status()).toBe(200); });
+    > 6 | test('DEMO-1/TC-004: the secure endpoint is reachable', async ({ request }) => { expect((await request.get('/api/secure')).status()).toBe(200); });
+        |                                                                                                                                      ^
+      7 | test('DEMO-1/TC-005: the archive page exists', async ({ request }) => { expect((await request.get('/api/missing')).status()).toBe(200); });
+      8 | test('DEMO-1/TC-006: the payment service is reachable', async ({ request }) => { expect((await request.get('http://127.0.0.1:9/pay')).status()).toBe(200); });
+      9 | test('DEMO-1/TC-007: the helper formats a price', async () => { const fmt = undefined; expect(fmt(5)).toBe('$5.00'); });
+        at /work/demo-app/tests/pw/api.spec.js:6:134
+
+    Error Context: ../../test-results/api-DEMO-1-TC-004-the-secure-endpoint-is-reachable/error-context.md
+]]>
+</failure>
+</testcase>
+<testcase name="DEMO-1/TC-005: the archive page exists" classname="api.spec.js" time="0.019">
+<system-out>
+<![CDATA[
+[[ATTACHMENT|/work/demo-app/test-results/api-DEMO-1-TC-005-the-archive-page-exists/error-context.md]]
+]]>
+</system-out>
+<failure message="expect(received).toBe(expected) // Object.is equality" type="expect.toBe">
+<![CDATA[  api.spec.js:7:1 › DEMO-1/TC-005: the archive page exists ─────────────────────────────────────────
+
+    Error: expect(received).toBe(expected) // Object.is equality
+
+    Expected: 200
+    Received: 404
+
+       5 | test('DEMO-1/TC-003: the reports service answers 200', async ({ request }) => { expect((await request.get('/api/unavailable')).status()).toBe(200); });
+       6 | test('DEMO-1/TC-004: the secure endpoint is reachable', async ({ request }) => { expect((await request.get('/api/secure')).status()).toBe(200); });
+    >  7 | test('DEMO-1/TC-005: the archive page exists', async ({ request }) => { expect((await request.get('/api/missing')).status()).toBe(200); });
+         |                                                                                                                              ^
+       8 | test('DEMO-1/TC-006: the payment service is reachable', async ({ request }) => { expect((await request.get('http://127.0.0.1:9/pay')).status()).toBe(200); });
+       9 | test('DEMO-1/TC-007: the helper formats a price', async () => { const fmt = undefined; expect(fmt(5)).toBe('$5.00'); });
+      10 | test('DEMO-1/TC-008: the slow report finishes', async ({ request }) => { expect((await request.get('/api/slow', { timeout: 1500 })).status()).toBe(200); });
+        at /work/demo-app/tests/pw/api.spec.js:7:126
+
+    Error Context: ../../test-results/api-DEMO-1-TC-005-the-archive-page-exists/error-context.md
+]]>
+</failure>
+</testcase>
+<testcase name="DEMO-1/TC-006: the payment service is reachable" classname="api.spec.js" time="0.017">
+<system-out>
+<![CDATA[
+[[ATTACHMENT|/work/demo-app/test-results/api-DEMO-1-TC-006-the-payment-service-is-reachable/error-context.md]]
+]]>
+</system-out>
+<error message="apiRequestContext.get: connect ECONNREFUSED 127.0.0.1:9" type="Error">
+<![CDATA[  api.spec.js:8:1 › DEMO-1/TC-006: the payment service is reachable ────────────────────────────────
+
+    Error: apiRequestContext.get: connect ECONNREFUSED 127.0.0.1:9
+    Call log:
+      - → GET http://127.0.0.1:9/pay
+        - user-agent: Playwright/1.65.0 (arm64; macOS 27.0) node/22.17
+        - accept: */*
+        - accept-encoding: gzip,deflate,br
+
+
+       6 | test('DEMO-1/TC-004: the secure endpoint is reachable', async ({ request }) => { expect((await request.get('/api/secure')).status()).toBe(200); });
+       7 | test('DEMO-1/TC-005: the archive page exists', async ({ request }) => { expect((await request.get('/api/missing')).status()).toBe(200); });
+    >  8 | test('DEMO-1/TC-006: the payment service is reachable', async ({ request }) => { expect((await request.get('http://127.0.0.1:9/pay')).status()).toBe(200); });
+         |                                                                                                        ^
+       9 | test('DEMO-1/TC-007: the helper formats a price', async () => { const fmt = undefined; expect(fmt(5)).toBe('$5.00'); });
+      10 | test('DEMO-1/TC-008: the slow report finishes', async ({ request }) => { expect((await request.get('/api/slow', { timeout: 1500 })).status()).toBe(200); });
+      11 |
+        at /work/demo-app/tests/pw/api.spec.js:8:104
+
+    Error Context: ../../test-results/api-DEMO-1-TC-006-the-payment-service-is-reachable/error-context.md
+]]>
+</error>
+</testcase>
+<testcase name="DEMO-1/TC-007: the helper formats a price" classname="api.spec.js" time="0">
+<system-out>
+<![CDATA[
+[[ATTACHMENT|/work/demo-app/test-results/api-DEMO-1-TC-007-the-helper-formats-a-price/error-context.md]]
+]]>
+</system-out>
+<error message="fmt is not a function" type="TypeError">
+<![CDATA[  api.spec.js:9:1 › DEMO-1/TC-007: the helper formats a price ──────────────────────────────────────
+
+    TypeError: fmt is not a function
+
+       7 | test('DEMO-1/TC-005: the archive page exists', async ({ request }) => { expect((await request.get('/api/missing')).status()).toBe(200); });
+       8 | test('DEMO-1/TC-006: the payment service is reachable', async ({ request }) => { expect((await request.get('http://127.0.0.1:9/pay')).status()).toBe(200); });
+    >  9 | test('DEMO-1/TC-007: the helper formats a price', async () => { const fmt = undefined; expect(fmt(5)).toBe('$5.00'); });
+         |                                                                                               ^
+      10 | test('DEMO-1/TC-008: the slow report finishes', async ({ request }) => { expect((await request.get('/api/slow', { timeout: 1500 })).status()).toBe(200); });
+      11 |
+        at /work/demo-app/tests/pw/api.spec.js:9:95
+
+    Error Context: ../../test-results/api-DEMO-1-TC-007-the-helper-formats-a-price/error-context.md
+]]>
+</error>
+</testcase>
+<testcase name="DEMO-1/TC-008: the slow report finishes" classname="api.spec.js" time="1.52">
+<system-out>
+<![CDATA[
+[[ATTACHMENT|/work/demo-app/test-results/api-DEMO-1-TC-008-the-slow-report-finishes/error-context.md]]
+]]>
+</system-out>
+<error message="apiRequestContext.get: Timeout 1500ms exceeded." type="TimeoutError">
+<![CDATA[  api.spec.js:10:1 › DEMO-1/TC-008: the slow report finishes ───────────────────────────────────────
+
+    TimeoutError: apiRequestContext.get: Timeout 1500ms exceeded.
+    Call log:
+      - → GET http://127.0.0.1:4567/api/slow
+        - user-agent: Playwright/1.65.0 (arm64; macOS 27.0) node/22.17
+        - accept: */*
+        - accept-encoding: gzip,deflate,br
+
+
+       8 | test('DEMO-1/TC-006: the payment service is reachable', async ({ request }) => { expect((await request.get('http://127.0.0.1:9/pay')).status()).toBe(200); });
+       9 | test('DEMO-1/TC-007: the helper formats a price', async () => { const fmt = undefined; expect(fmt(5)).toBe('$5.00'); });
+    > 10 | test('DEMO-1/TC-008: the slow report finishes', async ({ request }) => { expect((await request.get('/api/slow', { timeout: 1500 })).status()).toBe(200); });
+         |                                                                                                ^
+      11 |
+        at /work/demo-app/tests/pw/api.spec.js:10:96
+
+    Error Context: ../../test-results/api-DEMO-1-TC-008-the-slow-report-finishes/error-context.md
+]]>
+</error>
+</testcase>
+</testsuite>
+<testsuite name="ui.spec.js" timestamp="2026-11-06T16:58:06.257Z" hostname="" tests="3" failures="1" skipped="0" time="4.564" errors="1">
+<testcase name="DEMO-2/TC-001: the Apply button is on the cart panel" classname="ui.spec.js" time="2.251">
+<system-out>
+<![CDATA[
+[[ATTACHMENT|/work/demo-app/test-results/ui-DEMO-2-TC-001-the-Apply-button-is-on-the-cart-panel/error-context.md]]
+]]>
+</system-out>
+<error message="locator.click: Timeout 2000ms exceeded." type="TimeoutError">
+<![CDATA[  ui.spec.js:2:1 › DEMO-2/TC-001: the Apply button is on the cart panel ────────────────────────────
+
+    TimeoutError: locator.click: Timeout 2000ms exceeded.
+    Call log:
+      - waiting for getByTestId('coupon-apply-btn')
+
+
+      1 | const { test, expect } = require('@playwright/test');
+    > 2 | test('DEMO-2/TC-001: the Apply button is on the cart panel', async ({ page }) => { await page.goto('/cart'); await page.getByTestId('coupon-apply-btn').click({ timeout: 2000 }); });
+        |                                                                                                                                                         ^
+      3 | test('DEMO-2/TC-002: the Apply button says "Apply now"', async ({ page }) => { await page.goto('/cart'); await expect(page.getByTestId('coupon-apply')).toHaveText('Apply now', { timeout: 2000 }); });
+      4 | test('DEMO-2/TC-003: the coupon box is on the cart panel', async ({ page }) => { await page.goto('/cart'); await expect(page.getByTestId('coupon-input')).toBeVisible(); });
+      5 |
+        at /work/demo-app/tests/pw/ui.spec.js:2:153
+
+    Error Context: ../../test-results/ui-DEMO-2-TC-001-the-Apply-button-is-on-the-cart-panel/error-context.md
+]]>
+</error>
+</testcase>
+<testcase name="DEMO-2/TC-002: the Apply button says &quot;Apply now&quot;" classname="ui.spec.js" time="2.153">
+<system-out>
+<![CDATA[
+[[ATTACHMENT|/work/demo-app/test-results/ui-DEMO-2-TC-002-the-Apply-button-says-Apply-now-/error-context.md]]
+]]>
+</system-out>
+<failure message="expect(locator).toHaveText(expected) failed" type="expect.toHaveText">
+<![CDATA[  ui.spec.js:3:1 › DEMO-2/TC-002: the Apply button says "Apply now" ────────────────────────────────
+
+    Error: expect(locator).toHaveText(expected) failed
+
+    Locator:  getByTestId('coupon-apply')
+    Expected: "Apply now"
+    Received: "Apply"
+    Timeout:  2000ms
+
+    Call log:
+      - Expect "toHaveText" getByTestId('coupon-apply') with timeout 2000ms
+      - waiting for getByTestId('coupon-apply')
+        21 × locator resolved to <button data-testid="coupon-apply">Apply</button>
+           - unexpected value "Apply"
+
+
+      1 | const { test, expect } = require('@playwright/test');
+      2 | test('DEMO-2/TC-001: the Apply button is on the cart panel', async ({ page }) => { await page.goto('/cart'); await page.getByTestId('coupon-apply-btn').click({ timeout: 2000 }); });
+    > 3 | test('DEMO-2/TC-002: the Apply button says "Apply now"', async ({ page }) => { await page.goto('/cart'); await expect(page.getByTestId('coupon-apply')).toHaveText('Apply now', { timeout: 2000 }); });
+        |                                                                                                                                                         ^
+      4 | test('DEMO-2/TC-003: the coupon box is on the cart panel', async ({ page }) => { await page.goto('/cart'); await expect(page.getByTestId('coupon-input')).toBeVisible(); });
+      5 |
+        at /work/demo-app/tests/pw/ui.spec.js:3:153
+
+    Error Context: ../../test-results/ui-DEMO-2-TC-002-the-Apply-button-says-Apply-now-/error-context.md
+]]>
+</failure>
+</testcase>
+<testcase name="DEMO-2/TC-003: the coupon box is on the cart panel" classname="ui.spec.js" time="0.16">
+</testcase>
+</testsuite>
+</testsuites>
