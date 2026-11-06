@@ -2,45 +2,36 @@
 
 const { TrackerError } = require('../lib/errors');
 const { checkBaseUrl } = require('../lib/base-url');
-const { request } = require('../lib/http');
-const { keyMarker, hasMarker, stepsAsMarkdown, extractAcceptanceCriteria } = require('../lib/contract');
+const { hasMarker, extractAcceptanceCriteria } = require('../lib/contract');
+const { withMarker, requireNumericId, requireToken, testCaseBody, priorityFromLabels, summary, isDuplicateLink, eachPage, apiCall } = require('../lib/kit');
 
 // GitLab Issues, REST v4, personal/project access token.
 // settings = qa-config.json > ticketSource.gitlab  ({ projectId, host, tokenEnvVar, testLabelName })
 // Items are addressed by their project-scoped number (`iid`), which is the number users see.
-const LIST_PAGES = 5; // up to 500 labelled issues per key lookup
 
 function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, retryDelayMs }) {
   const projectId = settings.projectId;
   if (!projectId) throw new TrackerError('CONFIG', 'ticketSource.gitlab.projectId is not set');
-  const tokenVar = settings.tokenEnvVar || 'GITLAB_TOKEN';
-  const token = env[tokenVar];
-  if (!token) throw new TrackerError('CONFIG', `${tokenVar} is not set`);
+  const token = requireToken({ settings, env, defaultVar: 'GITLAB_TOKEN' });
   // `baseUrl` overrides the whole API root (mocks); otherwise <host>/api/v4
   const api = checkBaseUrl(baseUrl || `${(settings.host || 'https://gitlab.com').replace(/\/$/, '')}/api/v4`, 'the GitLab API URL');
   const testLabel = settings.testLabelName || 'test-case';
   const project = `/projects/${encodeURIComponent(projectId)}`;
 
-  const call = (method, path, body, what) => request({
-    fetch, method, url: `${api}${path}`, body, timeoutMs, retryDelayMs, what,
-    headers: { 'PRIVATE-TOKEN': token },
-  });
+  const call = apiCall({ fetch, base: api, timeoutMs, retryDelayMs, headers: { 'PRIVATE-TOKEN': token } });
 
-  const issuePath = (id) => {
-    if (!/^\d+$/.test(String(id))) throw new TrackerError('VALIDATION', `GitLab issue ids are numbers (got "${id}")`);
-    return `${project}/issues/${id}`;
-  };
+  const issuePath = (id) => `${project}/issues/${requireNumericId('GitLab issue', id)}`;
   // GitLab has no "won't fix" resolution, so the team's own labels are the only signal: a closed issue carrying one of these was dismissed.
   const DISMISS_LABEL = /^(?:wontfix|won't fix|invalid|duplicate|not a bug)$/i;
   const dismissedIssue = (i) => i.state === 'closed' && (i.labels || []).some((l) => DISMISS_LABEL.test(typeof l === 'string' ? l : l.title || l.name || ''));
-  const summarize = (i) => ({ id: String(i.iid), title: i.title, url: i.web_url, status: i.state, open: i.state === 'opened', ...(i.created_at ? { createdAt: i.created_at } : {}), ...(dismissedIssue(i) ? { dismissed: true } : {}) });
+  const summarize = (i) => summary({ id: i.iid, title: i.title, url: i.web_url, status: i.state, open: i.state === 'opened', createdAt: i.created_at, dismissed: dismissedIssue(i) });
   const priorityLabel = (p) => (p ? [`priority:${p}`] : []);
 
   async function fetchTicket(id) {
     const { json: issue } = await call('GET', issuePath(id), undefined, `fetch GitLab issue ${id}`);
     const { json: notes } = await call('GET', `${issuePath(id)}/notes?sort=asc&order_by=created_at&per_page=100`, undefined, `fetch notes for GitLab issue ${id}`);
     const labels = issue.labels || [];
-    const priority = (labels.find((l) => /^priority:/i.test(l)) || '').replace(/^priority:\s*/i, '');
+    const priority = priorityFromLabels(labels);
     return {
       source: 'gitlab',
       id: String(issue.iid),
@@ -68,25 +59,19 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
   // Lists by label (consistent) rather than searching: see the GitHub adapter for why.
   async function findByKey(key, { op, input } = {}) {
     const labels = op === 'create-test' ? [testLabel, String(input.parentId)] : op === 'create-bug' ? ['bug'] : [];
-    for (let page = 1; page <= LIST_PAGES; page += 1) {
+    const listPage = async (page) => {
       const qs = `state=all&order_by=created_at&sort=desc&per_page=100&page=${page}${labels.length ? `&labels=${encodeURIComponent(labels.join(','))}` : ''}`;
-      const { json } = await call('GET', `${project}/issues?${qs}`, undefined, 'look up idempotency key');
-      const batch = json || [];
+      return (await call('GET', `${project}/issues?${qs}`, undefined, 'look up idempotency key')).json;
+    };
+    for await (const batch of eachPage(listPage)) {
       const hit = batch.find((i) => hasMarker(i.description, key));
       if (hit) return { id: String(hit.iid), url: hit.web_url };
-      if (batch.length < 100) break;
     }
     return null;
   }
 
   async function createTest({ parentId, tcId, title, description = '', priority, steps = [], idempotencyKey }) {
-    const body = [
-      `Tests #${parentId}`,
-      priority ? `**Priority:** ${priority}` : null,
-      description ? `\n${description}` : null,
-      steps.length ? `\n### Steps\n${stepsAsMarkdown(steps)}` : null,
-      idempotencyKey ? `\n${keyMarker(idempotencyKey)}` : null,
-    ].filter(Boolean).join('\n');
+    const body = withMarker(testCaseBody({ parentId, priority, description, steps }), idempotencyKey);
     const { json } = await call('POST', `${project}/issues`, { title: `${tcId}: ${title}`, description: body, labels: [testLabel, String(parentId), ...priorityLabel(priority)].join(',') }, `create GitLab test issue ${tcId}`);
     return { id: String(json.iid), url: json.web_url };
   }
@@ -105,15 +90,13 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
     try {
       await call('POST', `${issuePath(childId)}/links`, { target_project_id: targetProject, target_issue_iid: Number(parentId), link_type: 'relates_to' }, `link GitLab issue ${childId} to ${parentId}`);
     } catch (err) {
-      // Linking twice is not a failure: the goal state (linked) already holds.
-      if (!(err instanceof TrackerError && err.code === 'VALIDATION' && /already assigned|already exists/i.test(err.message))) throw err;
+      if (!isDuplicateLink(err, /already assigned|already exists/i)) throw err;
     }
     return { linked: true, method: 'native' };
   }
 
   async function comment({ id, body, idempotencyKey }) {
-    const text = idempotencyKey ? `${body}\n\n${keyMarker(idempotencyKey)}` : body;
-    const { json } = await call('POST', `${issuePath(id)}/notes`, { body: text }, `comment on GitLab issue ${id}`);
+    const { json } = await call('POST', `${issuePath(id)}/notes`, { body: withMarker(body, idempotencyKey) }, `comment on GitLab issue ${id}`);
     return { id: String(json.id) };
   }
 
@@ -124,8 +107,7 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
   }
 
   async function createBug({ title, body, priority, labels = [], idempotencyKey }) {
-    const text = idempotencyKey ? `${body}\n\n${keyMarker(idempotencyKey)}` : body;
-    const { json } = await call('POST', `${project}/issues`, { title: `[BUG] ${title}`, description: text, labels: ['bug', ...labels, ...priorityLabel(priority)].join(',') }, 'create GitLab bug');
+    const { json } = await call('POST', `${project}/issues`, { title: `[BUG] ${title}`, description: withMarker(body, idempotencyKey), labels: ['bug', ...labels, ...priorityLabel(priority)].join(',') }, 'create GitLab bug');
     return { id: String(json.iid), url: json.web_url };
   }
 

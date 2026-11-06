@@ -2,26 +2,21 @@
 
 const { TrackerError } = require('../lib/errors');
 const { checkBaseUrl } = require('../lib/base-url');
-const { request } = require('../lib/http');
-const { keyMarker, hasMarker, extractAcceptanceCriteria } = require('../lib/contract');
+const { hasMarker, extractAcceptanceCriteria } = require('../lib/contract');
+const { withMarker, requireToken, summary, eachPage, apiCall } = require('../lib/kit');
 
 // ClickUp v2 REST API.
 // settings = qa-config.json > ticketSource.clickup  ({ listId, tokenEnvVar, assignToSelf, apiBaseUrl })
 const PRIORITY = { High: 1, Medium: 2, Low: 3 }; // ClickUp: 1 urgent … 4 low; unspecified -> 4
-const MAX_PAGES = 5;
 
 function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, retryDelayMs }) {
   const listId = settings.listId;
   if (!listId) throw new TrackerError('CONFIG', 'ticketSource.clickup.listId is not set');
-  const tokenVar = settings.tokenEnvVar || 'CLICKUP_TOKEN';
-  const token = env[tokenVar];
-  if (!token) throw new TrackerError('CONFIG', `${tokenVar} is not set`);
+  const token = requireToken({ settings, env, defaultVar: 'CLICKUP_TOKEN' });
   const base = checkBaseUrl(baseUrl || settings.apiBaseUrl || 'https://api.clickup.com/api/v2', 'the ClickUp API base URL');
 
-  const call = (method, path, body, what) => request({
-    fetch, method, url: `${base}${path}`, body, timeoutMs, retryDelayMs, what,
-    headers: { Authorization: token }, // ClickUp takes the raw token, no "Bearer"
-  });
+  // ClickUp takes the raw token, no "Bearer"
+  const call = apiCall({ fetch, base, timeoutMs, retryDelayMs, headers: { Authorization: token } });
 
   const taskPath = (id) => {
     if (!/^[A-Za-z0-9_-]+$/.test(String(id))) throw new TrackerError('VALIDATION', `"${id}" is not a valid ClickUp task id`);
@@ -35,7 +30,7 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
   // "Works as designed". "Cancelled" must be past tense: "Cancel pending" is a status that still has work in it.
   const DISMISSED_STATUS = /\b(?:won['’]?t[ -]?(?:fix|do)|wont|will not (?:fix|do)|reject(?:ed)?|declined?|cancel(?:l)?ed|invalid|duplicate|not (?:a )?(?:bug|issue|defect)|not planned|out of scope|abandoned|(?:by|as) design(?:ed)?|obsolete|dismissed)\b/i;
   const clickupDismissed = (s) => !!s && DISMISSED_STATUS.test(s.status || '');
-  const summarize = (t) => ({ id: String(t.id), title: t.name, url: t.url, status: t.status && t.status.status, open: !clickupClosed(t.status) && !clickupDismissed(t.status), ...(iso(t.date_created) ? { createdAt: iso(t.date_created) } : {}), ...(clickupDismissed(t.status) ? { dismissed: true } : {}) });
+  const summarize = (t) => summary({ id: t.id, title: t.name, url: t.url, status: t.status && t.status.status, open: !clickupClosed(t.status) && !clickupDismissed(t.status), createdAt: iso(t.date_created), dismissed: clickupDismissed(t.status) });
   const iso = (ms) => (/^\d+$/.test(String(ms)) ? new Date(Number(ms)).toISOString() : null);
 
   async function fetchTicket(id) {
@@ -60,13 +55,12 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
   }
 
   async function listTasks() {
-    const tasks = [];
-    for (let page = 0; page < MAX_PAGES; page += 1) {
+    const listPage = async (page) => {
       const { json } = await call('GET', `/list/${listId}/task?include_closed=true&page=${page}`, undefined, 'list ClickUp tasks');
-      const batch = (json && json.tasks) || [];
-      tasks.push(...batch);
-      if (batch.length < 100) break;
-    }
+      return json && json.tasks;
+    };
+    const tasks = [];
+    for await (const batch of eachPage(listPage, { first: 0 })) tasks.push(...batch); // ClickUp counts pages from 0
     return tasks;
   }
 
@@ -84,8 +78,6 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
     const hit = (await listTasks()).find((t) => hasMarker(t.description || t.text_content, key));
     return hit ? { id: String(hit.id), url: hit.url } : null;
   }
-
-  const withMarker = (text, key) => (key ? `${text}\n\n${keyMarker(key)}` : text);
 
   async function createTest({ parentId, tcId, title, description = '', priority, steps = [], idempotencyKey }) {
     const assignees = [];

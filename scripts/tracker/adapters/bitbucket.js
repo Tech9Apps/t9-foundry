@@ -2,8 +2,8 @@
 
 const { TrackerError } = require('../lib/errors');
 const { checkBaseUrl } = require('../lib/base-url');
-const { request } = require('../lib/http');
-const { keyMarker, hasMarker, stepsAsMarkdown, extractAcceptanceCriteria } = require('../lib/contract');
+const { hasMarker, extractAcceptanceCriteria } = require('../lib/contract');
+const { withMarker, requireNumericId, requireToken, testCaseBody, summary, linkByReference, eachPage, apiCall } = require('../lib/kit');
 
 // Bitbucket Cloud issue tracker, REST 2.0, app-password auth.
 // settings = qa-config.json > ticketSource.bitbucket  ({ workspace, repo, username, tokenEnvVar })
@@ -11,7 +11,6 @@ const { keyMarker, hasMarker, stepsAsMarkdown, extractAcceptanceCriteria } = req
 //
 // Bitbucket has no labels and no issue-link API, so: a test case is a `task` whose title starts with its
 // TC id, a bug is a `bug`, and the parent is referenced in the test case's body (like GitHub).
-const LIST_PAGES = 5;
 const TEST_PRIORITY = { High: 'major', Medium: 'minor', Low: 'trivial' };
 const BUG_PRIORITY = { High: 'critical', Medium: 'major', Low: 'minor' };
 const bbql = (s) => String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
@@ -20,28 +19,20 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
   const { workspace, repo, username } = settings;
   if (!workspace || !repo) throw new TrackerError('CONFIG', 'ticketSource.bitbucket.workspace and .repo must be set');
   if (!username) throw new TrackerError('CONFIG', 'ticketSource.bitbucket.username is not set (app passwords authenticate as username:app_password)');
-  const tokenVar = settings.tokenEnvVar || 'BITBUCKET_TOKEN';
-  const secret = env[tokenVar];
-  if (!secret) throw new TrackerError('CONFIG', `${tokenVar} is not set`);
+  const secret = requireToken({ settings, env, defaultVar: 'BITBUCKET_TOKEN' });
   const api = checkBaseUrl(baseUrl || 'https://api.bitbucket.org/2.0', 'the Bitbucket API base URL');
   const issues = `/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(repo)}/issues`;
   const auth = `Basic ${Buffer.from(`${username}:${secret}`).toString('base64')}`;
 
-  const call = (method, path, body, what) => request({
-    fetch, method, url: `${api}${path}`, body, timeoutMs, retryDelayMs, what, headers: { Authorization: auth },
-  });
+  const call = apiCall({ fetch, base: api, timeoutMs, retryDelayMs, headers: { Authorization: auth } });
 
-  const issuePath = (id) => {
-    if (!/^\d+$/.test(String(id))) throw new TrackerError('VALIDATION', `Bitbucket issue ids are numbers (got "${id}")`);
-    return `${issues}/${id}`;
-  };
+  const issuePath = (id) => `${issues}/${requireNumericId('Bitbucket issue', id)}`;
   const href = (i) => i.links && i.links.html && i.links.html.href;
   // Bitbucket issue states: new, open, on hold are live; resolved, closed, invalid, duplicate, wontfix are not
   const BB_OPEN = new Set(['new', 'open', 'on hold']);
   // Bitbucket's own resolutions that mean "not a defect we will fix" (as opposed to resolved/closed, which mean fixed)
   const BB_DISMISSED = new Set(['wontfix', 'invalid', 'duplicate']);
-  const summarize = (i) => ({ id: String(i.id), title: i.title, url: href(i), status: i.state, open: BB_OPEN.has(String(i.state).toLowerCase()), ...(i.created_on ? { createdAt: i.created_on } : {}), ...(BB_DISMISSED.has(String(i.state).toLowerCase()) ? { dismissed: true } : {}) });
-  const withMarker = (text, key) => (key ? `${text}\n\n${keyMarker(key)}` : text);
+  const summarize = (i) => summary({ id: i.id, title: i.title, url: href(i), status: i.state, open: BB_OPEN.has(String(i.state).toLowerCase()), createdAt: i.created_on, dismissed: BB_DISMISSED.has(String(i.state).toLowerCase()) });
   const capital = (s) => (s ? s[0].toUpperCase() + s.slice(1) : '');
 
   async function fetchTicket(id) {
@@ -77,23 +68,19 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
   async function findByKey(key, { op, input } = {}) {
     let q = op === 'create-test' ? `kind = "task" AND title ~ "${bbql(input.tcId)}:"` : 'kind = "bug"';
     if (op !== 'create-test' && op !== 'create-bug') q = 'kind != "none"';
-    for (let page = 1; page <= LIST_PAGES; page += 1) {
+    const listPage = async (page) => {
       const { json } = await call('GET', `${issues}?q=${encodeURIComponent(q)}&sort=-created_on&pagelen=100&page=${page}`, undefined, 'look up idempotency key');
-      const batch = (json && json.values) || [];
+      return json && json.values;
+    };
+    for await (const batch of eachPage(listPage)) {
       const hit = batch.find((i) => hasMarker(i.content && i.content.raw, key));
       if (hit) return { id: String(hit.id), url: href(hit) };
-      if (batch.length < 100) break;
     }
     return null;
   }
 
   async function createTest({ parentId, tcId, title, description = '', priority, steps = [], idempotencyKey }) {
-    const body = [
-      `Tests #${parentId}`,
-      priority ? `**Priority:** ${priority}` : null,
-      description ? `\n${description}` : null,
-      steps.length ? `\n### Steps\n${stepsAsMarkdown(steps)}` : null,
-    ].filter(Boolean).join('\n');
+    const body = testCaseBody({ parentId, priority, description, steps });
     const { json } = await call('POST', issues, {
       title: `${tcId}: ${title}`, content: { raw: withMarker(body, idempotencyKey), markup: 'markdown' }, kind: 'task', priority: TEST_PRIORITY[priority] || 'minor',
     }, `create Bitbucket test issue ${tcId}`);
@@ -101,9 +88,7 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
   }
 
   // No link API: the parent is referenced in the body at creation ("Tests #<parent>").
-  async function link() {
-    return { linked: true, method: 'reference-in-body' };
-  }
+  const link = linkByReference;
 
   async function comment({ id, body, idempotencyKey }) {
     const { json } = await call('POST', `${issuePath(id)}/comments`, { content: { raw: withMarker(body, idempotencyKey) } }, `comment on Bitbucket issue ${id}`);
