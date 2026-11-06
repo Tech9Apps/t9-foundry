@@ -168,7 +168,8 @@ async function orchestrate(opts, { env = process.env, fetch = globalThis.fetch, 
     const runCwd = path.resolve(opts.cwd || '.');
     healResult = await heal({
       report, cwd: runCwd, runId, paths: cfg.selfHeal.paths, maxFiles: cfg.selfHeal.maxFiles, maxLines: cfg.selfHeal.maxLines, branchPrefix: cfg.selfHeal.branchPrefix, mainRun: main,
-      validate: async (specs) => { const r = await runResults([...base, ...specArgs(specs), '--out', path.join(out, 'heal-validate')], env); return r.doc && r.doc.data ? r.doc.data : null; },
+      // an empty list means a shared helper was edited: re-run the same selection the main run used, not nothing
+      validate: async (specs) => { const r = await runResults([...base, ...specArgs(specs.length ? specs : opts.specs), '--out', path.join(out, 'heal-validate')], env); return r.doc && r.doc.data ? r.doc.data : null; },
     });
     writeJson(path.join(out, 'heal.json'), { ok: healResult.status === 'healed' || healResult.status === 'nothing-to-heal', data: healResult });
     files.heal = path.join(out, 'heal.json');

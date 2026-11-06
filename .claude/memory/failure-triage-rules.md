@@ -104,17 +104,26 @@ documented expectation.
 
 ## Self-heal
 
-Off unless `triage.selfHeal.enabled` is set in `qa-config.json` (or `--heal` is passed; `--no-heal` overrides the config). It does **one**
+Off unless `triage.selfHeal.enabled` is set in `qa-config.json` (or `--heal` is passed; `--no-heal` overrides the config). `heal.js --apply`
+obeys the same switch: it needs the setting, or `--enable` on that command line. It does **one**
 thing: when a stale selector has an exact fix (a `TST-1` verdict at `act` confidence carries a `proposal`), `scripts/triage/heal.js`
 renames that test-id inside locator expressions in test code. A model never does this edit; the script does, under these guarantees:
 
 - **Only a test-id rename**, only inside locator expressions, only in the configured test directories (`triage.selfHeal.paths`,
   default `testFramework.testDir`). Every changed line must equal the original with only the id swapped — so a matcher, an expected value
   or any other line changing makes the heal refuse. Application code is never in scope.
+- **Only files git tracks, and only text that survives the trip.** A heal is committed and undone through git, so an untracked or ignored
+  file in those directories that also holds the old id makes it refuse (leaving that file stale would make the heal half-done). So does a file
+  that is not valid UTF-8 (editing it as text would corrupt bytes the heal does not mean to touch), and two renames that would rewrite each
+  other (`step-1 → step-2` together with `step-2 → step-3`).
+- **It does not take the report on trust.** A verdict must be what the classifier would have produced: TST-1, 0.85, not held at propose,
+  about the id being renamed, with both ids in its evidence. A report that is not is refused.
 - **Caps**: at most 5 files and 20 changed lines by default (`triage.selfHeal.maxFiles`, `maxLines`); over a cap the heal is refused, not applied.
 - **A local branch under `qa/`** (`qa/heal-<run id>` by default), created from a clean tracked tree on a named branch. It is **validated by
-  re-running** the failing specs — every healed test must pass and nothing that passed before may fail — and **reverted completely** (files,
-  branch, the branch you were on) on any failure.
+  re-running** the failing specs **and every spec it edited** (or, when a shared helper such as a page object was edited, the whole
+  selection) — every healed test must pass and nothing that was not already failing may fail — and **reverted completely** (files, branch,
+  the branch you were on) on any failure **and on an interrupt** (SIGINT, SIGTERM, SIGHUP). The restore writes the original bytes back itself
+  and checks the result; if it could not fully restore, `heal.restored` is `false` and `heal.problems` says why.
 - **It never pushes.** A heal is a local branch until a human decides otherwise.
 
 If `heal.status` is `refused` or `reverted`, report the reason and leave the failure as a proposal. Do **not** retry it, and do **not** make

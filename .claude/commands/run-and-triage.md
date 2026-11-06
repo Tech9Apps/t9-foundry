@@ -114,8 +114,8 @@ When it ran, the output has a `heal` section; `heal.status` is one of:
 |---|---|---|
 | `healed` | a test-id was renamed on a local branch (`heal.branch`), the failing specs were re-run and pass, and you are back on `heal.base`, clean | show the user the diff (`heal.review`, and `heal.changes`), the validation, and any `heal.leftovers` (stale references it did **not** edit). Then ask whether to push the branch and open a pull request. **Only on their explicit yes**: `git push -u origin <heal.branch>`, then `gh pr create --base <heal.base> --head <heal.branch>` with a body that carries the evidence. Never without it. |
 | `nothing-to-heal` | no locator for the old id was found in the allowed directories | report `heal.reason`; the verdict stays a proposal |
-| `refused` | it did not start: dirty tree, detached HEAD, a cap exceeded, an unsafe id, … Nothing was changed | report `heal.reason`; leave the verdict as a proposal. **Do not retry, and do not edit by hand.** |
-| `reverted` | it started, validation failed, and **everything was put back** | report `heal.reason` (and `heal.problems` if the restore itself had any); leave the verdict as a proposal. **Do not retry, and do not edit by hand.** |
+| `refused` | it did not start: dirty tree, detached HEAD, a cap exceeded, an unsafe id, an untracked or ignored file that also needs the rename, a file that is not valid UTF-8, renames that would rewrite each other, a report that is not what the classifier would have produced, … Nothing was changed | report `heal.reason`; leave the verdict as a proposal. **Do not retry, and do not edit by hand.** |
+| `reverted` | it started, but validation failed (or it was interrupted), and it put everything back | report `heal.reason`. **If `heal.restored` is `false`, say so first**: the repository is not as it was found; give the user `heal.problems` verbatim and tell them to run `git status` and `git branch` before doing anything else; leave the verdict as a proposal. **Do not retry, and do not edit by hand.** |
 
 ### Handing a bug to Bug-reporter
 

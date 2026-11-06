@@ -89,4 +89,17 @@ function collectFiles({ root, cwd, dirs, exts = DEFAULT_EXTS }) {
   return { files: [...new Set(files)], refused };
 }
 
-module.exports = { isSafeTestId, locatorPatterns, replaceInLocators, leftovers, verifyOnlySubstitution, collectFiles, DEFAULT_EXTS, SKIP_DIRS, MAX_BYTES };
+// Is this a spec file (something a runner is pointed at) rather than a shared helper such as a page object? Editing a helper can break
+// ANY spec that uses it, which changes what a validation run has to cover.
+const SPEC_FILE = /(?:\.(?:spec|test)\.[cm]?[jt]sx?$|_spec\.rb$|(?:^|[\\/])test_[^\\/]*\.py$|_test\.py$)/;
+const isSpecFile = (rel) => SPEC_FILE.test(String(rel));
+
+// A file is edited as TEXT, so it must survive the trip: decoding invalid UTF-8 replaces bytes with U+FFFD, and writing that back would
+// corrupt the file on lines the heal never meant to touch. `roundTrips` says whether the bytes come back identical.
+function readText(file) {
+  const bytes = fs.readFileSync(file);
+  const text = bytes.toString('utf8');
+  return { bytes, text, roundTrips: Buffer.from(text, 'utf8').equals(bytes) };
+}
+
+module.exports = { isSafeTestId, locatorPatterns, replaceInLocators, leftovers, verifyOnlySubstitution, collectFiles, isSpecFile, readText, DEFAULT_EXTS, SKIP_DIRS, MAX_BYTES };

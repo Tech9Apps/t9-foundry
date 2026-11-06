@@ -9,9 +9,10 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { execFileSync } = require('node:child_process');
+const { execFileSync, spawn } = require('node:child_process');
+const { EventEmitter } = require('node:events');
 const { main: orchestrate } = require('../../scripts/triage/orchestrate');
-const { main: healCli, heal, planHeal, eligible } = require('../../scripts/triage/heal');
+const { main: healCli, heal, planHeal, eligible, provenanceProblems } = require('../../scripts/triage/heal');
 const { classify } = require('../../scripts/triage/classify');
 
 const IDENT = { GIT_AUTHOR_NAME: 'T', GIT_AUTHOR_EMAIL: 't@example.test', GIT_COMMITTER_NAME: 'T', GIT_COMMITTER_EMAIL: 't@example.test' };
@@ -70,7 +71,7 @@ describe('self-heal, end to end (real git, real runner)', () => {
     assert.equal(h.status, 'healed');
     assert.deepEqual([h.base, h.branch], ['main', 'qa/heal-r1']);
     assert.deepEqual(h.renames, [{ from: 'coupon-apply-btn', to: 'coupon-apply', tests: ['DEMO-101/TC-901'] }]);
-    assert.deepEqual(h.validated, { specs: ['tests/ui.test.js'], passed: 2, failed: 0 });
+    assert.deepEqual(h.validated, { scope: 'specs', specs: ['tests/ui.test.js'], passed: 2, failed: 0 });
     assert.deepEqual(h.changes, [{ file: 'tests/ui.test.js', lines: [{ line: 5, rename: 'coupon-apply-btn → coupon-apply', before: "openPage().getByTestId('coupon-apply-btn');", after: "openPage().getByTestId('coupon-apply');" }] }]);
 
     const after = p.state();
@@ -230,11 +231,51 @@ describe('self-heal reverts everything when validation fails', () => {
     assert.deepEqual(p.state(), before);
     assert.match(p.read('tests/ui.test.js'), /coupon-apply-btn/);
   });
+
+  // ── review findings, with the REAL runner ──
+  const LEGACY_PAGE = PAGE_JS.replace("'index.html'", "'legacy.html'");
+  const OTHER_SPEC = `const test = require('node:test');
+const { openPage } = require('./legacy-page');
+
+test('DEMO-777/TC-001: the legacy page still has its Apply button', () => {
+  openPage().getByTestId('coupon-apply-btn');
+});
+`;
+
+  test('a SECOND spec that still uses the old id (on a page where it is valid) is broken by the rename: the heal is reverted, not committed as "validated"', async () => {
+    const p = makeProject({ files: { 'app/legacy.html': '<button data-testid="coupon-apply-btn">Apply</button>\n', 'tests/legacy-page.js': LEGACY_PAGE, 'tests/other.test.js': OTHER_SPEC } });
+    const before = p.state();
+    const r = await triage(p); // the main run covers tests/ui.test.js only: other.test.js passes on its own page and was never part of it
+    const h = r.json.data.heal;
+    assert.equal(h.status, 'reverted', JSON.stringify(h));
+    assert.match(h.reason, /the rename broke DEMO-777\/TC-001, which had not failed before/);
+    assert.equal(h.restored, true);
+    assert.deepEqual(p.state(), before);
+    assert.match(p.read('tests/ui.test.js'), /coupon-apply-btn/);
+    assert.match(p.read('tests/other.test.js'), /coupon-apply-btn/, 'the second spec was put back too');
+  });
+
+  test('when the locator lives in a SHARED HELPER, the whole selection is re-run (and the heal goes through when nothing breaks)', async () => {
+    const helper = "const { openPage } = require('../page');\nexports.applyButton = () => openPage().getByTestId('coupon-apply-btn');\nexports.couponInput = () => openPage().getByTestId('coupon-input');\n";
+    const spec = "const test = require('node:test');\nconst cart = require('./pages/cart.page');\n\ntest('DEMO-101/TC-901: the Apply button is on the cart panel', () => { cart.applyButton(); });\n\ntest('DEMO-101/TC-902: the coupon box is on the cart panel', () => { cart.couponInput(); });\n";
+    const p = makeProject({ files: { 'tests/pages/cart.page.js': helper, 'tests/ui.test.js': spec } });
+    const r = await triage(p);
+    const h = r.json.data.heal;
+    assert.equal(h.status, 'healed', JSON.stringify(h));
+    assert.deepEqual(h.changes.map((c) => c.file), ['tests/pages/cart.page.js'], 'the helper was edited, not the spec');
+    assert.deepEqual([h.validated.scope, h.validated.specs, h.validated.passed, h.validated.failed], ['selection', [], 2, 0]);
+  });
 });
 
 // ── heal() directly: crafted situations the real runner cannot easily produce ─────────────────────
 describe('heal(): crafted verdicts and validation results', () => {
-  const verdict = (extra = {}) => ({ key: 'DEMO-101/TC-901', test: { name: 'DEMO-101/TC-901: x', ticket: 'DEMO-101', caseId: 'TC-901', file: 'tests/ui.test.js' }, class: 'test-bug', rule: 'TST-1', confidence: 0.85, action: 'act', evidence: ['e'], attempts: [], fingerprint: 'a'.repeat(12), token: `qafp${'a'.repeat(12)}`, signature: 's', proposal: { kind: 'rename-testid', from: 'coupon-apply-btn', to: 'coupon-apply', similarity: 0.8 }, ...extra });
+  // internally consistent, as a verdict from classify.js is: the error is about the id being renamed, and the evidence names both ids
+  const verdict = (extra = {}) => {
+    const proposal = extra.proposal || { kind: 'rename-testid', from: 'coupon-apply-btn', to: 'coupon-apply', similarity: 0.8 };
+    return { key: 'DEMO-101/TC-901', test: { name: 'DEMO-101/TC-901: x', ticket: 'DEMO-101', caseId: 'TC-901', file: 'tests/ui.test.js' }, class: 'test-bug', rule: 'TST-1', confidence: 0.85, action: 'act',
+      evidence: [`the test looks for "${proposal.from}", which is not on the page, but "${proposal.to}" is (similarity 0.8)`], error: { kind: 'failure', message: `locator not found: getByTestId('${proposal.from}')` },
+      attempts: [], fingerprint: 'a'.repeat(12), token: `qafp${'a'.repeat(12)}`, signature: 's', proposal, ...extra };
+  };
   const rep = (...v) => ({ verdicts: v });
   const ok = (extra = {}) => ({ totals: { total: 2, passed: 2, failed: 0, skipped: 0 }, tests: [{ name: 'DEMO-101/TC-901: x', ticket: 'DEMO-101', caseId: 'TC-901', file: 'tests/ui.test.js', status: 'passed' }, { name: 'DEMO-101/TC-902: y', ticket: 'DEMO-101', caseId: 'TC-902', file: 'tests/ui.test.js', status: 'passed' }], ...extra });
   const run = (p, report, validate, opts = {}) => heal({ report, cwd: p.proj, runId: 'r1', paths: ['tests'], validate, mainRun: { tests: [{ name: 'DEMO-101/TC-902: y', ticket: 'DEMO-101', caseId: 'TC-902', file: 'tests/ui.test.js', status: 'passed' }] }, ...opts });
@@ -338,6 +379,294 @@ describe('heal(): crafted verdicts and validation results', () => {
     assert.equal(plan.files.length, 1);
     assert.equal(plan.lines, 1);
   });
+
+  // ── review findings: each one is reproduced against a REAL repository ────────────────────────────
+
+  describe('only files git tracks are edited (an untracked or ignored file cannot be restored)', () => {
+    const wip = (id = 'coupon-apply-btn') => `const test = require('node:test');\nconst { openPage } = require('./page');\ntest('wip', () => { openPage().getByTestId('${id}'); });\n`;
+
+    test('an UNTRACKED file that also holds the old id: refused before anything is written, and both files are left exactly as they were', async () => {
+      const p = makeProject(); fs.writeFileSync(path.join(p.proj, 'tests', 'wip.test.js'), wip()); const before = p.state();
+      const r = await run(p, rep(verdict()), async () => ok());
+      assert.equal(r.status, 'refused');
+      assert.match(r.reason, /tests\/wip\.test\.js is not tracked by git \(new or ignored\) but would need the same rename/);
+      assert.deepEqual(p.state(), before);
+      assert.match(p.read('tests/wip.test.js'), /coupon-apply-btn/, 'the untracked file was not touched');
+      assert.match(p.read('tests/ui.test.js'), /coupon-apply-btn/, 'and neither was the tracked one: the heal is not half-done');
+      assert.equal(git(p.proj, 'status', '--porcelain', '--untracked-files=all'), '?? tests/wip.test.js');
+    });
+
+    test('an IGNORED file that also holds the old id is refused the same way', async () => {
+      const p = makeProject({ files: { '.gitignore': 'tests/scratch.test.js\n' } });
+      fs.writeFileSync(path.join(p.proj, 'tests', 'scratch.test.js'), wip()); const before = p.state();
+      const r = await run(p, rep(verdict()), async () => ok());
+      assert.equal(r.status, 'refused');
+      assert.match(r.reason, /tests\/scratch\.test\.js is not tracked by git/);
+      assert.deepEqual(p.state(), before);
+      assert.match(p.read('tests/ui.test.js'), /coupon-apply-btn/);
+    });
+
+    test('an untracked file WITHOUT the old id is none of the heal\'s business: it heals, and the file is still there afterwards, untouched', async () => {
+      const p = makeProject(); const other = path.join(p.proj, 'tests', 'notes.test.js'); fs.writeFileSync(other, wip('some-other-id'));
+      const r = await run(p, rep(verdict()), async () => ok());
+      assert.equal(r.status, 'healed', JSON.stringify(r));
+      assert.equal(fs.readFileSync(other, 'utf8'), wip('some-other-id'));
+      assert.equal(git(p.proj, 'status', '--porcelain', '--untracked-files=all'), '?? tests/notes.test.js');
+      assert.equal(git(p.proj, 'show', '--stat', '--format=', 'qa/heal-r1').split('\n').filter((l) => /\|/.test(l)).length, 1, 'the commit holds exactly one file');
+    });
+
+    test('the heal commit never contains an untracked file (it used to `git add` whatever it had edited, tracked or not)', async () => {
+      const p = makeProject(); fs.writeFileSync(path.join(p.proj, 'tests', 'later.test.js'), wip('unrelated'));
+      const r = await run(p, rep(verdict()), async () => ok());
+      assert.equal(r.status, 'healed');
+      assert.deepEqual(git(p.proj, 'show', '--name-only', '--format=', 'qa/heal-r1').split('\n'), ['tests/ui.test.js']);
+    });
+  });
+
+  describe('the restore does not depend on git being in a good state, and is checked', () => {
+    test('a validator that DELETES an edited file mid-heal: the file is back, byte for byte, and the branch is gone', async () => {
+      const p = makeProject(); const before = p.state(); const original = fs.readFileSync(path.join(p.proj, 'tests', 'ui.test.js'));
+      const r = await run(p, rep(verdict()), async () => { fs.rmSync(path.join(p.proj, 'tests', 'ui.test.js')); throw new Error('the harness crashed'); });
+      assert.equal(r.status, 'reverted');
+      assert.equal(r.restored, true, JSON.stringify(r));
+      assert.ok(fs.readFileSync(path.join(p.proj, 'tests', 'ui.test.js')).equals(original));
+      assert.deepEqual(p.state(), before);
+    });
+
+    test('when git itself is wedged during the restore (a stale index.lock), the files STILL get their original bytes back, and the result says restored: false and why', async () => {
+      const p = makeProject(); const ui = path.join(p.proj, 'tests', 'ui.test.js'); const original = fs.readFileSync(ui); const lock = path.join(p.proj, '.git', 'index.lock');
+      const r = await run(p, rep(verdict()), async () => { fs.writeFileSync(lock, ''); throw new Error('the harness crashed'); });
+      try {
+        assert.equal(r.status, 'reverted');
+        assert.equal(r.restored, false, 'it must not claim a restore it could not complete');
+        assert.ok(r.problems.some((m) => /index\.lock|Unable to create/.test(m)), JSON.stringify(r.problems));
+        assert.ok(fs.readFileSync(ui).equals(original), 'the bytes were put back directly, without git');
+      } finally { fs.rmSync(lock, { force: true }); }
+    });
+
+    test('a validation run that dirties ANOTHER tracked file: the heal\'s own files are restored, and the leftover is reported, not hidden', async () => {
+      const p = makeProject(); const original = fs.readFileSync(path.join(p.proj, 'tests', 'ui.test.js'));
+      const r = await run(p, rep(verdict()), async () => { fs.appendFileSync(path.join(p.proj, 'app', 'index.html'), '<!-- the test run wrote this -->\n'); throw new Error('the harness crashed'); });
+      assert.equal(r.status, 'reverted');
+      assert.equal(r.restored, false, 'the tree is not as it was found, so it says so instead of claiming it is');
+      assert.ok(r.problems.includes('the working tree is not clean after the restore'), JSON.stringify(r.problems));
+      assert.ok(fs.readFileSync(path.join(p.proj, 'tests', 'ui.test.js')).equals(original));
+      assert.equal(git(p.proj, 'rev-parse', '--abbrev-ref', 'HEAD'), 'main', 'and it is back on the original branch');
+    });
+
+    test('a pre-commit hook that rejects the commit: reverted and restored, working tree clean (the failure the first version already handled)', async () => {
+      const p = makeProject({ hook: '#!/bin/sh\necho "no commits today" >&2\nexit 1\n' }); const before = p.state();
+      const r = await run(p, rep(verdict()), async () => ok());
+      assert.equal(r.status, 'reverted');
+      assert.equal(r.restored, true);
+      assert.deepEqual(p.state(), before);
+      assert.equal(git(p.proj, 'status', '--porcelain', '--untracked-files=no'), '');
+    });
+  });
+
+  describe('an interrupt mid-heal reverts first (it used to leave the user on the heal branch with edited files)', () => {
+    // a stand-in for `process`: signals are emitted by the test, and "exit" is recorded instead of ending the test run
+    const fakeProc = () => { const e = new EventEmitter(); e.exited = null; e.exits = []; e.exit = (c) => { e.exited = c; e.exits.push(c); }; e.stderr = { text: '', write(x) { this.text += x; } }; return e; };
+    const stalled = (p, proc) => { // starts a heal whose validation never finishes; resolves once the heal is in the middle of it
+      let reached; const at = new Promise((resolve) => { reached = resolve; });
+      const done = run(p, rep(verdict()), () => { reached(); return new Promise(() => {}); }, { proc });
+      return { at, done };
+    };
+
+    for (const [sig, code] of [['SIGTERM', 143], ['SIGINT', 130], ['SIGHUP', 129]]) {
+      test(`${sig} during validation: the repository is restored, and the process exits ${code}`, async () => {
+        const p = makeProject(); const before = p.state(); const proc = fakeProc();
+        const { at } = stalled(p, proc);
+        await at;
+        assert.equal(git(p.proj, 'rev-parse', '--abbrev-ref', 'HEAD'), 'qa/heal-r1', 'the interrupt really does arrive mid-heal');
+        assert.match(p.read('tests/ui.test.js'), /getByTestId\('coupon-apply'\)/, 'with the edit applied');
+        proc.emit(sig);
+        assert.equal(proc.exited, code);
+        assert.deepEqual(p.state(), before);
+        assert.match(p.read('tests/ui.test.js'), /getByTestId\('coupon-apply-btn'\)/);
+        assert.match(proc.stderr.text, new RegExp(`interrupted by ${sig}; the repository was restored exactly as found`));
+      });
+    }
+
+    test('the handlers are removed when the heal ends, by success or by revert (a long-lived process must not accumulate them)', async () => {
+      const proc = fakeProc();
+      assert.equal((await run(makeProject(), rep(verdict()), async () => ok(), { proc })).status, 'healed');
+      assert.equal(['SIGINT', 'SIGTERM', 'SIGHUP'].reduce((n, s) => n + proc.listenerCount(s), 0), 0);
+      assert.equal((await run(makeProject(), rep(verdict()), async () => { throw new Error('x'); }, { proc })).status, 'reverted');
+      assert.equal(['SIGINT', 'SIGTERM', 'SIGHUP'].reduce((n, s) => n + proc.listenerCount(s), 0), 0);
+    });
+
+    test('no handler is left behind by a refusal either (nothing was changed, so none was ever needed)', async () => {
+      const proc = fakeProc(); const p = makeProject(); fs.appendFileSync(path.join(p.proj, 'app', 'index.html'), 'dirty\n');
+      assert.equal((await run(p, rep(verdict()), async () => ok(), { proc })).status, 'refused');
+      assert.equal(proc.listenerCount('SIGTERM'), 0);
+    });
+
+    test('a SECOND signal while the first is being handled does nothing (a real process.exit would end it; this stand-in does not)', async () => {
+      const proc = fakeProc(); const p = makeProject(); const before = p.state();
+      const { at } = stalled(p, proc);
+      await at;
+      proc.emit('SIGTERM'); proc.emit('SIGINT'); proc.emit('SIGTERM');
+      assert.deepEqual(proc.exits, [143], 'exactly one exit, from the first signal: the heal was already finished with');
+      assert.deepEqual(p.state(), before);
+      assert.equal(proc.stderr.text.match(/interrupted by/g).length, 1, 'and it reported once');
+    });
+
+    test('an interrupt AFTER the heal finished does nothing (it must not revert a heal that is already committed)', async () => {
+      const proc = fakeProc(); const p = makeProject();
+      assert.equal((await run(p, rep(verdict()), async () => ok(), { proc })).status, 'healed');
+      proc.emit('SIGTERM');
+      assert.equal(proc.exited, null);
+      assert.equal(git(p.proj, 'rev-parse', '--verify', '--quiet', 'refs/heads/qa/heal-r1').length > 0, true, 'the heal branch is still there');
+    });
+  });
+
+  describe('validation covers every file the heal edited, not only the failing specs', () => {
+    const SPEC_B = `const test = require('node:test');\nconst { openPage } = require('./page');\ntest('DEMO-777/TC-001: the other page still has its button', () => { openPage().getByTestId('coupon-apply-btn'); });\n`;
+    const two = (specs) => specs.map((s) => path.relative(process.cwd(), s)).sort();
+
+    test('a second SPEC that gets renamed too is re-run with the failing one (the validator is handed both)', async () => {
+      const p = makeProject({ files: { 'tests/other.test.js': SPEC_B } });
+      const realProj = fs.realpathSync(p.proj); // the validator is handed real paths, one spelling per file
+      let asked; const r = await run(p, rep(verdict()), async (specs) => { asked = specs.map((x) => path.relative(realProj, x)).sort(); return ok(); });
+      assert.equal(r.status, 'healed', JSON.stringify(r));
+      assert.deepEqual(asked, ['tests/other.test.js', 'tests/ui.test.js']);
+      assert.deepEqual(r.validated.specs.slice().sort(), ['tests/other.test.js', 'tests/ui.test.js']);
+      assert.equal(r.validated.scope, 'specs');
+    });
+
+    test('a SHARED HELPER (a page object) that gets edited makes the validation re-run the whole selection, not a guess at which specs use it', async () => {
+      const p = makeProject({ files: { 'tests/pages/cart.page.js': "exports.applyButton = (page) => page.getByTestId('coupon-apply-btn');\n" } });
+      let asked; const r = await run(p, rep(verdict()), async (specs) => { asked = specs; return ok(); });
+      assert.equal(r.status, 'healed', JSON.stringify(r));
+      assert.deepEqual(asked, [], 'an empty list means: the same selection as the main run');
+      assert.deepEqual([r.validated.scope, r.validated.specs], ['selection', []]);
+      assert.match(git(p.proj, 'log', '-1', '--format=%B', 'qa/heal-r1'), /Validated by re-running the whole selection \(a shared helper was edited\)/);
+    });
+
+    test('a test that was NOT failing before (it passed, or it never ran) and fails after the rename is a regression: reverted', async () => {
+      const p = makeProject({ files: { 'tests/other.test.js': SPEC_B } }); const before = p.state();
+      const broke = ok(); broke.tests.push({ name: 'DEMO-777/TC-001: the other page still has its button', ticket: 'DEMO-777', caseId: 'TC-001', file: 'tests/other.test.js', status: 'failed' });
+      const r = await run(p, rep(verdict()), async () => broke);
+      assert.equal(r.status, 'reverted');
+      assert.match(r.reason, /the rename broke DEMO-777\/TC-001, which had not failed before/);
+      assert.deepEqual(p.state(), before);
+    });
+
+    test('a test that was already failing before is not blamed on the heal', async () => {
+      const p = makeProject();
+      const r = await run(p, rep(verdict()), async () => { const x = ok(); x.tests[1].status = 'failed'; return x; }, { mainRun: { tests: [{ name: 'DEMO-101/TC-902: y', ticket: 'DEMO-101', caseId: 'TC-902', file: 'tests/ui.test.js', status: 'failed' }] } });
+      assert.equal(r.status, 'healed', JSON.stringify(r));
+    });
+  });
+
+  describe('chained renames are refused (applied in turn they rewrite each other)', () => {
+    const chain = (a, b, c) => [verdict({ key: 'DEMO-101/TC-901', proposal: { kind: 'rename-testid', from: a, to: b, similarity: 0.8 } }), verdict({ key: 'DEMO-101/TC-902', test: { name: 'DEMO-101/TC-902: y', ticket: 'DEMO-101', caseId: 'TC-902', file: 'tests/ui.test.js' }, proposal: { kind: 'rename-testid', from: b, to: c, similarity: 0.8 } })];
+
+    test('step-1 -> step-2 together with step-2 -> step-3: refused, and nothing is written', async () => {
+      const p = makeProject({ files: { 'tests/steps.test.js': "page.getByTestId('step-1');\npage.getByTestId('step-2');\n" } }); const before = p.state();
+      const r = await run(p, rep(...chain('step-1', 'step-2', 'step-3')), async () => ok());
+      assert.equal(r.status, 'refused');
+      assert.match(r.reason, /"step-1" would be renamed to "step-2", which is itself being renamed in the same heal; applied in turn they would rewrite each other/);
+      assert.deepEqual(p.state(), before);
+      assert.match(p.read('tests/steps.test.js'), /step-1.*\n.*step-2/);
+    });
+
+    test('two UNRELATED renames in one heal are still fine', async () => {
+      const p = makeProject({ files: { 'tests/steps.test.js': "page.getByTestId('step-1');\npage.getByTestId('pay-now');\n" } });
+      const second = verdict({ key: 'DEMO-101/TC-902', test: { name: 'DEMO-101/TC-902: y', ticket: 'DEMO-101', caseId: 'TC-902', file: 'tests/ui.test.js' }, proposal: { kind: 'rename-testid', from: 'pay-now', to: 'pay-now-btn', similarity: 0.8 } });
+      const first = verdict({ proposal: { kind: 'rename-testid', from: 'step-1', to: 'step-one', similarity: 0.8 } });
+      const r = await run(p, rep(first, second), async () => ok());
+      assert.equal(r.status, 'healed', JSON.stringify(r));
+      const healed = git(p.proj, 'show', 'qa/heal-r1:tests/steps.test.js');
+      assert.match(healed, /getByTestId\('step-one'\)/);
+      assert.match(healed, /getByTestId\('pay-now-btn'\)/);
+    });
+  });
+
+  describe('a file that is not valid UTF-8 is never rewritten as text', () => {
+    const latin1 = (extra) => Buffer.concat([Buffer.from("// caf"), Buffer.from([0xe9]), Buffer.from(` (latin-1)\n${extra}`)]);
+
+    test('invalid bytes on an unrelated line of a file that needs the rename: refused, bytes untouched (they used to become U+FFFD)', async () => {
+      const bytes = latin1("page.getByTestId('coupon-apply-btn');\n");
+      const p = makeProject({ files: { 'tests/legacy.test.js': bytes } }); const before = p.state();
+      const r = await run(p, rep(verdict()), async () => ok());
+      assert.equal(r.status, 'refused');
+      assert.match(r.reason, /tests\/legacy\.test\.js is not valid UTF-8, so editing it as text would corrupt bytes the heal does not mean to change/);
+      assert.ok(fs.readFileSync(path.join(p.proj, 'tests', 'legacy.test.js')).equals(bytes));
+      assert.deepEqual(p.state(), before);
+      assert.match(p.read('tests/ui.test.js'), /coupon-apply-btn/, 'nothing else was edited either');
+    });
+
+    test('a non-UTF-8 file that needs NO change is simply left alone: the heal goes ahead and its bytes are identical afterwards', async () => {
+      const bytes = latin1('// nothing to rename here\n');
+      const p = makeProject({ files: { 'tests/legacy.test.js': bytes } });
+      const r = await run(p, rep(verdict()), async () => ok());
+      assert.equal(r.status, 'healed', JSON.stringify(r));
+      assert.ok(fs.readFileSync(path.join(p.proj, 'tests', 'legacy.test.js')).equals(bytes));
+    });
+
+    test('valid non-ASCII UTF-8 (accents, emoji) and a BOM survive a heal byte for byte, apart from the id', async () => {
+      const src = "\uFEFF// café ☕ 😀\nconst test = require('node:test');\ntest('x', () => { page.getByTestId('coupon-apply-btn'); /* ñ */ });\n";
+      const p = makeProject({ files: { 'tests/unicode.test.js': src } });
+      const r = await run(p, rep(verdict()), async () => ok());
+      assert.equal(r.status, 'healed', JSON.stringify(r));
+      assert.equal(git(p.proj, 'show', 'qa/heal-r1:tests/unicode.test.js').replace(/^\uFEFF/, ''), src.replace(/^\uFEFF/, '').replace('coupon-apply-btn', 'coupon-apply').trimEnd());
+    });
+  });
+
+  describe('the report is not taken on trust: a verdict must be what classify.js would have produced', () => {
+    const problems = (v, report = {}) => provenanceProblems(report, v);
+
+    test('a genuine verdict has no problems', () => assert.deepEqual(problems(verdict()), []));
+
+    test('each way a report can be wrong is named', () => {
+      assert.match(problems(verdict({ class: 'product-bug' })).join(), /its class is "product-bug", not test-bug/);
+      assert.match(problems(verdict({ cap: 'unverified-format' })).join(), /held at propose \(unverified-format\)/);
+      assert.match(problems(verdict(), { trusted: false }).join(), /its runner format is not trusted/);
+      assert.match(problems(verdict({ confidence: 0.99 })).join(), /TST-1 is only ever 0.85, not 0.99/);
+      assert.match(problems(verdict({ error: undefined })).join(), /records no error to take the test-id from/);
+      assert.match(problems(verdict({ error: { kind: 'failure', message: "locator not found: getByTestId('something-else')" } })).join(), /renames "coupon-apply-btn", but the failure it is based on is about "something-else"/);
+      assert.match(problems(verdict({ error: { kind: 'failure', message: 'it just broke' } })).join(), /about "no test-id"/);
+      assert.match(problems(verdict({ evidence: ['e'] })).join(), /evidence does not name both the old and the new id/);
+      assert.match(problems(verdict({ evidence: ['the test looks for "coupon-apply-btn", which is not on the page'] })).join(), /does not name both/);
+    });
+
+    test('the test-id may be in the DETAILS (where Playwright puts it), as the classifier reads both', () => {
+      assert.deepEqual(problems(verdict({ error: { kind: 'failure', message: 'expect(locator).toBeVisible()', details: "Locator: getByTestId('coupon-apply-btn')\nReceived: <element(s) not found>" } })), []);
+    });
+
+    test('a hand-edited report that renames an arbitrary id is refused before anything is written', async () => {
+      const p = makeProject({ files: { 'tests/secret.test.js': "page.getByTestId('checkout-confirm');\n" } }); const before = p.state();
+      const forged = verdict({ proposal: { kind: 'rename-testid', from: 'checkout-confirm', to: 'checkout-skip', similarity: 0.8 }, evidence: ['looks legitimate'] });
+      const r = await run(p, rep(forged), async () => ok());
+      assert.equal(r.status, 'refused');
+      assert.match(r.reason, /the report is not what classify\.js would have produced for DEMO-101\/TC-901: .*A heal only acts on a report the classifier wrote/);
+      assert.deepEqual(p.state(), before);
+    });
+
+    test('END TO END: a TST-1 verdict held at propose because its runner format is unverified is never healed', async () => {
+      const t = { name: 'DEMO-101/TC-901: x', ticket: 'DEMO-101', caseId: 'TC-901', file: 'tests/ui.test.js', status: 'failed', error: { kind: 'failure', message: "locator not found: getByTestId('coupon-apply-btn')" } };
+      const evidence = { 'DEMO-101/TC-901': { locator: { target: 'coupon-apply-btn', present: false, candidates: [{ testid: 'coupon-apply', similarity: 0.8, tag: 'button', text: 'Apply' }] } } };
+      const report = classify({ runs: [1, 2, 3].map(() => ({ format: 'playwright-json', tests: [t] })), evidence });
+      assert.deepEqual([report.verdicts[0].rule, report.verdicts[0].confidence, report.verdicts[0].action, report.verdicts[0].cap], ['TST-1', 0.85, 'propose', 'unverified-format']);
+      assert.deepEqual(eligible(report), [], 'not eligible');
+      const p = makeProject(); const before = p.state();
+      const r = await heal({ report, cwd: p.proj, runId: 'r1', paths: ['tests'], validate: async () => ok() });
+      assert.equal(r.status, 'nothing-to-heal');
+      assert.deepEqual(p.state(), before);
+      // and the same verdict from a trusted format is healed (so the cap, not something else, is what stopped it)
+      const trusted = classify({ runs: [1, 2, 3].map(() => ({ format: 'tap', tests: [t] })), evidence });
+      assert.equal((await heal({ report: trusted, cwd: p.proj, runId: 'r2', paths: ['tests'], validate: async () => ok() })).status, 'healed');
+    });
+  });
+
+  test('validated.specs are paths inside the repository even when the run directory was reached through a symlink', async () => {
+    const p = makeProject(); const link = path.join(p.root, 'via-link'); fs.symlinkSync(p.proj, link);
+    const r = await heal({ report: rep(verdict()), cwd: link, runId: 'r1', paths: ['tests'], validate: async () => ok(), mainRun: { tests: [] } });
+    assert.equal(r.status, 'healed', JSON.stringify(r));
+    assert.deepEqual(r.validated.specs, ['tests/ui.test.js'], 'it used to print ../../../../tmp/... when the path went through a symlink');
+  });
 });
 
 describe('heal.js never publishes', () => {
@@ -348,17 +677,21 @@ describe('heal.js never publishes', () => {
     }
     const heal = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'triage', 'heal.js'), 'utf8');
     const gitCalls = [...heal.matchAll(/git\(\s*\w+,\s*\[\s*'([a-z-]+)'/g)].map((m) => m[1]);
-    assert.deepEqual([...new Set(gitCalls)].sort(), ['add', 'branch', 'checkout', 'commit', 'rev-parse', 'status', 'switch'], 'the complete list of git subcommands it can run, all local');
+    // ls-files only READS which files git tracks (a heal edits tracked files only); nothing here touches a remote
+    assert.deepEqual([...new Set(gitCalls)].sort(), ['add', 'branch', 'checkout', 'commit', 'ls-files', 'rev-parse', 'status', 'switch'], 'the complete list of git subcommands it can run, all local');
   });
 });
 
 // ── the CLI ──────────────────────────────────────────────────────────────────────────────────────
 describe('heal CLI', () => {
-  const cli = async (argv, runResults) => { let out = ''; let err = ''; const code = await healCli({ argv, env: baseEnv(), stdout: { write: (x) => { out += x; } }, stderr: { write: (x) => { err += x; } }, ...(runResults ? { runResults } : {}) }); return { code, err, json: out ? JSON.parse(out) : null }; };
+  // Hermetic: unless a test names its own --config, point the CLI at an empty one, so a developer's own ./qa-config.json (which may have
+  // triage.selfHeal.enabled set) cannot change what these tests expect. tests/triage/hermetic.test.js proves it.
+  const EMPTY_CFG = path.join(fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), 'qa-heal-cfg-')), 'empty-config.json'); fs.writeFileSync(EMPTY_CFG, '{}');
+  const cli = async (argv, runResults) => { let out = ''; let err = ''; const code = await healCli({ argv: argv.length && !argv.includes('--config') && !argv.includes('-h') && !argv.includes('--help') ? [...argv, '--config', EMPTY_CFG] : argv, env: baseEnv(), stdout: { write: (x) => { out += x; } }, stderr: { write: (x) => { err += x; } }, ...(runResults ? { runResults } : {}) }); return { code, err, json: out ? JSON.parse(out) : null }; };
   const reportFor = (p) => {
     const t = (status, extra = {}) => ({ name: 'DEMO-101/TC-901: the Apply button is on the cart panel', ticket: 'DEMO-101', caseId: 'TC-901', file: path.join(p.proj, 'tests', 'ui.test.js'), status, ...extra });
     const stale = { kind: 'failure', message: "locator not found: getByTestId('coupon-apply-btn')" };
-    // 'tap' is trusted by default; a result with no format, or an unverified one, is held at propose and never healed
+    // 'tap' is trusted by default; a result with no format, or an unverified one, is held at propose and never healed (tested below)
     const rep = classify({ runs: [1, 2, 3].map(() => ({ format: 'tap', tests: [t('failed', { error: stale })] })), evidence: { 'DEMO-101/TC-901': { locator: { target: 'coupon-apply-btn', present: false, candidates: [{ testid: 'coupon-apply', similarity: 0.8, tag: 'button', text: 'Apply' }] } } } });
     const f = path.join(p.root, 'triage.json'); fs.writeFileSync(f, JSON.stringify({ ok: true, data: rep }));
     return f;
@@ -384,19 +717,94 @@ describe('heal CLI', () => {
     const mainRun = path.join(p.root, 'main.json'); fs.writeFileSync(mainRun, JSON.stringify({ ok: false, data: { tests: [] } }));
     const out = path.join(p.root, 'out', 'heal.json');
     const pass = { totals: { passed: 1, failed: 0 }, tests: [{ name: 'DEMO-101/TC-901: the Apply button is on the cart panel', ticket: 'DEMO-101', caseId: 'TC-901', file: path.join(p.proj, 'tests', 'ui.test.js'), status: 'passed' }] };
-    const r = await cli(['--report', reportFor(p), '--main', mainRun, '--framework', 'node', '--cwd', p.proj, '--paths', 'tests', '--apply', '--run-id', 'cli1', '--out', out], async () => ({ code: 0, doc: { ok: true, data: pass } }));
+    const r = await cli(['--report', reportFor(p), '--main', mainRun, '--framework', 'node', '--cwd', p.proj, '--paths', 'tests', '--apply', '--enable', '--run-id', 'cli1', '--out', out], async () => ({ code: 0, doc: { ok: true, data: pass } }));
     assert.equal(r.code, 0, JSON.stringify(r.json));
     assert.equal(r.json.data.branch, 'qa/heal-cli1');
     assert.deepEqual(JSON.parse(fs.readFileSync(out, 'utf8')), r.json);
+  });
+
+  // ── "off unless enabled" is a property of the heal, not only of the orchestrator ──
+  const applyArgv = (p, extra = []) => ['--report', reportFor(p), '--main', path.join(p.root, 'main.json'), '--framework', 'node', '--cwd', p.proj, '--paths', 'tests', '--apply', ...extra];
+  const passAll = async () => ({ code: 0, doc: { ok: true, data: { totals: { passed: 1, failed: 0 }, tests: [{ name: 'DEMO-101/TC-901: the Apply button is on the cart panel', ticket: 'DEMO-101', caseId: 'TC-901', file: 'tests/ui.test.js', status: 'passed' }] } } });
+
+  test('--apply is refused while self-heal is off: nothing is changed, and the reason says how to turn it on', async () => {
+    const p = makeProject(); const before = p.state();
+    fs.writeFileSync(path.join(p.root, 'main.json'), JSON.stringify({ tests: [] }));
+    for (const config of [[], ['--config', p.cfg({ selfHeal: { enabled: false } })], ['--config', p.cfg({})]]) {
+      const r = await cli(applyArgv(p, config), passAll);
+      assert.equal(r.code, 1);
+      assert.equal(r.json.data.status, 'refused');
+      assert.match(r.json.data.reason, /self-heal is off \(triage\.selfHeal\.enabled in qa-config\.json\)\. Enable it there, or pass --enable/);
+      assert.deepEqual(p.state(), before);
+      assert.match(p.read('tests/ui.test.js'), /coupon-apply-btn/, 'the file was not touched');
+    }
+  });
+
+  test('--apply works when the config enables self-heal, and when --enable says so for this run', async () => {
+    for (const extra of [['--config', 'ENABLED'], ['--enable']]) {
+      const p = makeProject();
+      fs.writeFileSync(path.join(p.root, 'main.json'), JSON.stringify({ tests: [] }));
+      const argv = applyArgv(p, extra.map((x) => (x === 'ENABLED' ? p.cfg({ selfHeal: { enabled: true } }) : x)));
+      const r = await cli(argv, passAll);
+      assert.equal(r.code, 0, JSON.stringify(r.json));
+      assert.equal(r.json.data.status, 'healed');
+    }
+  });
+
+  test('a preview never needs self-heal to be enabled (it writes nothing), and --enable alone is a usage error', async () => {
+    const p = makeProject();
+    const preview = await cli(['--report', reportFor(p), '--cwd', p.proj, '--paths', 'tests', '--config', p.cfg({ selfHeal: { enabled: false } })]);
+    assert.equal(preview.code, 0);
+    assert.equal(preview.json.data.status, 'preview');
+    const r = await cli(['--report', reportFor(p), '--enable']);
+    assert.equal(r.code, 2);
+    assert.match(r.err, /--enable only means something with --apply/);
+  });
+
+  test('--max-files and --max-lines may tighten a cap but never lift it past the bounds the config and schema enforce (20 files, 200 lines)', async () => {
+    const p = makeProject();
+    for (const [flag, ok, tooBig] of [['--max-files', '20', '21'], ['--max-lines', '200', '201']]) {
+      assert.notEqual((await cli(['--report', reportFor(p), flag, ok, '--cwd', p.proj, '--paths', 'tests'])).code, 2, `${flag} ${ok} is allowed`);
+      const r = await cli(['--report', reportFor(p), flag, tooBig]);
+      assert.equal(r.code, 2, `${flag} ${tooBig}`);
+      assert.match(r.err, new RegExp(`${flag} must be a whole number from 1 to ${ok}`));
+    }
+    assert.equal((await cli(['--report', reportFor(p), '--max-files', '1000'])).code, 2);
+  });
+
+
+  test('a REAL SIGTERM sent to a running heal.js (a killed agent, a CI timeout) restores the repository before the process exits', async () => {
+    const slow = UI_TEST + "\ntest('slow: keeps the validation re-run busy', async () => { await new Promise((resolve) => setTimeout(resolve, 6000)); });\n";
+    const p = makeProject({ files: { 'tests/ui.test.js': slow } }); const before = p.state(); const original = fs.readFileSync(path.join(p.proj, 'tests', 'ui.test.js'));
+    const mainRun = path.join(p.root, 'main.json'); fs.writeFileSync(mainRun, JSON.stringify({ tests: [] }));
+    const script = path.join(__dirname, '..', '..', 'scripts', 'triage', 'heal.js');
+    const child = spawn(process.execPath, [script, '--report', reportFor(p), '--main', mainRun, '--framework', 'node', '--cwd', p.proj, '--paths', 'tests', '--apply', '--enable', '--run-id', 'sig1'], { env: baseEnv(), stdio: ['ignore', 'pipe', 'pipe'] });
+    let stderr = ''; child.stderr.on('data', (d) => { stderr += d; });
+    const exited = new Promise((resolve) => child.on('exit', (code, signal) => resolve({ code, signal })));
+    // wait until the heal is genuinely in the middle of it: on its branch, with the edit on disk, the validation run in progress
+    const deadline = Date.now() + 30000; let reached = false;
+    while (Date.now() < deadline && !reached) {
+      await new Promise((r) => setTimeout(r, 100));
+      try { reached = git(p.proj, 'rev-parse', '--abbrev-ref', 'HEAD') === 'qa/heal-sig1' && !fs.readFileSync(path.join(p.proj, 'tests', 'ui.test.js')).equals(original); } catch { /* a git call can race the heal's own */ }
+    }
+    assert.ok(reached, `the heal never got to its validation (stderr: ${stderr})`);
+    child.kill('SIGTERM');
+    const { code, signal } = await exited;
+    assert.deepEqual([code, signal], [143, null], 'it reverted and exited by itself with 128 + SIGTERM, instead of being killed with the repository mid-change');
+    assert.match(stderr, /heal: interrupted by SIGTERM; the repository was restored exactly as found/);
+    assert.deepEqual(p.state(), before);
+    assert.ok(fs.readFileSync(path.join(p.proj, 'tests', 'ui.test.js')).equals(original), 'the file holds its original bytes');
+    assert.equal(git(p.proj, 'status', '--porcelain', '--untracked-files=no'), '');
   });
 
   test('a refusal exits 1 with the reason; bad input exits 2 or 1 naming the file', async () => {
     const p = makeProject();
     fs.appendFileSync(path.join(p.proj, 'app', 'index.html'), 'dirty\n');
     const mainRun = path.join(p.root, 'main.json'); fs.writeFileSync(mainRun, JSON.stringify({ tests: [] }));
-    const r = await cli(['--report', reportFor(p), '--main', mainRun, '--framework', 'node', '--cwd', p.proj, '--paths', 'tests', '--apply'], async () => ({ code: 0, doc: { ok: true, data: { tests: [] } } }));
+    const r = await cli(['--report', reportFor(p), '--main', mainRun, '--framework', 'node', '--cwd', p.proj, '--paths', 'tests', '--apply', '--enable'], async () => ({ code: 0, doc: { ok: true, data: { tests: [] } } }));
     assert.equal(r.code, 1);
     assert.equal(r.json.data.status, 'refused');
+    assert.match(r.json.data.reason, /uncommitted changes to tracked files/, 'refused for the reason this test is about, not because self-heal is off');
     assert.equal((await cli(['--report', path.join(p.root, 'nope.json')])).json.error.code, 'UNREADABLE');
     const bad = path.join(p.root, 'bad.json'); fs.writeFileSync(bad, '{"x":1}');
     assert.match((await cli(['--report', bad])).json.error.message, /no "verdicts" array/);

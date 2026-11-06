@@ -168,7 +168,8 @@ concrete `proposal` (`rename-testid: from → to`), so the report says exactly w
 
 **What it may touch.** Only files under `triage.selfHeal.paths` (default `testFramework.testDir`, relative to the run directory, which must be
 inside the git repository), with test-code extensions, never `node_modules`/`.git`/build output, never through a symlink. Application source
-is never in scope.
+is never in scope. **Only files git tracks:** a heal is committed and undone through git, so an untracked or ignored file in those paths that
+also holds the old id makes it refuse rather than leave the heal half-done.
 
 **The edit, and the guard that makes it safe:**
 - Only the id inside a locator expression changes: `getByTestId('x')`, `get_by_test_id("x")`, `[data-testid=x]` and its `data-cy`/`data-test-id`/`data-qa`
@@ -178,19 +179,30 @@ is never in scope.
 - **Every changed line must equal the original line with only `new` swapped for `old`** (checked by reversing the substitution on the whole line). If a
   matcher, an expected value, or anything else differs, the heal is refused. This is the mechanical meaning of "never edits assertions".
 - Caps: at most `maxFiles` files (default 5) and `maxLines` changed lines (default 20), else the heal is **refused**, not applied.
+- **Chained renames are refused:** `step-1 → step-2` together with `step-2 → step-3`, applied in turn, would turn `step-1` into `step-3`.
+- **Text only if it round-trips:** a file that is not valid UTF-8 is refused (decoding it and writing it back would replace bytes on lines the heal
+  never meant to touch); valid non-ASCII text and a BOM survive byte for byte.
+- **The report is not taken on trust:** a verdict must be TST-1 at 0.85, not held at propose, about the id being renamed, with both ids in its
+  evidence. `heal.js --apply` also needs `triage.selfHeal.enabled` (or `--enable`), and its `--max-files` / `--max-lines` can tighten the caps
+  but never lift them past 20 / 200.
 
 **Git, and the rules around it:**
 1. Requires the repository's tracked files to be clean and a named branch (not detached). Otherwise refused — it never mixes its edits with yours.
 2. Works on a new branch `qa/heal-<runId>` (the prefix is always under `qa/`, so it can never be a default branch). The branch must not already exist.
-3. Applies the edit, then **validates by re-running** the failing spec files: every healed test must pass, and no test in those files that passed before may fail.
+3. Applies the edit, then **validates by re-running** the failing specs **and every spec file it edited** (a rename can fix one page and break another). If a
+   shared helper such as a page object was edited, any spec may be affected, so the whole selection is re-run. Every healed test must pass, and no test
+   that was not already failing may fail (one that never ran before counts: there is no baseline to excuse it).
 4. Pass → commit (only the edited paths, hooks respected) and return to the original branch. Fail, or any error → **revert everything**: restore the files, return to the
-   original branch, delete the branch it created. The repository is left exactly as it was found.
+   original branch, delete the branch it created. **An interrupt (SIGINT, SIGTERM, SIGHUP) does the same before the process exits** (a killed agent or a CI
+   timeout used to leave the user on the heal branch with edited files). The restore keeps each file's original bytes in memory and writes them back itself if
+   git cannot, then **checks** the result (clean tree, back on the original branch); if it could not fully restore, the result says `restored: false` and why.
 5. **It never pushes**, and it has no code path that does. A branch exists locally; opening a PR needs the user's explicit approval, and the agent
    asks for it with the diff in view.
 6. One attempt per failing test per run, no retry loop. A cross-run attempt cap needs the Phase 3 ledger.
 
 **Not verified:** healing against real Playwright/Cypress projects (the locator patterns come from those tools' documented APIs; the real
-run is `node --test` against a throwaway repository), and any git workflow that rewrites hooks/identity in unusual ways.
+run is `node --test` against a throwaway repository), any git workflow that rewrites hooks/identity in unusual ways, and signal handling on Windows
+(it is tested with a real SIGTERM on macOS/Linux only).
 
 ## Decisions (the user's answers)
 

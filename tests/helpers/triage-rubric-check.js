@@ -79,7 +79,7 @@ if (!/\bcap: unverified-format\b/.test(md)) bad(`${FILE}: no longer explains the
 
 // ── flags ───────────────────────────────────────────────────────────────────
 const flagsIn = (src) => new Set([...src.matchAll(/flag === '(--[a-z-]+)'/g)].map((m) => m[1]).concat(['--help']));
-const FLAGS = { 'classify.js': flagsIn(read('scripts/triage/classify.js')), 'locators.js': flagsIn(read('scripts/triage/locators.js')), 'orchestrate.js': flagsIn(read('scripts/triage/orchestrate.js')) };
+const FLAGS = { 'classify.js': flagsIn(read('scripts/triage/classify.js')), 'locators.js': flagsIn(read('scripts/triage/locators.js')), 'orchestrate.js': flagsIn(read('scripts/triage/orchestrate.js')), 'heal.js': flagsIn(read('scripts/triage/heal.js')) };
 const mentioned = new Set();
 md.split('\n').forEach((line, i) => {
   for (const script of Object.keys(FLAGS)) {

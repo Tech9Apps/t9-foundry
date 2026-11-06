@@ -79,17 +79,19 @@ node_tests() { cd "$REPO_ROOT" && env -u NODE_TEST_CONTEXT node --test --test-re
 @test "the triage scripts depend on nothing but Node built-ins" {
   mods=$(grep -rhoE "require\('[^']+'\)" "$REPO_ROOT/scripts/triage" | sed -E "s/require\('([^']+)'\)/\1/" | grep -v '^\.' | sort -u)
   for m in $mods; do
-    case "$m" in fs|path|crypto|child_process) ;; *) echo "unexpected dependency: $m"; false ;; esac
+    case "$m" in fs|path|os|crypto|child_process) ;; *) echo "unexpected dependency: $m"; false ;; esac
   done
 }
 
 @test "classify.js, run as a real process on real demo output, proposes then acts as re-runs confirm" {
   cd "$REPO_ROOT"
+  # hermetic: without --config the CLI discovers ./qa-config.json, which a developer may have set (triage.confidenceThreshold, trustedFormats…)
+  echo '{}' > "$TEST_TMP/empty-config.json"
   node scripts/results/normalize.js tests/fixtures/results/node-test.tap --out "$TEST_TMP/run.json" >/dev/null
-  run node scripts/triage/classify.js --run "$TEST_TMP/run.json"
+  run node scripts/triage/classify.js --run "$TEST_TMP/run.json" --config "$TEST_TMP/empty-config.json"
   [ "$status" -eq 0 ]
   [ "$(echo "$output" | jq -r '[.data.verdicts[] | "\(.rule):\(.action)"] | join(",")')" = "PRD-3:propose,PRD-3:propose" ]
-  run node scripts/triage/classify.js --run "$TEST_TMP/run.json" --rerun "$TEST_TMP/run.json" --rerun "$TEST_TMP/run.json"
+  run node scripts/triage/classify.js --run "$TEST_TMP/run.json" --rerun "$TEST_TMP/run.json" --rerun "$TEST_TMP/run.json" --config "$TEST_TMP/empty-config.json"
   [ "$(echo "$output" | jq -r '[.data.verdicts[] | "\(.rule):\(.action)"] | join(",")')" = "PRD-1:act,PRD-1:act" ]
 }
 

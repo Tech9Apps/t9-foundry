@@ -76,7 +76,7 @@ Fix what is wrong today and make unattended runs *safe to attempt*.
 
 ## Phase 2 — Close the loop: run → triage → act *(medium)*
 
-> **Status — first checkpoint built, verified against mocks and real `node --test` runs; self-heal not started.**
+> **Status — built, verified against mocks, real `node --test` runs and throwaway git repositories; self-heal included.**
 > Design and what changed while building it: [phase-2-design.md](./phase-2-design.md). Built: the orchestrator agent and
 > `/run-and-triage`, the triage rubric, the classifier (code, not prose), fingerprints, tracker dedupe, flake reporting,
 > and the four seeded scenarios; **self-heal** (decided for v2.0: one narrow fix, off by default, validated, reverted on failure, never
