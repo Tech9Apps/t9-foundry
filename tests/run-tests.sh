@@ -56,6 +56,7 @@ bats \
   tests/check-prereqs.bats \
   tests/preflight.bats \
   tests/settings-lint.bats \
+  tests/suite-wiring.bats \
   tests/tracker.bats \
   tests/results.bats \
   tests/triage.bats \
