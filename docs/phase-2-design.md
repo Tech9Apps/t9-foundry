@@ -69,7 +69,7 @@ from) and `action: "act" | "propose"`: **`act` only when `confidence ≥ thresho
 | FLK-1 | flaky | attempts contain both a pass and a fail (flip), or the runner itself flagged `flaky` | 0.90 / 0.85 |
 | TST-1 | test-bug | locator-not-found in every failing attempt **and** evidence names exactly one candidate element under a different selector | 0.85 |
 | TST-2 | test-bug | the test **crashed** (`kind: error`, not an assertion) with a `TypeError`/`ReferenceError`/`SyntaxError`/`Cannot find module` whose first stack frame is in a test file | 0.80 |
-| ENV-3 | environment | ≥ 3 tests and ≥ 50% of the run failed with the **same** error signature (blast radius) — could equally be a real suite-wide regression, so it is only a proposal | 0.60 |
+| ENV-3 | environment | ≥ 3 tests and ≥ 50% of the run failed, and one error signature accounts for ≥ 80% of those failures (blast radius) — could equally be a real suite-wide regression, so it is only a proposal | 0.60 |
 | PRD-1 | product-bug | every attempt failed (≥ 2), assertion failures (`kind: failure`) with the **same signature**, test traceable to a manual case (`caseId`) | 0.85 |
 | PRD-2 | product-bug | as PRD-1 but not traceable to a case | 0.75 |
 | PRD-3 | product-bug | a **single** attempt (no re-run was done), assertion failure — a flake cannot be ruled out | 0.60 |
@@ -97,7 +97,10 @@ and is capped lower when it cannot be tied to a documented expectation.
    fingerprint is a regression, and idempotency-key lookup (which matches closed items too) must **not** swallow it, so
    the key includes the run id (`fp-<fingerprint>-<runId>`: a retry of the same run is safe, a later run is new);
 4. **only matches closed WITHOUT a fix** (won't fix, not planned, duplicate, rejected) → `report-dismissed`: nothing is filed or
-   commented. The team decided not to fix it, so it is not a regression of a fix, and a comment on it is noise;
+   commented. The team decided not to fix it, so it is not a regression of a fix, and a comment on it is noise. When BOTH kinds match, the
+   **later** report (by `createdAt`) is the last decision: fixed, then a regression report that was dismissed → `report-dismissed` (otherwise a
+   regression would be filed on every run); dismissed, then a later fix, then back → `file-regression`. If either side has no date the order is
+   unknown and the plan stays with `file-regression`, with a note telling a person to check;
 5. **no match** → `file-bug`.
 
 This needs a normalized state on search results, which Phase 1's `search` lacks (each tracker returns its own status words).
@@ -106,7 +109,8 @@ tracker (GitHub "not planned" and wontfix/invalid/duplicate labels, Bitbucket's 
 wording, Azure close reasons, GitLab labels) and covered by the contract suite and `tests/tracker/dismissed.test.js`.
 
 **Known limit, stated up front:** GitHub's search index lags writes, so a bug filed minutes ago may not be found, and a
-second run can file a duplicate. Within one run `plan.js` dedupes locally; across runs the Phase 3 ledger is the fix.
+second run can file a duplicate. Within one run `plan.js` reports the SAME test failing the same way twice (the same case in two browser projects) once, as `duplicate-in-run`; it does
+not merge DIFFERENT tests that happen to share an error, because each may be a different defect: those are separate reports. Across runs the Phase 3 ledger is the fix.
 `smoke.js` gains a check that a body-marker token is found by search, so a real tracker shows whether this works.
 
 ## Flake handling

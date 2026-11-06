@@ -26,7 +26,7 @@ Same operations, same JSON in and out, same error shape — whichever tracker is
 | Op | Input | Returns |
 |----|-------|---------|
 | `fetch` | `{ id }` | a normalized **ticket** — [`schemas/tracker-ticket.schema.json`](../schemas/tracker-ticket.schema.json) |
-| `search` | `{ query, kind?: any\|bug\|test, limit? }` | `{ items: [{ id, title, url, status, open, dismissed? }] }` — `status` is the tracker's own word, `open` is normalized (closed items are still returned, marked `open: false`); `dismissed: true` appears only when the tracker says it was closed **without a fix** (see below) |
+| `search` | `{ query, kind?: any\|bug\|test, limit? }` | `{ items: [{ id, title, url, status, open, createdAt?, dismissed? }] }` — `status` is the tracker's own word, `open` is normalized (closed items are still returned, marked `open: false`); `dismissed: true` appears only when the tracker says it was closed **without a fix** (see below) |
 | `create-test` | `{ parentId, tcId, title, description?, priority?, steps?: [{action, expected}], idempotencyKey? }` | `{ id, url, deduplicated, repaired? }` |
 | `link` | `{ childId, parentId }` | `{ linked, method: native\|reference-in-body }` |
 | `comment` | `{ id, body, idempotencyKey? }` | `{ id, url?, deduplicated }` |
@@ -99,11 +99,13 @@ and whether it was `dismissed` (closed without a fix), using each tracker's own 
 
 | | Dismissed when |
 |---|---|
-| GitHub | closed **and** "not planned", or labelled `wontfix` / `invalid` / `duplicate` (its default labels) |
+| GitHub | closed **and** "not planned" or "duplicate" (the close reasons), or labelled `wontfix` / `invalid` / `duplicate` (its default labels) |
 | GitLab | closed **and** labelled `wontfix` / `invalid` / `duplicate` / `not a bug` (GitLab has no resolution, so a label is the only signal) |
 | Bitbucket | state `wontfix`, `invalid` or `duplicate` |
-| ClickUp | the status *wording*: rejected, won't do, cancelled, declined, invalid, duplicate, not a bug, by design, obsolete, dismissed. (A custom status has type `custom`, not `closed`, so it used to read as open.) |
-| Azure DevOps | state Removed, or closed/resolved with the reason As Designed, Duplicate, Will not Fix, Obsolete or Not a Bug (Cannot Reproduce and Deferred are deliberately not dismissed) |
+| ClickUp | the status *wording*: rejected, won't do / WONTFIX / will not fix (straight or curly apostrophe), not planned, out of scope, abandoned, cancelled (past tense: "Cancel pending" is not), declined, invalid, duplicate, not a bug, by design / as designed, obsolete, dismissed. (A custom status has type `custom`, not `closed`, so it used to read as open.) |
+| Azure DevOps | state Removed, or closed/resolved with the reason As Designed, Duplicate, Will not Fix, Obsolete, Not a Bug, Rejected or Out of scope (Cannot Reproduce and Deferred are deliberately not dismissed) |
+
+`createdAt` (ISO 8601) is the tracker's own creation time, where it reports one (GitHub `created_at`, GitLab `created_at`, Bitbucket `created_on`, ClickUp `date_created`, Azure `System.CreatedDate`): the planner uses it to tell which of two matching reports is the later decision.
 
 A dismissed item is never `open`. A workspace that names these differently reads as closed-as-fixed, so a recurrence is then filed as a
 regression: the vocabulary is per tracker and only as good as the words above. Tested against the mocks only.
