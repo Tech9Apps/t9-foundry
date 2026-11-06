@@ -36,6 +36,8 @@ const SHARED = {
 for (const [name, file, format, extra] of [
   ['Jest 30.5.2 (jest-json)', 'jest-30.5.2.results.json', 'jest-json', {}],
   ['Playwright 1.65.0 (playwright-json)', 'playwright-1.65.0.results.json', 'playwright-json', { 'DEMO-2/TC-001': ['undetermined', 'a stale selector, but no DOM snapshot was given'], 'DEMO-2/TC-002': ['product-bug', 'the button says "Apply", the test expects "Apply now"'] }],
+  ['Playwright 1.65.0 JUnit reporter (junit)', 'playwright-1.65.0.results.junit.xml', 'junit', { 'DEMO-2/TC-001': ['undetermined', 'a stale selector, but no DOM snapshot was given'], 'DEMO-2/TC-002': ['product-bug', 'the button says "Apply", the test expects "Apply now"'] }],
+  ['jest-junit 17.0.0 for Jest 30.5.2 (junit)', 'jest-junit-17.0.0.results.xml', 'junit', {}],
 ]) {
   describe(`real ${name} output`, () => {
     const expected = { ...SHARED, ...extra };
@@ -75,7 +77,39 @@ describe('real Playwright output: a stale selector is a test-bug once the page i
   });
 });
 
+describe('real JUnit: what is particular about each producer', () => {
+  const jestJunit = load('jest-junit-17.0.0.results.xml', 'junit');
+  const pwJunit = load('playwright-1.65.0.results.junit.xml', 'junit');
+  const find = (r, id) => r.tests.find((t) => t.name.includes(id));
+
+  test('jest-junit prefixes every name with the describe block ("api DEMO-1/TC-002: …"); the ticket and case id are still found', () => {
+    const t = find(jestJunit, 'DEMO-1/TC-002');
+    assert.match(t.name, /^api DEMO-1\/TC-002/);
+    assert.equal(t.ticket, 'DEMO-1');
+    assert.equal(t.caseId, 'TC-002');
+  });
+
+  test('jest-junit puts every failure in a bare <failure>, so its timeout is recognised from the text, not from the element', () => {
+    assert.equal(find(jestJunit, 'DEMO-1/TC-008').error.kind, 'timeout');
+    assert.equal(find(jestJunit, 'DEMO-1/TC-007').error.kind, 'failure');
+  });
+
+  test('Playwright separates <failure> (a failed expectation) from <error> (a thrown error, incl. TimeoutError)', () => {
+    assert.equal(find(pwJunit, 'DEMO-1/TC-002').error.kind, 'failure');
+    assert.equal(find(pwJunit, 'DEMO-1/TC-008').error.kind, 'error');
+    assert.equal(find(pwJunit, 'DEMO-2/TC-001').error.kind, 'error');
+  });
+});
+
 describe('the formats are still capped by default: this evidence does not by itself make them trusted', () => {
+  test('...and so is one from real JUnit output', () => {
+    const r = load('jest-junit-17.0.0.results.xml', 'junit');
+    const v = byCase(classify({ runs: [r, r, r] }))['DEMO-1/TC-002'];
+    assert.equal(v.class, 'product-bug');
+    assert.equal(v.action, 'propose');
+    assert.equal(v.cap, 'unverified-format');
+  });
+
   test('without --trusted-formats, a real Playwright product bug is held at propose', () => {
     const r = load('playwright-1.65.0.results.json', 'playwright-json');
     const v = byCase(classify({ runs: [r, r, r] }))['DEMO-1/TC-002'];

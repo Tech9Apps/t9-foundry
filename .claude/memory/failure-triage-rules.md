@@ -171,10 +171,10 @@ the edit by hand.
 
 - The error-message patterns (infrastructure, locator, login and error-page signatures) come from experience of how common tools word
   their errors, not from a corpus; a tool that words an error differently will land in `undetermined` or be capped, not acted on.
-- Jest 30.5.2 and Playwright 1.65.0 output has been checked against real runs of ONE small demo app (assertion, 503 / 401 / 404, nothing listening, a
+- Jest 30.5.2 and Playwright 1.65.0 output (JSON, and JUnit via Playwright's reporter and jest-junit 17.0.0) has been checked against real runs of ONE small demo app (assertion, 503 / 401 / 404, nothing listening, a
   timeout, a crashing test, a stale selector, wrong text: `tests/fixtures/results/real/`). That found two mistakes in the classification (now fixed),
-  so a wrong guess about real wording is not hypothetical. It is still thin evidence: one app, one version each, and JUnit from anything but node
-  has not been seen at all. That is why those formats stay capped by default (see "Which runners may act"); a project that has checked a format on
+  so a wrong guess about real wording is not hypothetical. The JUnit that Playwright and jest-junit write for the same app was checked too (no new
+  mistakes). It is still thin evidence: one app, one version each, and JUnit from other producers (Maven Surefire, pytest, nunit, …) has not been seen at all. That is why those formats stay capped by default (see "Which runners may act"); a project that has checked a format on
   its own failures can trust it with `triage.trustedFormats`. The seeded demo scenarios use TAP.
 - "Closed without a fix" is read in each tracker's own words: GitHub "not planned" and its wontfix/invalid/duplicate labels, Bitbucket
   wontfix/invalid/duplicate, ClickUp status wording ("rejected", "won't do", "not planned", "out of scope", "cancelled"…), Azure close reasons, GitLab labels. A
