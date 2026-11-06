@@ -1,0 +1,44 @@
+{
+  "_note": "Golden expectations, written by hand from docs/phase-2-design.md — never regenerated from the classifier's output. `cwd` is relative to the repo root; `specs` to `cwd`.",
+  "scenarios": [
+    {
+      "id": "real-bug",
+      "what": "the two planted bugs in the demo app (its own suite, unchanged)",
+      "cwd": "demo/app",
+      "specs": [],
+      "expect": [
+        { "ticket": "DEMO-101", "caseId": "TC-005", "class": "product-bug", "rule": "PRD-1", "action": "act", "step": "file-bug" },
+        { "ticket": "DEMO-102", "caseId": "TC-006", "class": "product-bug", "rule": "PRD-1", "action": "act", "step": "file-bug" }
+      ]
+    },
+    {
+      "id": "stale-selector",
+      "what": "a UI test still looks for the old test-id of a renamed button",
+      "cwd": "demo/scenarios",
+      "specs": ["stale-selector/stale-selector.test.js"],
+      "snapshot": "demo/app/public/index.html",
+      "expect": [
+        { "ticket": "DEMO-101", "caseId": "TC-901", "class": "test-bug", "rule": "TST-1", "action": "act", "step": "propose-test-fix" }
+      ]
+    },
+    {
+      "id": "flaky",
+      "what": "fails on the first attempt, passes on the next",
+      "cwd": "demo/scenarios",
+      "specs": ["flaky/flaky.test.js"],
+      "stateDir": true,
+      "expect": [
+        { "ticket": "DEMO-102", "caseId": "TC-902", "class": "flaky", "rule": "FLK-1", "action": "act", "step": "report-flaky" }
+      ]
+    },
+    {
+      "id": "env-outage",
+      "what": "the environment's host does not resolve",
+      "cwd": "demo/scenarios",
+      "specs": ["env-outage/env-outage.test.js"],
+      "expect": [
+        { "ticket": "DEMO-103", "caseId": "TC-903", "class": "environment", "rule": "ENV-2", "action": "act", "step": "report-environment" }
+      ]
+    }
+  ]
+}

@@ -65,11 +65,12 @@ function plan({ framework, outDir, testDir, configPath, specs = [], headed = fal
     case 'node':
       return {
         command: 'node',
-        // options must precede the files: anything after a file name is handed to the test file, not to node
-        args: ['--test', '--test-reporter=spec', '--test-reporter-destination=stdout', '--test-reporter=junit', `--test-reporter-destination=${file('results.xml')}`, ...specs],
+        // options must precede the files: anything after a file name is handed to the test file, not to node.
+        // TAP, not JUnit: node's JUnit has no file location, and re-running only the failing specs needs one.
+        args: ['--test', '--test-reporter=spec', '--test-reporter-destination=stdout', '--test-reporter=tap', `--test-reporter-destination=${file('results.tap')}`, ...specs],
         env: {},
-        results: file('results.xml'),
-        format: 'junit',
+        results: file('results.tap'),
+        format: 'tap',
         notes: ['runs from --cwd; Node 22 takes files, not directories, so pass --spec or let it discover test files'],
       };
     default:

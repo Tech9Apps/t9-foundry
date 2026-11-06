@@ -76,6 +76,15 @@ Fix what is wrong today and make unattended runs *safe to attempt*.
 
 ## Phase 2 — Close the loop: run → triage → act *(medium)*
 
+> **Status — first checkpoint built, verified against mocks and real `node --test` runs; self-heal not started.**
+> Design and what changed while building it: [phase-2-design.md](./phase-2-design.md). Built: the orchestrator agent and
+> `/run-and-triage`, the triage rubric, the classifier (code, not prose), fingerprints, tracker dedupe, flake reporting,
+> and the four seeded scenarios. **Not built:** self-heal (open decision), flake tagging/quarantine (needs it), cross-run
+> flake rate and tracker-search-lag protection (Phase 3's ledger). **Not verified:** classification quality on real
+> Playwright/Cypress/Jest failures (so only TAP, which the seeded scenarios use, may let a product-bug or test-bug verdict act;
+> every other format is held at `propose`), tracker search by body marker on real services (`smoke.js` now checks it), the
+> agent's prose under a live model.
+
 - **`QA-run-orchestrator` agent**: `preflight → run → re-run failures ×N → classify → act → report`.
 - **Failure classification** with a binding rubric `.claude/memory/failure-triage-rules.md`: `product-bug | test-bug | flaky | environment`. Evidence rules (e.g. passes on re-run ⇒ flaky; locator-not-found with element present under a different testid ⇒ test-bug; 5xx/connection refused/preflight failure ⇒ environment). The classifier returns a confidence and cites evidence; low confidence ⇒ `propose` regardless of tier.
 - **Bug filing handoff** to `file-bug` for `product-bug` only, with a **fingerprint** (spec + title + normalized error signature) and `tracker search` for an existing open bug first — comment on it instead of duplicating.

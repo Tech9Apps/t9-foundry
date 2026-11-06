@@ -102,6 +102,43 @@ function runContractSuite(name, makeMock) {
       assert.equal(mock.createdItems().length, 1);
     });
 
+    test('a token that appears ONLY in a bug\'s body is found by search(kind: bug), and fetch returns the body (fingerprint dedupe depends on both)', async () => {
+      const { adapter } = fresh();
+      const token = 'qafp0123456789ab';
+      const created = await run(adapter, 'create-bug', bugInput({ title: 'Receipt total is wrong on refunds', body: `Steps: refund an order.\n\nqa-harness-fingerprint: ${token}` }));
+      const found = await run(adapter, 'search', { query: token, kind: 'bug' });
+      assert.ok(found.items.some((i) => i.id === created.id), 'search must look in the body, not just the title');
+      const ticket = await run(adapter, 'fetch', { id: created.id });
+      assert.ok(ticket.description.includes(token), `fetch must return the bug body in description, got: ${JSON.stringify(ticket.description)}`);
+    });
+
+    test('search says whether each item is open, and still returns closed ones (a recurrence must be recognizable)', async () => {
+      const { mock, adapter } = fresh();
+      const live = await run(adapter, 'create-bug', bugInput({ title: 'Receipt total is wrong on refunds' }));
+      const old = await run(adapter, 'create-bug', bugInput({ title: 'Receipt rounding is wrong on refunds' }));
+      mock.closeItem(old.id); // the tracker's NATIVE closed state (closed / resolved / done …)
+      const { items } = await run(adapter, 'search', { query: 'Receipt', kind: 'bug' });
+      assertValid('tracker-search-result', { items });
+      const byId = Object.fromEntries(items.map((i) => [i.id, i]));
+      assert.equal(byId[live.id].open, true, 'a live bug is open');
+      assert.equal(byId[old.id].open, false, 'a closed bug is still returned, marked not open');
+    });
+
+    test('search marks an item DISMISSED when the tracker says it was closed without a fix (and a dismissed item is never open)', async () => {
+      const { mock, adapter } = fresh();
+      const live = await run(adapter, 'create-bug', bugInput({ title: 'Receipt total is wrong on refunds' }));
+      const fixed = await run(adapter, 'create-bug', bugInput({ title: 'Receipt rounding is wrong on refunds' }));
+      const wont = await run(adapter, 'create-bug', bugInput({ title: 'Receipt tax is wrong on refunds' }));
+      mock.closeItem(fixed.id);   // closed because it was fixed
+      mock.dismissItem(wont.id);  // closed because nobody will fix it: the tracker's NATIVE "won't fix"
+      const { items } = await run(adapter, 'search', { query: 'Receipt', kind: 'bug' });
+      assertValid('tracker-search-result', { items });
+      const byId = Object.fromEntries(items.map((i) => [i.id, i]));
+      assert.deepEqual([byId[wont.id].open, byId[wont.id].dismissed], [false, true], 'won\'t fix: not open, and dismissed');
+      assert.deepEqual([byId[fixed.id].open, byId[fixed.id].dismissed], [false, undefined], 'fixed: closed, but NOT dismissed — if it comes back that IS a regression');
+      assert.deepEqual([byId[live.id].open, byId[live.id].dismissed], [true, undefined]);
+    });
+
     test('a key that is a PREFIX of another key never dedupes a different item (bug-1 vs bug-10): bugs, test cases and comments', async () => {
       const { mock, adapter } = fresh();
       const parent = seed(mock);

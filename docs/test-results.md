@@ -73,7 +73,7 @@ Two guards protect the caller, because `--out` and the spec/dir/config arguments
 | `rspec` | `bundle exec rspec … --format RspecJunitFormatter --out …` | JUnit | the `rspec_junit_formatter` gem |
 | `jest` | `npx jest … --verbose --json --outputFile=…` | Jest JSON | — |
 | `webdriverio` | `npx wdio <config> [--spec …]` | JUnit, one file per worker (merged) | `@wdio/junit-reporter`, configured: `reporters: ['spec', ['junit', { outputDir: process.env.QA_RESULTS_DIR }]]` |
-| `node` | `node --test --test-reporter=junit …` | JUnit | Node 22 (verified on 22.17; it is what the demo app uses) |
+| `node` | `node --test --test-reporter=tap …` | TAP (with file and line, which re-running only the failing specs needs) | Node 22 (verified on 22.17; it is what the demo app uses) |
 | `selenium`, `other` | *no recipe* | — | run your suite as you normally do, then `normalize.js` its JUnit/TAP/JSON report |
 
 Defaults for `--framework`, `--test-dir` and `--config-file` come from `testFramework` in `qa-config.json`. Every
@@ -84,7 +84,7 @@ strange file name.
 
 | | |
 |---|---|
-| The parsers and normalizer | Tested against **real** `node --test` output (TAP and JUnit, 22 tests, 2 planted failures) and against hand-written fixtures for pytest, Cypress, WebdriverIO, RSpec, Playwright JSON and Jest JSON. Those fixtures follow each tool's documented report shape but were **not captured from a live run** — each says so in `tests/fixtures/results/README.md`. |
+| The parsers and normalizer | Tested against **real** `node --test` output (TAP and JUnit, 22 tests, 2 planted failures) against **real** Jest 30.5.2 and Playwright 1.65.0 reports for a small demo app (`tests/fixtures/results/real/`), and against hand-written fixtures for pytest, Cypress, WebdriverIO, RSpec and the other Playwright/Jest shapes. The hand-written ones follow each tool's documented report shape but were **not captured from a live run** — each says so in `tests/fixtures/results/README.md`. |
 | The orchestration (`run.js`) | Tested with a fake runner for every failure mode (crash after a partial report, hang, nothing written, stale report, missing binary) **and** with real `node --test` runs. |
 | The recipes for playwright, cypress, pytest, rspec, jest, webdriverio | The command lines come from each tool's documentation and are pinned by tests, but **have not been run against the real tool**. The `node` recipe has — it caught a real bug (reporter flags placed after a file name are silently ignored). Run `run.js` once per framework you use, and if a flag is off the failure is loud: exit 3 with the framework's own output on stderr. |
 

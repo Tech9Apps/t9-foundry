@@ -36,7 +36,11 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
     return `${issues}/${id}`;
   };
   const href = (i) => i.links && i.links.html && i.links.html.href;
-  const summarize = (i) => ({ id: String(i.id), title: i.title, url: href(i), status: i.state });
+  // Bitbucket issue states: new, open, on hold are live; resolved, closed, invalid, duplicate, wontfix are not
+  const BB_OPEN = new Set(['new', 'open', 'on hold']);
+  // Bitbucket's own resolutions that mean "not a defect we will fix" (as opposed to resolved/closed, which mean fixed)
+  const BB_DISMISSED = new Set(['wontfix', 'invalid', 'duplicate']);
+  const summarize = (i) => ({ id: String(i.id), title: i.title, url: href(i), status: i.state, open: BB_OPEN.has(String(i.state).toLowerCase()), ...(i.created_on ? { createdAt: i.created_on } : {}), ...(BB_DISMISSED.has(String(i.state).toLowerCase()) ? { dismissed: true } : {}) });
   const withMarker = (text, key) => (key ? `${text}\n\n${keyMarker(key)}` : text);
   const capital = (s) => (s ? s[0].toUpperCase() + s.slice(1) : '');
 

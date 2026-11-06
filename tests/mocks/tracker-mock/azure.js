@@ -14,9 +14,10 @@ function createAzureMock({ pat = 'test-pat', org = 'acme', project = 'shop' } = 
 
   function seedItem({ type = 'User Story', fields = {}, relations = [] }) {
     const id = state.seq++;
+    const created = new Date(Date.UTC(2026, 0, 2, 3, 4, 5) + (id - 100) * 1000).toISOString().replace('.000Z', 'Z'); // later items are created later
     state.items.set(id, {
       id, rev: 1, url: `${baseUrl}/${org}/${project}/_apis/wit/workItems/${id}`, _links: { html: { href: htmlUrl(id) } },
-      fields: { 'System.WorkItemType': type, 'System.State': 'Active', 'System.AreaPath': `${project}\\Checkout`, 'System.IterationPath': `${project}\\Sprint 1`, 'Microsoft.VSTS.Common.Priority': 2, 'System.Tags': '', ...fields },
+      fields: { 'System.WorkItemType': type, 'System.State': 'Active', 'System.AreaPath': `${project}\\Checkout`, 'System.IterationPath': `${project}\\Sprint 1`, 'Microsoft.VSTS.Common.Priority': 2, 'System.Tags': '', 'System.CreatedDate': created, ...fields },
       relations,
     });
     state.comments.set(id, []);
@@ -74,15 +75,20 @@ function createAzureMock({ pat = 'test-pat', org = 'acme', project = 'shop' } = 
   });
   core.route('POST', `${W}/wiql`, ({ body }) => {
     const q = (body && body.query) || '';
-    const needles = [...q.matchAll(/\[System\.\w+\] CONTAINS '((?:[^']|'')*)'/g)].map((m) => m[1].replace(/''/g, "'").toLowerCase());
+    // Each `[Field] CONTAINS 'x'` is checked against THAT field only (as real WIQL does) — matching a blob of every
+    // field would hide an adapter that searches the wrong one (bug bodies live in ReproSteps, not Description).
+    const clauses = [...q.matchAll(/\[((?:System|Microsoft\.VSTS)\.[\w.]+)\] CONTAINS '((?:[^']|'')*)'/g)].map((m) => ({ field: m[1], needle: m[2].replace(/''/g, "'").toLowerCase() }));
     const type = (q.match(/\[System\.WorkItemType\] = '([^']+)'/) || [])[1];
-    const hits = [...state.items.values()].filter((it) => {
-      const hay = [it.fields['System.Title'], it.fields['System.Description'], it.fields['System.Tags']].join('\n').toLowerCase();
-      return (!needles.length || needles.some((n) => hay.includes(n))) && (!type || it.fields['System.WorkItemType'] === type);
-    });
+    const hits = [...state.items.values()].filter((it) => (
+      (!clauses.length || clauses.some((c) => String(it.fields[c.field] || '').toLowerCase().includes(c.needle)))
+      && (!type || it.fields['System.WorkItemType'] === type)
+    ));
     return [200, { workItems: hits.map((it) => ({ id: it.id })) }];
   });
-  core.route('POST', `${W}/workitemsbatch`, ({ body }) => [200, { count: (body.ids || []).length, value: (body.ids || []).map((id) => item(id)) }]);
+  // Like the real API: only the fields that were ASKED for come back (plus the id). A mock that returned everything would let an adapter
+  // forget to request a field and still pass.
+  const only = (wi, fields) => (Array.isArray(fields) && fields.length ? { ...wi, fields: Object.fromEntries(Object.entries(wi.fields).filter(([k]) => fields.includes(k))) } : wi);
+  core.route('POST', `${W}/workitemsbatch`, ({ body }) => [200, { count: (body.ids || []).length, value: (body.ids || []).map((id) => only(item(id), body.fields)) }]);
 
   const stripTags = (s = '') => String(s).replace(/<[^>]+>/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
 
@@ -102,6 +108,9 @@ function createAzureMock({ pat = 'test-pat', org = 'acme', project = 'shop' } = 
       const f = state.items.get(id).fields;
       return { id: String(id), title: f['System.Title'], text: [f['System.Description'], f['Microsoft.VSTS.TCM.Steps'], f['Microsoft.VSTS.TCM.ReproSteps']].map(stripTags).join('\n') };
     }),
+    setState: (id, st, reason) => { const w = state.items.get(Number(id)); w.fields['System.State'] = st; w.fields['System.Reason'] = reason; },
+    closeItem: (id) => { const w = state.items.get(Number(id)); w.fields['System.State'] = 'Closed'; w.fields['System.Reason'] = 'Fixed'; },
+    dismissItem: (id) => { const w = state.items.get(Number(id)); w.fields['System.State'] = 'Resolved'; w.fields['System.Reason'] = 'Will not Fix'; },
     commentsOn: (id) => state.comments.get(Number(id)).map((c) => c.text),
     paths: { create: '/workitems/\\$[^/]+$', search: '/wiql', ticket: '/workitems/\\d+(\\?|$)', link: '/workitems/\\d+(\\?|$)' },
     linkMethod: 'PATCH',

@@ -78,6 +78,8 @@ function createBitbucketMock({ secret = 'app-password', username = 'qa-bot', wor
       return String(id);
     },
     createdItems: () => state.created.map((id) => ({ id: String(id), title: state.issues.get(id).title, text: state.issues.get(id).content.raw })),
+    closeItem: (id) => { state.issues.get(Number(id)).state = 'resolved'; },
+    dismissItem: (id) => { state.issues.get(Number(id)).state = 'wontfix'; },
     commentsOn: (id) => state.comments.get(Number(id)).map((c) => c.content.raw),
     paths: { create: '/issues$', search: '/issues', ticket: '/issues/\\d+(\\?|$)' },
     missingId: '99999',

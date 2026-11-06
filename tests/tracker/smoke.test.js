@@ -30,7 +30,7 @@ for (const type of Object.keys(MOCKS)) {
       const r = await smoke(type);
       assert.equal(r.code, 0, r.err);
       assert.equal(r.json.ok, true);
-      assert.deepEqual(r.json.summary, { pass: 10, warn: 0, fail: 0, skipped: 0 });
+      assert.deepEqual(r.json.summary, { pass: 11, warn: 0, fail: 0, skipped: 0 });
       assert.deepEqual(r.json.leftovers.map((l) => l.kind), ['bug', 'test-case']);
       assert.equal(r.mock.createdItems().length, 2, 'two items exist in the tracker — the retries made no third');
       assert.match(r.json.cleanup, /close or delete/);
@@ -122,6 +122,34 @@ describe('smoke: failure reporting', () => {
     const r = await smoke('github', { mock: catchUp, args: ['--yes', '--search-wait-ms', '10000'], sleep: async () => catchUp.settle() });
     assert.equal(check(r, 'search finds it').status, 'pass');
     assert.match(check(r, 'search finds it').detail, /found after 2 attempt/);
+  });
+
+  test('a body-only marker that search cannot find is a WARNING that names both explanations (lag, or search ignores bodies)', async () => {
+    const mock = MOCKS.github();
+    // search works for the title (the run id) but never returns anything for the marker token
+    const blindToBodies = (url, init) => (/\/search\/issues/.test(String(url)) && /qafp/.test(decodeURIComponent(String(url)))
+      ? Promise.resolve(new Response(JSON.stringify({ total_count: 0, items: [] }), { status: 200, headers: { 'content-type': 'application/json' } }))
+      : mock.fetch(url, init));
+    const r = await smoke('github', { mock, fetch: blindToBodies });
+    assert.equal(r.code, 0);
+    assert.equal(check(r, 'search finds it').status, 'pass');
+    assert.equal(check(r, 'marker that is only in the body').status, 'warn');
+    assert.match(check(r, 'marker that is only in the body').detail, /lags, or this tracker's search does not look in bodies/);
+  });
+
+  test('if fetch does not return the body marker, that FAILS (a search hit could never be confirmed)', async () => {
+    const mock = MOCKS.github();
+    const noBodies = async (url, init) => {
+      const res = await mock.fetch(url, init);
+      if (/\/issues\/\d+$/.test(String(url)) && (!init || !init.method || init.method === 'GET')) {
+        const json = await res.json();
+        return new Response(JSON.stringify({ ...json, body: '' }), { status: res.status, headers: { 'content-type': 'application/json' } });
+      }
+      return res;
+    };
+    const r = await smoke('github', { mock, fetch: noBodies });
+    assert.equal(check(r, 'marker that is only in the body').status, 'fail');
+    assert.match(check(r, 'marker that is only in the body').detail, /fetch did not return the marker/);
   });
 
   test('an unknown id that is not NOT_FOUND is a warning that names what the tracker said', async () => {
