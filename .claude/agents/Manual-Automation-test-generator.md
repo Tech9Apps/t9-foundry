@@ -1,6 +1,6 @@
 ---
 name: Manual-Automation-test-generator
-description: End-to-end test generation agent. Fetches a ticket from the configured source (Jira, Azure DevOps, ClickUp, GitHub Issues, or none), analyzes the configured project's source code, generates manual + automated Playwright test cases, posts them to the tracker, executes tests in headed mode, and updates the tracker with results. Use when generating tests with automation for a ticket.
+description: End-to-end test generation agent. Fetches a ticket from the configured source (Jira, Azure DevOps, ClickUp, GitHub Issues, GitLab, Bitbucket, or none), analyzes the configured project's source code, generates manual + automated Playwright test cases, posts them to the tracker, executes tests in headed mode, and updates the tracker with results. Use when generating tests with automation for a ticket.
 tools: Read, Write, Edit, Bash, Grep, Glob, Agent, AskUserQuestion, mcp__claude_ai_Atlassian__getJiraIssue, mcp__claude_ai_Atlassian__addCommentToJiraIssue, mcp__claude_ai_Atlassian__searchJiraIssuesUsingJql, mcp__claude_ai_Atlassian__createJiraIssue, mcp__claude_ai_Atlassian__createIssueLink, mcp__claude_ai_Atlassian__atlassianUserInfo, mcp__claude_ai_Atlassian__getJiraProjectIssueTypesMetadata
 model: opus
 maxTurns: 50
@@ -60,12 +60,14 @@ On completion, add this checkpoint to the final return message: `**✅ Test case
 Read and execute: `.claude/commands/run-spec-tests.md` (use the spec file created in Step 4)
 After test execution, add this checkpoint to the final return message: `**✅ Automated test cases executed successfully**`
 
-Then record the execution results (total run, passed, failed, skipped, execution time, failure details) — branch on `ticketSource.type`, same config fields as `post-tests.md`'s branches:
+Then record the execution results (total run, passed, failed, skipped, flaky, execution time, failure details — read them from `qa-results/result.json`, which the run in the previous step wrote) — branch on `ticketSource.type`, same sources as `post-tests.md`:
 
 - **jira**: post as a comment via `mcp__claude_ai_Atlassian__addCommentToJiraIssue` on `$ARGUMENTS`, `cloudId` from `qa-config.json > ticketSource.jira.cloudId`.
-- **azure**: append to `System.History` via `curl -s -X PATCH -u ":$AZURE_DEVOPS_PAT" -H "Content-Type: application/json-patch+json" -d '[{"op":"add","path":"/fields/System.History","value":"<results as HTML>"}]' "{host}/{organization}/{project}/_apis/wit/workitems/$ARGUMENTS?api-version=7.1"` (org/project/host/token from `ticketSource.azure`, same fields as `fetch-ticket.md`'s azure branch).
-- **clickup**: `curl -s -X POST -H "Authorization: $CLICKUP_TOKEN" -H "Content-Type: application/json" -d '{"comment_text": "<results>"}' "https://api.clickup.com/api/v2/task/$ARGUMENTS/comment"`.
-- **github**: `gh issue comment $ARGUMENTS --repo {ticketSource.github.repo} --body "<results>"`.
+- **github / clickup / azure / gitlab / bitbucket** — through the tracker adapter CLI. Write the summary to `{testCasesDir}/$ARGUMENTS-execution-results.md` with the Write tool (never inline a multi-line summary into a shell command), then write `tests/cases/.ticket-context/$ARGUMENTS-results-comment.json` containing `{ "id": "$ARGUMENTS", "body": "<the summary>", "idempotencyKey": "results-$ARGUMENTS-<UTC timestamp, generated once for this run>" }` and run:
+  ```bash
+  node scripts/tracker/cli.js comment --input-file tests/cases/.ticket-context/$ARGUMENTS-results-comment.json
+  ```
+  Generate the timestamp **once** per run and reuse it if you have to retry: the key then makes a retry safe (a lost response will not post the summary twice), while a later run gets its own comment. On `"ok": false`, report `error.code` and `error.message`; for a `retriable` error run the same command again.
 - **none**: save the results to `{testCasesDir}/$ARGUMENTS-execution-results.md` instead — nothing leaves the workspace, and there is no remote comment to post.
 
 After the results are recorded, add this checkpoint: `**✅ Automated test execution results added successfully**`

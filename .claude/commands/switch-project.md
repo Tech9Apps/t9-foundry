@@ -10,6 +10,8 @@ You are given a project profile name: **$ARGUMENTS**
 
 ## Locate the Profile
 
+**Check the profile name first.** It becomes part of a file path in a shell command, so it must match `^[a-z0-9][a-z0-9-]{0,63}$` (lowercase letters, digits, hyphens). If it does not, stop and say so — suggest a corrected name, but do not use it until the user agrees.
+
 The profile must exist at `projects/$ARGUMENTS.json`. If it does not exist, list the available profiles (as above) and stop.
 
 ## Validate Before Switching

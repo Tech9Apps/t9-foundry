@@ -1,0 +1,182 @@
+TAP version 13
+# Subtest: DEMO-101/TC-001: BREW10 takes 10% off the subtotal
+ok 1 - DEMO-101/TC-001: BREW10 takes 10% off the subtotal
+  ---
+  duration_ms: 0.846084
+  type: 'test'
+  ...
+# Subtest: DEMO-101/TC-002: WELCOME5 takes a flat $5.00 off
+ok 2 - DEMO-101/TC-002: WELCOME5 takes a flat $5.00 off
+  ---
+  duration_ms: 0.1115
+  type: 'test'
+  ...
+# Subtest: DEMO-101/TC-003: codes are case-insensitive and ignore surrounding spaces
+ok 3 - DEMO-101/TC-003: codes are case-insensitive and ignore surrounding spaces
+  ---
+  duration_ms: 0.312209
+  type: 'test'
+  ...
+# Subtest: DEMO-101/TC-004: an unknown code is rejected and the order is unchanged
+ok 4 - DEMO-101/TC-004: an unknown code is rejected and the order is unchanged
+  ---
+  duration_ms: 0.134083
+  type: 'test'
+  ...
+# Subtest: DEMO-101/TC-005: applying the same code twice does not stack the discount
+not ok 5 - DEMO-101/TC-005: applying the same code twice does not stack the discount
+  ---
+  duration_ms: 0.363125
+  type: 'test'
+  location: '/work/demo/app/test/discount-codes.test.js:40:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    a second application of the code should be rejected
+    
+    200 !== 400
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 400
+  actual: 200
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (/work/demo/app/test/discount-codes.test.js:44:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: DEMO-101/TC-006: a second, different code is rejected (one code per order)
+ok 6 - DEMO-101/TC-006: a second, different code is rejected (one code per order)
+  ---
+  duration_ms: 0.066917
+  type: 'test'
+  ...
+# Subtest: DEMO-101/TC-007: a discount can never push the subtotal below $0.00
+ok 7 - DEMO-101/TC-007: a discount can never push the subtotal below $0.00
+  ---
+  duration_ms: 0.088833
+  type: 'test'
+  ...
+# Subtest: DEMO-101/TC-008: applying a code requires being signed in
+ok 8 - DEMO-101/TC-008: applying a code requires being signed in
+  ---
+  duration_ms: 0.043667
+  type: 'test'
+  ...
+# Subtest: DEMO-103/TC-001: valid credentials return a session token
+ok 9 - DEMO-103/TC-001: valid credentials return a session token
+  ---
+  duration_ms: 0.707875
+  type: 'test'
+  ...
+# Subtest: DEMO-103/TC-002: a wrong password shows the generic error
+ok 10 - DEMO-103/TC-002: a wrong password shows the generic error
+  ---
+  duration_ms: 0.079458
+  type: 'test'
+  ...
+# Subtest: DEMO-103/TC-003: an unknown email gets the same error (no account enumeration)
+ok 11 - DEMO-103/TC-003: an unknown email gets the same error (no account enumeration)
+  ---
+  duration_ms: 0.334208
+  type: 'test'
+  ...
+# Subtest: DEMO-103/TC-004: after 5 failed attempts the account is locked, even for the right password
+ok 12 - DEMO-103/TC-004: after 5 failed attempts the account is locked, even for the right password
+  ---
+  duration_ms: 0.088125
+  type: 'test'
+  ...
+# Subtest: DEMO-103/TC-005: the lock lifts after 15 minutes
+ok 13 - DEMO-103/TC-005: the lock lifts after 15 minutes
+  ---
+  duration_ms: 0.119792
+  type: 'test'
+  ...
+# Subtest: DEMO-103/TC-006: a successful login resets the failed-attempt counter
+ok 14 - DEMO-103/TC-006: a successful login resets the failed-attempt counter
+  ---
+  duration_ms: 0.071417
+  type: 'test'
+  ...
+# Subtest: DEMO-102/TC-001: total = subtotal + shipping + tax (no discount)
+ok 15 - DEMO-102/TC-001: total = subtotal + shipping + tax (no discount)
+  ---
+  duration_ms: 1.03425
+  type: 'test'
+  ...
+# Subtest: DEMO-102/TC-002: tax is 8% of the discounted subtotal, rounded to the nearest cent
+ok 16 - DEMO-102/TC-002: tax is 8% of the discounted subtotal, rounded to the nearest cent
+  ---
+  duration_ms: 0.149334
+  type: 'test'
+  ...
+# Subtest: DEMO-102/TC-003: shipping is a flat $5.00 below the free-shipping threshold
+ok 17 - DEMO-102/TC-003: shipping is a flat $5.00 below the free-shipping threshold
+  ---
+  duration_ms: 0.130709
+  type: 'test'
+  ...
+# Subtest: DEMO-102/TC-004: shipping is free at exactly $50.00
+ok 18 - DEMO-102/TC-004: shipping is free at exactly $50.00
+  ---
+  duration_ms: 0.103917
+  type: 'test'
+  ...
+# Subtest: DEMO-102/TC-005: shipping is free well above the threshold
+ok 19 - DEMO-102/TC-005: shipping is free well above the threshold
+  ---
+  duration_ms: 0.102208
+  type: 'test'
+  ...
+# Subtest: DEMO-102/TC-006: free shipping is judged on the discounted subtotal
+not ok 20 - DEMO-102/TC-006: free shipping is judged on the discounted subtotal
+  ---
+  duration_ms: 0.304417
+  type: 'test'
+  location: '/work/demo/app/test/order-totals.test.js:39:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    a cart that falls under $50.00 after the discount must pay shipping
+    
+    0 !== 500
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 500
+  actual: 0
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (/work/demo/app/test/order-totals.test.js:43:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: DEMO-102/TC-007: checking out an empty cart is rejected
+ok 21 - DEMO-102/TC-007: checking out an empty cart is rejected
+  ---
+  duration_ms: 0.110375
+  type: 'test'
+  ...
+# Subtest: DEMO-102/TC-008: checkout returns an order matching the cart totals and empties the cart
+ok 22 - DEMO-102/TC-008: checkout returns an order matching the cart totals and empties the cart
+  ---
+  duration_ms: 0.110875
+  type: 'test'
+  ...
+1..22
+# tests 22
+# suites 0
+# pass 20
+# fail 2
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 53.882916

@@ -1,0 +1,12 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "tracker-link-result.schema.json",
+  "title": "Result of link",
+  "type": "object",
+  "required": ["linked", "method"],
+  "additionalProperties": false,
+  "properties": {
+    "linked": { "type": "boolean" },
+    "method": { "type": "string", "enum": ["native", "reference-in-body"], "description": "native: the tracker's own link/relation; reference-in-body: the parent was referenced in the child's text at creation (GitHub has no link API)" }
+  }
+}

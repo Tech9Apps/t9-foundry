@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- hand-written, Cypress mocha-junit-reporter shape: a root suite with no file, nested describe suites, CDATA failures -->
+<testsuites name="Mocha Tests" time="3.2" tests="3" failures="1">
+  <testsuite name="Root Suite" timestamp="2026-10-08T10:00:00" tests="0" time="0">
+  </testsuite>
+  <testsuite name="Login" timestamp="2026-10-08T10:00:01" tests="3" file="cypress/e2e/login.cy.js" time="3.2" failures="1">
+    <testcase name="Login DEMO-103/TC-001: valid credentials sign in" time="1.1" classname="DEMO-103/TC-001: valid credentials sign in"/>
+    <testcase name="Login DEMO-103/TC-002: lockout after 5 failures" time="2.0" classname="DEMO-103/TC-002: lockout after 5 failures">
+      <failure message="Timed out retrying after 4000ms: Expected to find content: 'Account locked' but never did." type="AssertionError"><![CDATA[AssertionError: Timed out retrying after 4000ms: Expected to find content: 'Account locked' but never did.
+    at Context.eval (webpack:///./cypress/e2e/login.cy.js:20:0)]]></failure>
+    </testcase>
+    <testcase name="Login DEMO-103/TC-003: reset link" time="0.1" classname="DEMO-103/TC-003: reset link"/>
+  </testsuite>
+</testsuites>

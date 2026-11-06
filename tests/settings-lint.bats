@@ -45,7 +45,7 @@ curl_commands() {
   ' "$@"
 }
 
-@test "curl calls to hosts that have allowlist rules still match a rule" {
+@test "any curl call that has an allowlist rule for its host still matches one (and no rule at all is fine once no command uses curl)" {
   # Hosts that were allowlisted before the -fsS/--max-time hardening. Azure (-u) was
   # never allowlisted and intentionally still prompts. So does GitLab: its host is configurable (self-hosted),
   # so no rule can name it, and a rule on "/api/v4/" alone would approve ANY host that has such a path.
@@ -53,7 +53,7 @@ curl_commands() {
   while IFS= read -r r; do rules+=("$r"); done < <(
     jq -r '.permissions.allow[] | select(startswith("Bash(curl")) | sub("^Bash\\("; "") | sub("\\)$"; "")' "$SETTINGS"
   )
-  [ "${#rules[@]}" -gt 0 ]
+  # (After the tracker adapters no command uses curl at all, so there may be no curl rules and nothing to match: that is the goal.)
 
   unmatched=""
   while IFS= read -r cmd; do

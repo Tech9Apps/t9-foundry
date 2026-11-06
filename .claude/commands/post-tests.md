@@ -6,6 +6,8 @@ You are given a ticket/task/work-item ID: **$ARGUMENTS**
 > "A ticket ID is required. Usage: `/post-tests <TICKET-ID>`"
 **Do not proceed.**
 
+**Check the id before using it anywhere.** It is typed by a person (or passed on from a ticket) and ends up in file paths and a shell command. It must match `^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$` — letters, digits, `_` and `-`, nothing else. If it does not (a space, quote, `/`, `.`, `;`, `$`, a leading `-`…), stop and tell the user: "That does not look like a ticket id (letters, digits, `-` and `_` only)." Do not "clean it up" and carry on.
+
 ## Prerequisites
 
 Read `qa-config.json > ticketSource.type` to determine the upload target. If `qa-config.json` is missing or `ticketSource.type` is unset, stop and tell the user to run `/init` or `/switch-project <profile>` first.
@@ -15,7 +17,9 @@ Read `qa-config.json > ticketSource.type` to determine the upload target. If `qa
 - Manual test cases at `tests/cases/$ARGUMENTS.md`. If missing, tell the user to run `/create-manual-test-cases $ARGUMENTS` first.
 - Automated test spec file (find the relevant `.spec.ts` that contains a `test.describe` block with `$ARGUMENTS` in its name, if any)
 
-> **Reference:** the method for each target below mirrors `.claude/guides/integration-sources.md` — update that file too if an upload method changes here.
+> **Reference:** `.claude/guides/integration-sources.md` lists the upload method per target — update it if a method changes here.
+
+**Which path a target takes:** `github`, `clickup`, `azure`, `gitlab` and `bitbucket` are posted by `scripts/tracker/post-tests.js` (one tested, resumable command — see `docs/tracker-adapters.md`). `jira` is posted through the Atlassian MCP tools below. `none` posts nothing.
 
 ## Read Context
 
@@ -68,11 +72,9 @@ After any remove/update/add action, re-display the updated table and ask for app
 
 ## Post, by ticket source
 
-**Every `curl` call below uses `-f` (fail on HTTP error status) and `--max-time 30` (bound the wait) — check the exit code after each one.** A non-zero exit means that call failed: do not add that test case to the "Save Created Test Keys" file as if it succeeded, and do not treat a failed create as eligible for linking. `gh` commands (GitHub branch) exit non-zero on failure the same way — check them too.
-
-**Idempotency check — before creating anything:** if `tests/cases/.ticket-context/$ARGUMENTS-test-keys.json` already exists from a prior run, read it first. For each TC-XXX already present with a remote ID recorded, skip re-creating it — show the user which TC-XXX already exist remotely and ask whether to skip them (default) or force-recreate. Only create/link test cases that are new or that the user explicitly asked to recreate. This avoids duplicate issues/tasks/work items when a prior run partially failed and is being re-run.
-
 ### jira
+
+**Idempotency check — before creating anything:** if `tests/cases/.ticket-context/$ARGUMENTS-test-keys.json` already exists from a prior run, read it first. For each TC-XXX already present with a remote ID recorded, skip re-creating it — show the user which TC-XXX already exist remotely and ask whether to skip them (default) or force-recreate. Only create/link test cases that are new or that the user explicitly asked to recreate. This avoids duplicate issues when a prior run partially failed and is being re-run. (The adapter-backed trackers below do this in code.)
 
 **Resolve `cloudId` and `projectKey` first:** use the inline-resolved values if the invoking agent supplied them, otherwise read `ticketSource.jira.cloudId` / `ticketSource.jira.projectKey` from `qa-config.json`. Every `cloudId` / `projectKey` reference below means the resolved value.
 
@@ -115,130 +117,27 @@ Save keys to `tests/cases/.ticket-context/$ARGUMENTS-test-keys.json`. Only inclu
 { "parentTicket": "$ARGUMENTS", "tests": [{ "tcId": "TC-001", "jiraKey": "<PROJECT-KEY>-XXXXX", "summary": "...", "linked": true }] }
 ```
 
-### azure
+### github / clickup / azure / gitlab / bitbucket — via the tracker adapter CLI
 
-Read `ticketSource.azure` (organization, project, `tokenEnvVar` default `AZURE_DEVOPS_PAT`, `host` default `https://dev.azure.com`) — same fields as `fetch-ticket.md`'s azure branch.
+Once the review gate is approved — and `tests/cases/$ARGUMENTS.md` reflects every remove/update/add the user asked for — post everything with one command:
 
-Fetch parent work item fields:
 ```bash
-curl -fsS --max-time 30 -u ":$AZURE_DEVOPS_PAT" \
-  "https://dev.azure.com/{organization}/{project}/_apis/wit/workitems/$ARGUMENTS?api-version=7.1"
-```
-Extract **Area Path** (`fields["System.AreaPath"]`) and **Iteration Path** (`fields["System.IterationPath"]`) — copied to each Test Case work item.
-
-Identify the assignee via the PAT's associated user:
-```bash
-curl -fsS --max-time 30 -u ":$AZURE_DEVOPS_PAT" \
-  "https://vssps.dev.azure.com/{organization}/_apis/profile/profiles/me?api-version=7.1"
-```
-Extract `displayName`/`uniqueName` (email) to use as `System.AssignedTo`.
-
-For **each** manual test case, create an Azure DevOps **Test Case** work item:
-```bash
-curl -fsS --max-time 30 -X POST -u ":$AZURE_DEVOPS_PAT" \
-  -H "Content-Type: application/json-patch+json" \
-  -d '[
-    {"op": "add", "path": "/fields/System.Title", "value": "TC-XXX: <test case title>"},
-    {"op": "add", "path": "/fields/System.AreaPath", "value": "<area-path-from-parent>"},
-    {"op": "add", "path": "/fields/System.IterationPath", "value": "<iteration-path-from-parent>"},
-    {"op": "add", "path": "/fields/System.AssignedTo", "value": "<uniqueName-from-profile>"},
-    {"op": "add", "path": "/fields/Microsoft.VSTS.Common.Priority", "value": <priority-number>},
-    {"op": "add", "path": "/fields/Microsoft.VSTS.TCM.Steps", "value": "<steps-xml>"}
-  ]' \
-  "https://dev.azure.com/{organization}/{project}/_apis/wit/workitems/\$Test%20Case?api-version=7.1"
+node scripts/tracker/post-tests.js --parent $ARGUMENTS
 ```
 
-Priority mapping: High→1, Medium→2, Low→3, unspecified→4. Steps go in `Microsoft.VSTS.TCM.Steps` as ADO's steps XML:
-```xml
-<steps id="0" last="2">
-  <step id="1" type="ActionStep">
-    <parameterizedString isformatted="true">&lt;Step 1 action&gt;</parameterizedString>
-    <parameterizedString isformatted="true">&lt;Step 1 expected result&gt;</parameterizedString>
-  </step>
-  <step id="2" type="ActionStep">
-    <parameterizedString isformatted="true">&lt;Step 2 action&gt;</parameterizedString>
-    <parameterizedString isformatted="true">&lt;Step 2 expected result&gt;</parameterizedString>
-  </step>
-</steps>
-```
+It reads `tests/cases/$ARGUMENTS.md`, confirms the parent ticket exists and the credentials work (so a typo'd id creates nothing), then for every case creates the test item, links it to the parent, and records the outcome in `tests/cases/.ticket-context/$ARGUMENTS-test-keys.json`. You do not call the tracker yourself and you do not write the keys file by hand. Credentials come from the environment (`GITHUB_TOKEN`, `CLICKUP_TOKEN`, `AZURE_DEVOPS_PAT`, `GITLAB_TOKEN`, `BITBUCKET_TOKEN`, or `ticketSource.<type>.tokenEnvVar`) — never put a token on the command line or in a file. To preview without credentials or requests, add `--dry-run`.
 
-**Create work items in parallel batches** (up to 8 at a time). Collect all created work item IDs.
+**It is safe to run again.** Every case carries an idempotency key, so a re-run finds existing items instead of duplicating them, completes any item a previous attempt left half-built, and links anything that was created but not linked. Never run it twice at the same time.
 
-For **each** created Test Case work item, add a relation:
-```bash
-curl -fsS --max-time 30 -X PATCH -u ":$AZURE_DEVOPS_PAT" \
-  -H "Content-Type: application/json-patch+json" \
-  -d '[{"op": "add", "path": "/relations/-", "value": {"rel": "Microsoft.VSTS.Common.TestedBy-Reverse", "url": "https://dev.azure.com/{organization}/{project}/_apis/wit/workitems/$ARGUMENTS"}}]' \
-  "https://dev.azure.com/{organization}/{project}/_apis/wit/workitems/<created-work-item-id>?api-version=7.1"
-```
-**Create links in parallel.** This populates **Tested By / Tests** on the parent.
+Read the JSON it prints and report from it:
 
-Save keys to `tests/cases/.ticket-context/$ARGUMENTS-test-keys.json`. Only include a test case here if its work item was actually created — a failed create has no `workItemId` and isn't added. Record `linked: false` (not `true`) for a test case whose work item was created but whose relation-add call failed, so a re-run can retry just the link instead of recreating the work item:
-```json
-{ "parentWorkItem": "$ARGUMENTS", "tests": [{ "tcId": "TC-001", "workItemId": "XXXXX", "summary": "...", "linked": true }] }
-```
+| Result | Meaning | What to do |
+|---|---|---|
+| `"ok": true` | Every case exists in the tracker and is linked. | Report the table (see Output). |
+| `"ok": false` with a top-level `error`, no `tests` | It stopped **before creating anything**. | `NOT_FOUND` → the parent ticket is wrong; `UNAUTHENTICATED` / `FORBIDDEN` / `CONFIG` → tell the user exactly what is missing (`error.message`) and how to fix it; `VALIDATION` → the cases file is missing or empty (run `/create-manual-test-cases $ARGUMENTS`). Do not retry until the cause is fixed. |
+| `"ok": false` with `failed` / `skipped` / `linkFailed` counts | Some cases did not make it. `tests[]` says which and why (`error.code`, `error.message`, `linkError`). | List the failing cases. If the errors are `retriable`, run the **same command again** — it resumes. `skipped > 0` means the run stopped early on a problem that would have hit every remaining case (revoked credentials, rate limiting): fix or wait first. To retry only some cases: `--only TC-003,TC-007`. |
 
-### clickup
-
-Read `ticketSource.clickup.tokenEnvVar` (default `CLICKUP_TOKEN`) and `ticketSource.clickup.listId`.
-
-Identify the assignee: `curl -fsS --max-time 30 -H "Authorization: $CLICKUP_TOKEN" "https://api.clickup.com/api/v2/user"`, extract `user.id`.
-
-For **each** manual test case:
-
-a. Create the task:
-```bash
-curl -fsS --max-time 30 -X POST -H "Authorization: $CLICKUP_TOKEN" -H "Content-Type: application/json" \
-  -d '{"name": "TC-XXX: <test case title>", "description": "<preconditions + description>", "priority": <priority_num>, "assignees": [<user_id>]}' \
-  "https://api.clickup.com/api/v2/list/{listId}/task"
-```
-Priority mapping: High→1, Medium→2, Low→3, unspecified→4
-
-b. Add test steps as a checklist:
-```bash
-curl -fsS --max-time 30 -X POST -H "Authorization: $CLICKUP_TOKEN" -H "Content-Type: application/json" \
-  -d '{"name": "Test Steps"}' \
-  "https://api.clickup.com/api/v2/task/{task_id}/checklist"
-```
-Then add each step as a checklist item:
-```bash
-curl -fsS --max-time 30 -X POST -H "Authorization: $CLICKUP_TOKEN" -H "Content-Type: application/json" \
-  -d '{"name": "<step text> — Expected: <expected result>"}' \
-  "https://api.clickup.com/api/v2/checklist/{checklist_id}/checklist_item"
-```
-
-**Create tasks in parallel batches** (up to 8 at a time). Collect all created task IDs.
-
-For **each** created test task, link it to the parent task:
-```bash
-curl -fsS --max-time 30 -X POST -H "Authorization: $CLICKUP_TOKEN" \
-  "https://api.clickup.com/api/v2/task/{created_task_id}/link/$ARGUMENTS"
-```
-**Create links in parallel.** This adds the parent task under **Linked Tasks**.
-
-Save keys to `tests/cases/.ticket-context/$ARGUMENTS-test-keys.json`. Only include a test case here if its task was actually created — a failed create has no `clickupTaskId` and isn't added. Record `linked: false` (not `true`) for a test case whose task was created but whose link call failed, so a re-run can retry just the link instead of recreating the task:
-```json
-{ "parentTask": "$ARGUMENTS", "tests": [{ "tcId": "TC-001", "clickupTaskId": "XXXXX", "summary": "...", "linked": true }] }
-```
-
-### github
-
-Read `ticketSource.github.repo` (owner/repo) and `ticketSource.github.testLabelName` (default `test-case`).
-
-For **each** manual test case:
-```bash
-gh issue create --repo {ticketSource.github.repo} \
-  --title "TC-XXX: <test case title>" \
-  --body "<formatted body: preconditions, steps, expected result>" \
-  --label "{testLabelName}" \
-  --label "$ARGUMENTS"
-```
-GitHub Issues has no native issue-linking API via `gh issue create` — reference the parent in the body text (e.g. "Tests #$ARGUMENTS") instead of a structured link field.
-
-Save keys to `tests/cases/.ticket-context/$ARGUMENTS-test-keys.json`. Only include a test case here if its issue was actually created — a failed `gh issue create` has no `githubIssueNumber` and isn't added:
-```json
-{ "parentIssue": "$ARGUMENTS", "tests": [{ "tcId": "TC-001", "githubIssueNumber": "XXXXX", "summary": "..." }] }
-```
+Never re-create cases by hand and never tell the user to delete "duplicates" — re-running the command is the fix for every partial failure.
 
 ### none
 
@@ -246,7 +145,7 @@ No ticket system is configured — no remote upload is possible or attempted. Th
 
 ## Output
 
-- Confirm all test cases created successfully (or, for `none`, confirm the file path)
-- Print a table: TC ID | Remote ID | Summary
-- Confirm links to the parent ticket/work item/task were created (not applicable for `github` or `none`)
-- Print total count created
+- Confirm all test cases were posted (or, for `none`, confirm the file path)
+- Print a table: TC ID | Remote ID | Summary | Status (created / already existed) — for the adapter-backed trackers take it from `tests[]` in the command's output
+- Confirm links to the parent ticket/work item/task were created (GitHub and Bitbucket have no link API: they reference the parent in the issue body instead; not applicable for `none`)
+- Print the counts: created, already existed, failed, skipped

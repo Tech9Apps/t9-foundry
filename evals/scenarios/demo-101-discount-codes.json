@@ -1,0 +1,14 @@
+{
+  "name": "DEMO-101 discount codes",
+  "ticket": "demo/tickets/DEMO-101.md",
+  "cases": "demo/expected/DEMO-101-test-cases.md",
+  "golden": {
+    "ticketTitle": "DEMO-101: Apply a discount code at checkout",
+    "acceptanceCriteria": 6,
+    "cases": 10,
+    "priorities": { "High": 5, "Medium": 4, "Low": 1 },
+    "bugs": [
+      { "report": "demo/expected/bug-DEMO-101-coupon-stacking.md", "priority": "High", "searchQuery": "stacks beyond" }
+    ]
+  }
+}

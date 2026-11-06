@@ -13,6 +13,7 @@ bugs that the tests find. It runs entirely on your machine — no accounts, no t
 |---|---|---|
 | **2 minutes**, no Claude needed | `bash demo/run-demo.sh` | A narrated tour: a real ticket, real test cases, real test runs that find real bugs, the production guards blocking commands, a preflight check, and the fix proven green. Nothing in your tree is modified. |
 | **15 minutes** and Claude Code | Open this repo in Claude Code and run `/demo` | The same story, but *you* drive the real commands (`/analyze-codebase`, `/create-test-plan`, `/write-test-cases`, `/file-bug`) against the app, one step at a time, comparing your output to the samples. |
+| **2 more minutes** | `bash demo/run-demo.sh --tracker` | The tour plus **Act 8**: everything is posted to an in-memory tracker (`github`, `clickup`, `azure`, `gitlab` or `bitbucket`) through the real adapter CLI — tickets fetched, 26 test cases linked, 2 bugs filed, results commented — then run again (nothing duplicated) and hit with a dropped connection mid-write (still no duplicate). Also runnable alone: `node demo/tracker-demo.js --tracker clickup`. |
 | **5 minutes** to read | Browse [`demo/expected/`](expected/) | The artifacts a run produces: test cases, bug reports, a run report. |
 
 Needs: `bash`, `node` ≥ 20, `jq`, `patch` for the tour; [Claude Code](https://claude.ai/code) for `/demo`.
@@ -80,9 +81,12 @@ bash demo/restore-demo-config.sh    # after /demo: put your own qa-config.json b
 Real: the hooks and guards, `scripts/preflight.sh`, the app and its bugs, the test runs, the harness commands you
 drive in `/demo`. Simplified, on purpose:
 
-- **No ticket system.** The demo config uses `ticketSource.type: "none"`, so test cases and bug reports are saved as
-  files (under `demo/output/`, git-ignored). With Jira, Azure DevOps, ClickUp, GitHub, GitLab or Bitbucket connected,
-  the same cases are uploaded and bugs are filed there — after your approval.
+- **No ticket system in `/demo`.** The demo config uses `ticketSource.type: "none"`, so test cases and bug reports are
+  saved as files (under `demo/output/`, git-ignored). With a tracker connected, the same cases are uploaded and bugs
+  filed there — after your approval. `--tracker` shows that half using an **in-memory** tracker: the adapter CLI,
+  schemas, retries and idempotency are the real code, only the network is replaced
+  (see [`docs/tracker-adapters.md`](../docs/tracker-adapters.md)). It proves the adapter logic, not that a real
+  tracker agrees. The harness's *commands* don't call the adapters yet.
 - **API-level automation.** The automated checks call the app's API in-process (plain `node --test`) so the demo
   needs no browser download. Real projects usually add browser tests; `/demo` step 8 generates them (installed under the
   git-ignored `demo/app/e2e/`, never in the app's own `package.json`). Optional, and not part of the repo's automated checks.
@@ -94,7 +98,8 @@ drive in `/demo`. Simplified, on purpose:
 ```
 demo/
 ├── README.md                this file
-├── run-demo.sh              the 2-minute tour (no install, no AI)
+├── run-demo.sh              the 2-minute tour (no install, no AI); --tracker adds Act 8
+├── tracker-demo.js          Act 8 on its own: post everything to an in-memory tracker
 ├── qa-config.demo.json      workspace config for the demo project (installed by /demo, with a backup)
 ├── use-demo-config.sh       install the demo config (backs up yours)   restore-demo-config.sh  undo it
 ├── apply-fixes.sh           spoiler: fix / re-break the planted bugs   fixes.patch  the two one-line fixes

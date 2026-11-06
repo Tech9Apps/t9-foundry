@@ -17,3 +17,6 @@ demo/output/
 demo/app/e2e/
 demo/app/playwright-report/
 demo/app/test-results/
+
+# Structured test results written by scripts/results/run.js
+qa-results/

@@ -1,0 +1,12 @@
+{
+  "name": "DEMO-103 login lockout",
+  "ticket": "demo/tickets/DEMO-103.md",
+  "cases": "demo/expected/DEMO-103-test-cases.md",
+  "golden": {
+    "ticketTitle": "DEMO-103: Sign in with account lockout",
+    "acceptanceCriteria": 6,
+    "cases": 7,
+    "priorities": { "High": 5, "Medium": 1, "Low": 1 },
+    "bugs": []
+  }
+}

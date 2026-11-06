@@ -1,0 +1,18 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "bug-receipt.schema.json",
+  "title": "Bug receipt ({testCasesDir}/bugs/<id>-receipt.json)",
+  "description": "Written by /file-bug after a bug is filed (or saved, for `none`). The record of what was filed and how it was verified.",
+  "type": "object",
+  "required": ["title", "trackerType", "createdId", "reproduced", "evidencePaths"],
+  "additionalProperties": false,
+  "properties": {
+    "title": { "type": "string", "minLength": 1 },
+    "trackerType": { "enum": ["jira", "azure", "clickup", "github", "gitlab", "bitbucket", "none"] },
+    "createdId": { "type": "string", "minLength": 1, "description": "issue key / work item id / task id / issue number / saved file path" },
+    "url": { "type": "string" },
+    "reproduced": { "type": "boolean", "description": "false if reproduction failed or was skipped and the user chose to file anyway" },
+    "evidencePaths": { "type": "array", "items": { "type": "string" } },
+    "commentedOnExisting": { "type": "boolean", "description": "true when the report was added as a comment on an existing issue instead of filing a new one" }
+  }
+}
