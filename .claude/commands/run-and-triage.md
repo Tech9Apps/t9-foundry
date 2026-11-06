@@ -37,7 +37,9 @@ node scripts/triage/orchestrate.js --framework <testFramework.type> --preflight 
 Add `--test-dir <testFramework.testDir>` and `--config-file <testFramework.configPath>` when those are set, and one
 `--spec <file>` per file in `$ARGUMENTS`. Generate `<run-id>` **once** for this run (a UTC timestamp such as
 `20261008T181500Z`) and reuse it if you have to run anything again: it is what makes retries safe. Re-runs default to 2
-(`--reruns`, 0–5); more re-runs cost more and give better signal.
+(`--reruns`, 0–5); more re-runs cost more and give better signal. A project sets its own defaults once in `qa-config.json`
+(`triage.reruns`, `triage.confidenceThreshold`) and a flag overrides them; the output's `settings` says which source each value
+came from, so tell the user if a re-run count or threshold came from their config.
 
 Verdicts for runner formats that have not been verified on real failures (everything except TAP, by default) can never `act` on a
 `product-bug` or `test-bug`: they are held at `propose` and marked `cap: "unverified-format"`. Do not pass `--trusted-formats`
@@ -52,15 +54,18 @@ It prints one JSON document and writes `qa-results/triage.json`, `plan.json` and
 | 3 | **no trustworthy result**: the runner could not start, hung, wrote nothing, listed zero tests, or its exit code contradicted its report | report `error.message` and `warnings` exactly. **Do not call it a pass, and do not guess verdicts.** |
 | 2 | bad invocation | fix the arguments |
 
-`warnings` can mean the tracker could not be searched (credentials, outage). Say so plainly: it means an existing report
+A `warnings` entry saying that most failures are **undetermined** means the evidence or the rules are missing for this suite:
+lead your report with it, and do not present those verdicts as findings. `warnings` can also mean the tracker could not be
+searched (credentials, outage). Say so plainly: it means an existing report
 for a failure could not be ruled out, so filing may duplicate.
 
 ## 3. Evidence the orchestrator asked for
 
-Any verdict whose `evidence` says to capture the page (a locator was not found and no snapshot was supplied) is
-`undetermined` until you provide it. For each such failure take its `token` from `qa-results/triage.json` (`qafp` plus 12 hex
-digits). It is the **only** thing from the failure that goes on a command line: a test title or an error message can contain a quote
-or `$(...)`.
+Any verdict with `reason: "LOCATOR_NO_EVIDENCE"` (a locator was not found and no snapshot was supplied) is **not an answer
+yet** — `undetermined` is a last resort, and this one is undetermined only because the evidence has not been gathered. The same
+holds for `NOT_RERUN`: re-run it. Gather the evidence before you report. For each such failure take its `token` from
+`qa-results/triage.json` (`qafp` plus 12 hex digits). It is the **only** thing from the failure that goes on a command line: a test
+title or an error message can contain a quote or `$(...)`.
 
 1. Capture the page **in the state where the test failed**, against the test environment, to
    `qa-results/snapshots/<token>.html` (the failure's screenshot/trace in `test-results/` shows the state). Use a one-line command
@@ -90,17 +95,29 @@ node scripts/triage/plan.js --report qa-results/triage.json --run-id <run-id> --
 | `step` | What it means | What you do |
 |---|---|---|
 | `file-bug` | a real product bug, nothing on file | delegate to the **Bug-reporter** agent (below) |
-| `file-regression` | the only matching report is **closed**: the defect came back | delegate to **Bug-reporter**; the new bug must link the closed one (`regressionOf`) |
+| `file-regression` | the only matching report was closed **as fixed**: the defect came back | delegate to **Bug-reporter**; the new bug must link the closed one (`regressionOf`) |
 | `comment-existing` | an **open** report already covers it | show the user the comment (`commentInput.body`) and the existing report; **only on their yes**, run `node scripts/tracker/cli.js comment --input-file qa-results/comments/<token>.json` (the action's `commentInputFile`: the plan already wrote it, so you write nothing) |
 | `report-dismissed` | the only report with this fingerprint was closed **without a fix** (won't fix, not planned, duplicate…) | **report only**: say which report and how it was closed. File nothing and comment on nothing: this is not a regression of a fix. If the user thinks that decision was wrong, they re-open it themselves. |
 | `duplicate-in-run` | the same defect as another failure in this run | nothing: it is covered by `duplicateOf` |
-| `propose-test-fix` | the test is stale or crashed (a test-bug) | **report only**: name the cause and the candidate selector. **Edit nothing** — self-healing is not enabled. |
+| `propose-test-fix` | the test is stale or crashed (a test-bug) | **report**: the cause and the `proposal` (the exact id rename, when there is one). **You edit nothing.** If the output has a `heal` section, see "Self-heal results" below. |
 | `report-flaky` | passes and fails with no change | **report only**, with the attempts. Never file it. |
 | `report-environment` | the environment was down or unreachable | **report only**, with the advice to re-run when it is healthy. Never file it. |
 | `propose` | not confident enough to act, **or** held back because the runner format is unverified (`cap`) | **report only**: show the verdict, its confidence, its `alternatives` (or the `cap` reason), and what evidence would settle it |
 
 Only `product-bug` verdicts at or above the confidence threshold ever reach `file-bug`, `file-regression` or
 `comment-existing`. Nothing is filed, commented or edited without the human review gate.
+
+### Self-heal results
+
+Self-heal is off unless `triage.selfHeal.enabled` is set or you passed `--heal` (add `--heal` only if the user asked for it).
+When it ran, the output has a `heal` section; `heal.status` is one of:
+
+| `heal.status` | What it means | What you do |
+|---|---|---|
+| `healed` | a test-id was renamed on a local branch (`heal.branch`), the failing specs were re-run and pass, and you are back on `heal.base`, clean | show the user the diff (`heal.review`, and `heal.changes`), the validation, and any `heal.leftovers` (stale references it did **not** edit). Then ask whether to push the branch and open a pull request. **Only on their explicit yes**: `git push -u origin <heal.branch>`, then `gh pr create --base <heal.base> --head <heal.branch>` with a body that carries the evidence. Never without it. |
+| `nothing-to-heal` | no locator for the old id was found in the allowed directories | report `heal.reason`; the verdict stays a proposal |
+| `refused` | it did not start: dirty tree, detached HEAD, a cap exceeded, an unsafe id, an untracked or ignored file that also needs the rename, a file that is not valid UTF-8, renames that would rewrite each other, a report that is not what the classifier would have produced, … Nothing was changed | report `heal.reason`; leave the verdict as a proposal. **Do not retry, and do not edit by hand.** |
+| `reverted` | it started, but validation failed (or it was interrupted), and it put everything back | report `heal.reason`. **If `heal.restored` is `false`, say so first**: the repository is not as it was found; give the user `heal.problems` verbatim and tell them to run `git status` and `git branch` before doing anything else; leave the verdict as a proposal. **Do not retry, and do not edit by hand.** |
 
 ### Handing a bug to Bug-reporter
 
@@ -118,7 +135,7 @@ Tell the user, in this order:
 
 1. **Totals**: tests, passed, failed, skipped, flaky, and how many runs (1 + re-runs) the verdicts rest on.
 2. **Every verdict**: test, class, rule id, confidence, `act` or `propose`, and the evidence in one line. For proposals
-   include the alternatives.
+   include the alternatives; for `undetermined`, the `reason`.
 3. **What you did**: bugs filed or commented on (ids/urls), and what was only reported.
 4. **What you could not check**: tracker search failures, missing snapshots, anything below the threshold. Never
    present a proposal as a decision.

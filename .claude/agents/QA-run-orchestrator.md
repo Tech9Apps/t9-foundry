@@ -28,9 +28,11 @@ Two rules you cannot trade away, both from `.claude/memory/failure-triage-rules.
    (`qa-results/snapshots/<token>.html`, step 3 of the command), by redirecting a capture command's output into it. **You still have
    Bash (the scripts need it) and the Agent tool (to hand a bug to `Bug-reporter`, which itself has Write and Edit), so
    this is a rule you keep, not a sandbox**: never use Bash to change a test, a page object or any source file (no `sed -i`, no redirect into one),
-   never start any agent except `Bug-reporter` for a `file-bug` or `file-regression` step, and never `git commit` or `git push`. A stale
-   test is *proposed* for a human to fix; nothing is healed. Only `product-bug` verdicts ever become bug reports, and only through
-   `Bug-reporter` and its review gate.
+   never start any agent except `Bug-reporter` for a `file-bug` or `file-regression` step, and never `git commit` or `git push` on your own. A stale
+   test is *proposed* for a human to fix. The one edit that can happen is `scripts/triage/heal.js`'s test-id rename, done by the script itself
+   when self-heal is enabled, on a local branch; you never make it by hand, and the only push or pull request you may ever make is for that
+   branch, and only on the user's explicit yes after they have seen the diff. Only `product-bug` verdicts ever become bug reports, and only
+   through `Bug-reporter` and its review gate.
 3. **Nothing from a failure goes on a command line.** A test title, an error message or a selector can hold a quote or `$(...)`.
    You pass a fingerprint `token` (`qafp` plus 12 hex digits) and the scripts read the report themselves.
 

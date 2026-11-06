@@ -44,8 +44,6 @@
       "Bash(gh repo view *)",
       "Bash(gh auth status)",
       "Bash(gh api *)",
-      "Bash(curl -fsS --max-time 30 *https://api.clickup.com/*)",
-      "Bash(curl -fsS --max-time 30 *https://api.bitbucket.org/*)",
       "Bash(npx playwright --version)",
       "Bash(npx playwright test --list*)",
       "Bash(npx cypress --version)",
@@ -53,7 +51,21 @@
       "Bash(npm --version)",
       "Bash(python --version)",
       "Bash(python3 --version)",
-      "Bash(bash scripts/check-prereqs.sh)"
+      "Bash(bash scripts/check-prereqs.sh)",
+      "Bash(node scripts/tracker/cli.js fetch *)",
+      "Bash(node scripts/tracker/cli.js search *)",
+      "Bash(node scripts/tracker/post-tests.js * --dry-run*)",
+      "Bash(node scripts/results/normalize.js *)"
+    ],
+    "ask": [
+      "Bash(node scripts/tracker/cli.js*--base-url*)",
+      "Bash(node scripts/tracker/cli.js*--config*)",
+      "Bash(node scripts/tracker/post-tests.js*--base-url*)",
+      "Bash(node scripts/tracker/post-tests.js*--config*)",
+      "Bash(node scripts/results/normalize.js*--out*)",
+      "Bash(node scripts/tracker/cli.js*--context-file /*)",
+      "Bash(node scripts/tracker/cli.js*--context-file ~*)",
+      "Bash(node scripts/tracker/cli.js*--context-file*..*)"
     ]
   }
 }

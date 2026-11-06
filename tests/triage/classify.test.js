@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const Ajv = require('../node_modules/ajv');
-const { classify, main, RULES, CLASSES, DEFAULT_THRESHOLD } = require('../../scripts/triage/classify');
+const { classify, main, RULES, RULE_TABLE, CLASSES, UND_REASONS, DEFAULT_THRESHOLD } = require('../../scripts/triage/classify');
 const { normalizePath } = require('../../scripts/results/normalize');
 
 const validateReport = new Ajv({ allErrors: true, strict: false }).compile(require('../../schemas/triage-report.schema.json'));
@@ -47,8 +47,8 @@ describe('product-bug (PRD-1/2/3)', () => {
 
   test('different assertion messages across attempts is NOT a consistent product bug', () => {
     const v = only(triage([run(fail('t', err('expected 1 got 2'))), run(fail('t', err('expected 1 got 3')))]));
-    assert.equal(v.class, 'undetermined');
-    assert.match(v.evidence[0], /different errors/);
+    assert.deepEqual([v.class, v.reason], ['undetermined', 'UNSTABLE_ERRORS']);
+    assert.match(v.evidence[0], /different error each time/);
   });
 
   test('volatile parts of the message (durations, ids) do not make attempts look different', () => {
@@ -168,26 +168,31 @@ describe('test-bug (TST-1/2)', () => {
 
   test('locator not found but NO DOM evidence → undetermined 0.4 (and says what would settle it)', () => {
     const v = only(triage(uiRuns()));
-    assert.deepEqual([v.class, v.rule, v.confidence, v.action], ['undetermined', 'UND-1', 0.4, 'propose']);
+    assert.deepEqual([v.class, v.rule, v.confidence, v.action, v.reason], ['undetermined', 'UND-1', 0.4, 'propose', 'LOCATOR_NO_EVIDENCE']);
     assert.match(v.evidence[0], /locators\.js/);
   });
 
-  test('several candidates, or none, or the element IS present → undetermined, never test-bug', () => {
+  test('several candidates → still a test-bug, but only a WEAK one (TST-3, 0.55, propose): renamed, but which element?', () => {
+    const runs = uiRuns();
+    const v = only(triage(runs, { evidence: { [key(runs)]: { locator: { target: 'add-to-cart', present: false, candidates: [cand('add-to-basket'), cand('add-to-bag')] } } } }));
+    assert.deepEqual([v.class, v.rule, v.confidence, v.action], ['test-bug', 'TST-3', 0.55, 'propose']);
+    assert.match(v.evidence[0], /2 elements resemble it \("add-to-basket", "add-to-bag"\)/);
+  });
+
+  test('no candidate, or the element IS present → undetermined, each for its own named reason', () => {
     const runs = uiRuns();
     const k = key(runs);
-    const ambiguous = only(triage(runs, { evidence: { [k]: { locator: { target: 'add-to-cart', present: false, candidates: [cand('add-to-basket'), cand('add-to-bag')] } } } }));
-    assert.deepEqual([ambiguous.class, ambiguous.confidence], ['undetermined', 0.5]);
     const gone = only(triage(runs, { evidence: { [k]: { locator: { target: 'add-to-cart', present: false, candidates: [] } } } }));
-    assert.deepEqual([gone.class, gone.confidence], ['undetermined', 0.5]);
+    assert.deepEqual([gone.class, gone.reason, gone.confidence], ['undetermined', 'LOCATOR_GONE', 0.5]);
     const present = only(triage(runs, { evidence: { [k]: { locator: { target: 'add-to-cart', present: true, candidates: [] } } } }));
-    assert.deepEqual([present.class, present.confidence], ['undetermined', 0.4]);
+    assert.deepEqual([present.class, present.reason, present.confidence], ['undetermined', 'LOCATOR_PRESENT', 0.5]);
     assert.match(present.evidence[0], /not a stale selector/);
   });
 
   test('an element that IS present is never "renamed", even if something resembles it (the evidence would be contradictory)', () => {
     const runs = uiRuns();
     const v = only(triage(runs, { evidence: { [key(runs)]: { locator: { target: 'add-to-cart', present: true, candidates: [cand('add-to-basket')] } } } }));
-    assert.equal(v.class, 'undetermined');
+    assert.deepEqual([v.class, v.reason], ['undetermined', 'LOCATOR_PRESENT']);
   });
 
   test('evidence is looked up by the test key OR by its name', () => {
@@ -214,11 +219,123 @@ describe('test-bug (TST-1/2)', () => {
     assert.equal(only(triage([run(fail('t', e)), run(fail('t', e))])).rule, 'TST-2');
   });
 
-  test('the same TypeError raised inside the APP is not blamed on the test', () => {
+  test('the same TypeError raised inside the APP is not blamed on the test: it is a (weak) product bug — PRD-4', () => {
     const e = err("TypeError: Cannot read properties of undefined (reading 'total')", 'error', 'at totals (/work/demo/app/src/pricing.js:30:11)\n at TestContext.<anonymous> (/work/demo/app/test/a.test.js:3:3)');
     const v = only(triage([run(fail('t', e)), run(fail('t', e))]));
-    assert.equal(v.class, 'undetermined');
-    assert.match(v.evidence[0], /not in test code/);
+    assert.deepEqual([v.class, v.rule, v.confidence, v.action], ['product-bug', 'PRD-4', 0.55, 'propose']);
+    assert.match(v.evidence[0], /the application threw \(pricing\.js:30\)/);
+    assert.match(v.evidence[0], /the same in all 2 attempts/);
+  });
+});
+
+describe('undetermined is STRICT: a last resort with a closed list of reasons', () => {
+  const crashIn = (file) => err('TypeError: x is not a function', 'error', `at run (${file}:3:3)`);
+  const stale = err("locator not found: getByTestId('coupon-apply-btn')", 'failure');
+  const loc = (extra) => ({ locator: { target: 'coupon-apply-btn', present: false, candidates: [], ...extra } });
+  const twice = (name, e, extra = {}) => [run(fail(name, e, extra)), run(fail(name, e, extra))];
+
+  test('situations that are merely "different" get a CLASS, never undetermined', () => {
+    const cases = [
+      ['a new assertion message nobody has seen', twice('totals add up', err('expected 41.99 but got 42.00')), 'product-bug'],
+      ['an assertion that failed once and was not re-run', [run(fail('totals add up', ASSERT))], 'product-bug'],
+      ['a missing element with several lookalikes', twice('ui', stale), 'test-bug', { evidence: { 'ui.test.js|ui': loc({ candidates: [{ testid: 'a', similarity: 0.6 }, { testid: 'b', similarity: 0.6 }] }) } }],
+      ['the application threw', twice('t', err('TypeError: x', 'error', 'at f (/w/app/src/cart.js:9:1)')), 'product-bug'],
+      ['the test itself threw', twice('t', crashIn('/w/tests/a.test.js')), 'test-bug'],
+      ['a failure that then passed', [run(fail('t', err('some brand new error'))), run(pass('t'))], 'flaky'],
+      ['a host that is down', twice('t', err('getaddrinfo ENOTFOUND staging.example.test', 'error')), 'environment'],
+    ];
+    for (const [what, runs, expected, opts] of cases) {
+      const base = opts && opts.evidence ? { evidence: Object.fromEntries(Object.entries(opts.evidence).map(([, v]) => [classify({ runs }).verdicts[0].key, v])) } : {};
+      const v = only(triage(runs, base));
+      assert.equal(v.class, expected, `${what}: got ${v.class} ${v.rule}`);
+      assert.notEqual(v.class, 'undetermined', what);
+    }
+  });
+
+  test('every named reason is reachable, carries its documented confidence, and is only ever a proposal', () => {
+    const reach = {
+      LOCATOR_NO_EVIDENCE: () => twice('ui', stale),
+      LOCATOR_PRESENT: () => twice('ui', stale),
+      LOCATOR_GONE: () => twice('ui', stale),
+      AUTH_OR_SESSION: () => twice('dashboard', err('expect(page).toHaveURL(expected)', 'failure', 'Expected pattern: /dashboard/\nReceived string:  "http://localhost:3000/login"')),
+      ERROR_PAGE: () => twice('home', err('expect(locator).toHaveText(expected)', 'failure', 'Locator: locator(\'h1\')\nExpected: "Welcome back"\nReceived: "404 Not Found"')),
+      CONSISTENT_TIMEOUT: () => twice('slow', err('Timeout 30000ms exceeded.', 'timeout')),
+      NOT_RERUN: () => [run(fail('odd', err('Timeout 30000ms exceeded.', 'timeout')))],
+      UNSTABLE_ERRORS: () => [run(fail('t', err('first error', 'error'))), run(fail('t', err('second error', 'error')))],
+      UNATTRIBUTED_CRASH: () => twice('t', err('Something exploded', 'error', '')),
+      UNCLASSIFIED: () => twice('t', err('weird', 'unknown-kind')),
+    };
+    const evidenceFor = { LOCATOR_PRESENT: { present: true }, LOCATOR_GONE: { present: false, candidates: [] } };
+    assert.deepEqual(Object.keys(reach).sort(), Object.keys(UND_REASONS).sort(), 'a reason without a test is a reason nobody has seen');
+    for (const [reason, build] of Object.entries(reach)) {
+      const runs = build();
+      const probe = classify({ runs });
+      const evidence = evidenceFor[reason] ? { [probe.verdicts[0].key]: { locator: { target: 'coupon-apply-btn', candidates: [], ...evidenceFor[reason] } } } : {};
+      const v = only(triage(runs, { evidence }));
+      assert.equal(v.class, 'undetermined', reason);
+      assert.equal(v.reason, reason);
+      assert.equal(v.confidence, UND_REASONS[reason].confidence, reason);
+      assert.equal(v.action, 'propose', reason);
+      assert.match(v.evidence[0], new RegExp(`^${reason}: `));
+    }
+  });
+
+  test('a login or error page is named as such even on a SINGLE attempt (it says more than "not re-run"), but a locator failure is named first', () => {
+    const login = err('expect(page).toHaveURL(expected)', 'failure', 'Expected pattern: /dashboard/\nReceived string:  "http://localhost:3000/login"');
+    assert.equal(only(triage([run(fail('dashboard', login))])).reason, 'AUTH_OR_SESSION', 'one attempt, but the login redirect is the more useful thing to say');
+    const page404 = err('expect(locator).toHaveText(expected)', 'failure', 'Locator: locator(\'h1\')\nExpected: "Welcome"\nReceived: "404 Not Found"');
+    assert.equal(only(triage([run(fail('home', page404))])).reason, 'ERROR_PAGE');
+    // a missing element that ALSO mentions a login page is a locator problem first: capture the page before concluding anything
+    const both = err('expect(locator).toBeVisible()', 'failure', "Locator: getByTestId('add-btn')\nReceived: <element(s) not found>\nReceived string: \"http://localhost/login\"");
+    assert.equal(only(triage([run(fail('x', both)), run(fail('x', both))])).reason, 'LOCATOR_NO_EVIDENCE');
+  });
+
+  test('an undetermined verdict NEVER acts, even if the threshold is set below its confidence', () => {
+    const runs = twice('slow', err('Timeout 30000ms exceeded.', 'timeout'));
+    for (const threshold of [0.1, 0.3, 0.5]) assert.equal(only(triage(runs, { threshold })).action, 'propose', String(threshold));
+  });
+
+  test('a reason appears only on undetermined verdicts, and the summary counts them', () => {
+    const rep = triage([run(fail('a', err('Timeout 30000ms exceeded.', 'timeout')), fail('b', err('Timeout 30000ms exceeded.', 'timeout')), fail('c', ASSERT)), run(fail('a', err('Timeout 30000ms exceeded.', 'timeout')), fail('b', err('Timeout 30000ms exceeded.', 'timeout')), fail('c', ASSERT))]);
+    for (const v of rep.verdicts) assert.equal('reason' in v, v.class === 'undetermined', v.test.name);
+    assert.deepEqual(rep.summary.undeterminedReasons, { CONSISTENT_TIMEOUT: 2 });
+    assert.deepEqual(triage([run(pass('x'))]).summary.undeterminedReasons, {});
+  });
+
+  test('evidence first: the no-evidence reason goes away once the evidence is supplied', () => {
+    const runs = twice('ui', stale);
+    const without = only(triage(runs));
+    assert.equal(without.reason, 'LOCATOR_NO_EVIDENCE');
+    const withEv = only(triage(runs, { evidence: { [without.key]: loc({ candidates: [{ testid: 'coupon-apply', similarity: 0.8 }] }) } }));
+    assert.deepEqual([withEv.class, withEv.rule, withEv.reason], ['test-bug', 'TST-1', undefined]);
+  });
+
+  test('the app-threw rule (PRD-4) is not fooled: a test-file frame, a library frame, or no frame is not "the app"', () => {
+    const verdict = (e) => only(triage([run(fail('t', e)), run(fail('t', e))]));
+    assert.equal(verdict(err('TypeError: x', 'error', 'at f (/w/tests/a.test.js:1:1)')).rule, 'TST-2');
+    assert.equal(verdict(err('Error: boom', 'error', 'at f (/w/node_modules/lib/index.js:1:1)')).reason, 'UNATTRIBUTED_CRASH');
+    assert.equal(verdict(err('Error: boom', 'error', '')).reason, 'UNATTRIBUTED_CRASH');
+    assert.equal(only(triage([run(fail('t', err('TypeError: x', 'error', 'at f (/w/app/src/cart.js:9:1)'))), run(fail('t', err('TypeError: y', 'error', 'at f (/w/app/src/cart.js:9:1)')))])).reason, 'UNSTABLE_ERRORS');
+  });
+
+  test('an app exception that then passed is flaky, and does NOT list product-bug as an alternative', () => {
+    const e = err('TypeError: x', 'error', 'at f (/w/app/src/cart.js:9:1)');
+    const v = only(triage([run(fail('t', e)), run(fail('t', e)), run(pass('t'))]));
+    assert.equal(v.rule, 'FLK-1');
+    assert.equal(v.alternatives, undefined);
+  });
+
+  test('PRD-4 on a single attempt says a flake cannot be ruled out', () => {
+    const v = only(triage([run(fail('t', err('TypeError: x', 'error', 'at f (/w/app/src/cart.js:9:1)')))]));
+    assert.deepEqual([v.rule, v.confidence], ['PRD-4', 0.55]);
+    assert.match(v.evidence[0], /seen once, so a flake cannot be ruled out/);
+  });
+
+  test('the closed reason list and the rule table agree (confidences, schema enum)', () => {
+    const schema = require('../../schemas/triage-report.schema.json');
+    assert.deepEqual([...schema.properties.verdicts.items.properties.reason.enum].sort(), Object.keys(UND_REASONS).sort());
+    for (const [reason, spec] of Object.entries(UND_REASONS)) assert.ok(RULE_TABLE['UND-1'].confidence.includes(spec.confidence), reason);
+    assert.deepEqual([...new Set(Object.values(UND_REASONS).map((r) => r.confidence))].sort(), [...RULE_TABLE['UND-1'].confidence].sort(), 'no unused confidence in the table');
   });
 });
 
@@ -236,7 +353,7 @@ describe('precedence and alternatives', () => {
   });
 
   test('rule ids are exactly the documented, ordered list, and the schema allows each of them', () => {
-    assert.deepEqual(RULES, ['ENV-1', 'ENV-2', 'FLK-1', 'TST-1', 'TST-2', 'ENV-3', 'PRD-1', 'PRD-2', 'PRD-3', 'UND-1']);
+    assert.deepEqual(RULES, ['ENV-1', 'ENV-2', 'FLK-1', 'TST-1', 'TST-2', 'TST-3', 'ENV-3', 'PRD-1', 'PRD-2', 'PRD-3', 'PRD-4', 'UND-1']);
     const schema = require('../../schemas/triage-report.schema.json');
     assert.deepEqual([...schema.properties.verdicts.items.properties.rule.enum].sort(), [...RULES].sort());
     assert.deepEqual([...schema.properties.verdicts.items.properties.class.enum].sort(), [...CLASSES].sort());
@@ -290,7 +407,10 @@ describe('threshold, scope and identity', () => {
 describe('classify CLI', () => {
   const dir = fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), 'qa-triage-'));
   const write = (name, obj) => { const f = path.join(dir, name); fs.writeFileSync(f, typeof obj === 'string' ? obj : JSON.stringify(obj)); return f; };
-  const cli = (argv) => { let out = ''; let e = ''; const code = main({ argv, stdout: { write: (s) => { out += s; } }, stderr: { write: (s) => { e += s; } } }); return { code, err: e, json: out ? JSON.parse(out) : null }; };
+  // Hermetic: unless a test names its own --config, the CLI is pointed at an empty one. Without that it DISCOVERS ./qa-config.json, so a
+  // developer who sets triage.confidenceThreshold (or trustedFormats…) in their own config would see these tests fail for no reason of theirs.
+  const EMPTY_CONFIG = write('empty-config.json', {});
+  const cli = (argv) => { let out = ''; let e = ''; const code = main({ argv: argv.length && !argv.includes('--config') && !argv.includes('-h') && !argv.includes('--help') ? [...argv, '--config', EMPTY_CONFIG] : argv, stdout: { write: (s) => { out += s; } }, stderr: { write: (s) => { e += s; } } }); return { code, err: e, json: out ? JSON.parse(out) : null }; };
 
   test('reads run.js-style { ok, data } documents or bare results; failures are data (exit 0)', () => {
     const wrapped = write('wrapped.json', { ok: false, data: run(fail(CASE, ASSERT)) });
@@ -313,6 +433,16 @@ describe('classify CLI', () => {
     assert.equal(cli(['--run', main1, '--preflight', 'failed']).json.data.verdicts[0].rule, 'ENV-1');
     const ev = write('ev.json', { 'DEMO-101/TC-005': { locator: { target: 'x', present: true, candidates: [] } } });
     assert.equal(cli(['--run', main1, '--evidence', ev]).code, 0);
+  });
+
+  test('--threshold defaults to triage.confidenceThreshold in --config, and the flag beats it', () => {
+    const noCase = write('nocase.json', run(fail('checkout total is wrong', ASSERT))); // PRD-3: 0.6
+    const cfg = (t) => write(`cfg-${Math.random().toString(36).slice(2)}.json`, { triage: { confidenceThreshold: t } });
+    assert.equal(cli(['--run', noCase]).json.data.threshold, 0.8);
+    assert.equal(cli(['--run', noCase, '--config', cfg(0.5)]).json.data.verdicts[0].action, 'act');
+    assert.equal(cli(['--run', noCase, '--config', cfg(0.5)]).json.data.threshold, 0.5);
+    assert.equal(cli(['--run', noCase, '--config', cfg(0.5), '--threshold', '0.9']).json.data.threshold, 0.9);
+    assert.equal(cli(['--run', noCase, '--config', write('bad.json', { triage: { confidenceThreshold: 5 } })]).code, 2);
   });
 
   test('unreadable inputs exit 1 with the file named; bad invocations exit 2', () => {

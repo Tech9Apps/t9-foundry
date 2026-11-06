@@ -172,6 +172,38 @@
         "testDir": { "type": "string" }
       }
     },
+    "triage": {
+      "type": "object",
+      "description": "Failure triage (/run-and-triage, scripts/triage/). Every key is optional and a command-line flag overrides it. See docs/phase-2-design.md.",
+      "additionalProperties": false,
+      "properties": {
+        "reruns": {
+          "type": "integer", "minimum": 0, "maximum": 5, "default": 2,
+          "description": "How many times each failing spec is re-run before classifying. More re-runs cost more and give better signal (they separate a consistent failure from a flake); 0 means every product bug is only proposed."
+        },
+        "confidenceThreshold": {
+          "type": "number", "exclusiveMinimum": 0, "maximum": 1, "default": 0.8,
+          "description": "A verdict at or above this confidence is `act`; below it, `propose`."
+        },
+        "trustedFormats": {
+          "type": "array", "uniqueItems": true, "default": ["tap"],
+          "items": { "enum": ["junit", "tap", "playwright-json", "jest-json"] },
+          "description": "Runner formats whose classification has been verified on real failure output. Only these may let a product-bug or test-bug verdict `act`; for every other format those verdicts are held at `propose` (marked cap: unverified-format). Widen it only after checking a format against real failures. An empty list means nothing may act."
+        },
+        "selfHeal": {
+          "type": "object",
+          "description": "Self-healing of stale selectors. Off unless enabled. It only ever renames a test-id inside locator expressions in test code, on a local branch, validated by re-run, and never pushes.",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean", "default": false },
+            "paths": { "type": "array", "items": { "type": "string", "minLength": 1 }, "description": "Directories, relative to the repository, where test code may be edited. Defaults to testFramework.testDir." },
+            "maxFiles": { "type": "integer", "minimum": 1, "maximum": 20, "default": 5, "description": "A heal that would touch more files than this is refused, not applied." },
+            "maxLines": { "type": "integer", "minimum": 1, "maximum": 200, "default": 20, "description": "A heal that would change more lines than this is refused, not applied." },
+            "branchPrefix": { "type": "string", "pattern": "^qa/[A-Za-z0-9._-]*$", "default": "qa/heal-", "description": "Heal branches always live under qa/, so they are obviously machine-made and can never be a default branch." }
+          }
+        }
+      }
+    },
     "dataManagement": {
       "type": "object",
       "properties": {

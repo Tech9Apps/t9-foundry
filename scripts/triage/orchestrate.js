@@ -6,8 +6,8 @@
 // left to the agent is judgement and the human-gated actions (/file-bug, comments).
 //
 //   node scripts/triage/orchestrate.js --framework <f> [--spec S]... [--test-dir D] [--config-file C] [--cwd D]
-//        [--reruns 2] [--preflight ok|failed|unknown] [--snapshot page.html] [--out qa-results] [--run-id ID]
-//        [--threshold 0.8] [--trusted-formats tap] [--timeout-ms N] [--no-plan] [--config qa-config.json] [--source T] [--base-url U]
+//        [--reruns N] [--preflight ok|failed|unknown] [--snapshot page.html] [--out qa-results] [--run-id ID]
+//        [--threshold T] [--trusted-formats tap] [--timeout-ms N] [--no-plan] [--heal | --no-heal] [--config qa-config.json] [--source T] [--base-url U]
 //
 // Steps (each tool is the one documented elsewhere; this only wires them):
 //   1. scripts/results/run.js   the main run                       → <out>/main/
@@ -15,23 +15,31 @@
 //   3. scripts/triage/locators.js  for locator failures, if --snapshot is given
 //   4. scripts/triage/classify.js                                   → <out>/triage.json
 //   5. scripts/triage/plan.js   (read-only tracker search)          → <out>/plan.json, <out>/flaky.json
+//   6. scripts/triage/heal.js   ONLY if self-heal is enabled (triage.selfHeal.enabled / --heal): rename a stale test-id on a local
+//      qa/ branch, validated by re-run, fully reverted on any failure; it never pushes   → <out>/heal.json
+// --reruns (default 2, 0–5), --threshold (default 0.8) and --trusted-formats (default tap: the runner formats whose classification may
+// let a product-bug or test-bug verdict ACT; every other format is held at propose) can also be set once in qa-config.json under "triage"
+// (reruns, confidenceThreshold, trustedFormats); a flag overrides the config. The output says which source each setting came from.
 // A green run ends after step 1. Output: { ok, data } with the verdict and step for every failure.
 // Exit: 0 = completed (green, or triaged — failures are data) · 2 = bad invocation · 3 = no trustworthy main run
 // (see scripts/results/run.js: could not start, hung, wrote nothing, zero tests, or exit code contradicting the report).
 
 const fs = require('fs');
 const path = require('path');
-const { main: runResultsMain } = require('../results/run');
-const { classify, makeKeyer, DEFAULT_THRESHOLD, DEFAULT_TRUSTED_FORMATS, parseTrustedFormats } = require('./classify');
+const { defaultRunResults } = require('./lib/run-results');
+const { classify, makeKeyer, parseTrustedFormats } = require('./classify');
 const { analyzeLocator } = require('./locators');
 const { isLocatorError, extractTestId, evidenceText } = require('./lib/text');
 const { plan, connectIfNeeded, writeCommentInputs } = require('./plan');
+const { triageConfig, MAX_RERUNS } = require('./lib/config');
+const { heal, eligible } = require('./heal');
 
 const usage = (message) => Object.assign(new Error(message), { isUsage: true });
-const MAX_RERUNS = 5;
+const UND_ALARM_MIN = 3; // at least this many undetermined verdicts, and at least this share of the triaged failures,
+const UND_ALARM_SHARE = 0.5; // before the report says the rules lack what they need for this suite
 
 function parseArgs(argv) {
-  const opts = { specs: [], reruns: 2 };
+  const opts = { specs: [] };
   for (let n = 0; n < argv.length; n += 1) {
     const flag = argv[n];
     const value = () => { if (n + 1 >= argv.length) throw usage(`${flag} needs a value`); n += 1; return argv[n]; };
@@ -49,24 +57,26 @@ function parseArgs(argv) {
     else if (flag === '--trusted-formats') opts.trustedFormats = parseTrustedFormats(value());
     else if (flag === '--timeout-ms') opts.timeoutMs = Number(value());
     else if (flag === '--no-plan') opts.noPlan = true;
+    else if (flag === '--heal') opts.heal = true;
+    else if (flag === '--no-heal') opts.heal = false;
     else if (flag === '--config') opts.config = value();
     else if (flag === '--source') opts.source = value();
     else if (flag === '--base-url') opts.baseUrl = value();
     else throw usage(`unknown option ${flag}`);
   }
-  if (!Number.isInteger(opts.reruns) || opts.reruns < 0 || opts.reruns > MAX_RERUNS) throw usage(`--reruns must be a whole number from 0 to ${MAX_RERUNS}`);
+  if (opts.reruns !== undefined && (!Number.isInteger(opts.reruns) || opts.reruns < 0 || opts.reruns > MAX_RERUNS)) throw usage(`--reruns must be a whole number from 0 to ${MAX_RERUNS}`);
   if (opts.preflight && !['ok', 'failed', 'unknown'].includes(opts.preflight)) throw usage('--preflight must be ok, failed or unknown');
   if (opts.threshold !== undefined && !(opts.threshold > 0 && opts.threshold <= 1)) throw usage('--threshold must be between 0 and 1');
   return opts;
 }
 
-// The default way to run the suite: the real results runner, in this process, output captured.
-async function defaultRunResults(argv, env) {
-  let out = '';
-  const code = await runResultsMain({ argv, env, stdout: { write: (s) => { out += s; } }, stderr: { write: () => {} } });
-  let doc = null;
-  try { doc = out ? JSON.parse(out) : null; } catch { /* usage errors print nothing */ }
-  return { code, doc };
+// What to tell the user about a heal that did not land. "Restored" is only ever said when the heal says it checked (`restored`): it used to be
+// appended to every revert, including one whose own result said it had not managed to put everything back.
+function healWarning(h) {
+  if (h.status === 'refused') return `self-heal refused: ${h.reason}`;
+  if (h.status !== 'reverted') return null;
+  if (h.restored === false) return `self-heal reverted: ${h.reason} (the repository was NOT fully restored: ${(h.problems || ['unknown']).join('; ')} — run git status before doing anything else)`;
+  return `self-heal reverted: ${h.reason} (the repository was restored)`;
 }
 
 const writeJson = (file, obj) => { fs.mkdirSync(path.dirname(path.resolve(file)), { recursive: true }); fs.writeFileSync(file, `${JSON.stringify(obj, null, 2)}\n`); };
@@ -74,6 +84,18 @@ const needsTriage = (t) => t.status === 'failed' || t.flaky;
 
 async function orchestrate(opts, { env = process.env, fetch = globalThis.fetch, runResults = defaultRunResults, now = Date.now } = {}) {
   const out = opts.out || 'qa-results';
+  // flag > qa-config.json "triage" block > default
+  const cfg = triageConfig({ configPath: opts.config, env });
+  const reruns = opts.reruns !== undefined ? opts.reruns : cfg.reruns;
+  const threshold = opts.threshold !== undefined ? opts.threshold : cfg.confidenceThreshold;
+  const trustedFormats = opts.trustedFormats !== undefined ? opts.trustedFormats : cfg.trustedFormats;
+  const healEnabled = opts.heal !== undefined ? opts.heal : cfg.selfHeal.enabled;
+  const settings = {
+    reruns: { value: reruns, from: opts.reruns !== undefined ? 'flag' : cfg.explicit.reruns ? 'config' : 'default' },
+    confidenceThreshold: { value: threshold, from: opts.threshold !== undefined ? 'flag' : cfg.explicit.confidenceThreshold ? 'config' : 'default' },
+    trustedFormats: { value: trustedFormats, from: opts.trustedFormats !== undefined ? 'flag' : cfg.explicit.trustedFormats ? 'config' : 'default' },
+    selfHeal: { value: healEnabled, from: opts.heal !== undefined ? 'flag' : cfg.explicitSelfHeal ? 'config' : 'default' },
+  };
   const runId = opts.runId || new Date(now()).toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
   const preflight = opts.preflight || 'unknown';
   const warnings = [];
@@ -103,17 +125,17 @@ async function orchestrate(opts, { env = process.env, fetch = globalThis.fetch, 
   }
 
   // 2. re-run only the failing specs (a failed preflight makes every failure an environment failure: don't bother)
-  const reruns = []; const rerunNotes = [];
+  const rerunResults = []; const rerunNotes = [];
   if (preflight === 'failed') rerunNotes.push('re-runs skipped: preflight reported the environment as not ready');
-  else if (opts.reruns > 0) {
+  else if (reruns > 0) {
     const files = [...new Set(targets.map((t) => t.file).filter(Boolean))];
     const everyFileKnown = targets.every((t) => t.file);
     const scope = everyFileKnown ? files : opts.specs; // no file for some failure: re-run what the main run ran
     if (!everyFileKnown) rerunNotes.push('some failures carry no file location, so each re-run repeats the whole selection');
-    for (let k = 1; k <= opts.reruns; k += 1) {
+    for (let k = 1; k <= reruns; k += 1) {
       const r = await runResults([...base, ...specArgs(scope), '--out', path.join(out, `rerun-${k}`)], env);
-      if (r.doc && r.doc.data) reruns.push(r.doc.data);
-      else warnings.push(`re-run ${k} produced no usable report (${(r.doc && r.doc.error && r.doc.error.message) || `exit ${r.code}`}); classifying with ${reruns.length + 1} run(s)`);
+      if (r.doc && r.doc.data) rerunResults.push(r.doc.data);
+      else warnings.push(`re-run ${k} produced no usable report (${(r.doc && r.doc.error && r.doc.error.message) || `exit ${r.code}`}); classifying with ${rerunResults.length + 1} run(s)`);
     }
   }
 
@@ -124,7 +146,7 @@ async function orchestrate(opts, { env = process.env, fetch = globalThis.fetch, 
     try { html = fs.readFileSync(opts.snapshot, 'utf8'); } catch (e) { warnings.push(`snapshot not readable (${e.message}): locator failures stay undetermined`); }
     if (html !== null) {
       // read the whole failure text, not just its first line: Playwright keeps "waiting for getByTestId('x')" in the details
-      const { keyOf } = makeKeyer([main, ...reruns]); // the same key classify() looks the evidence up by
+      const { keyOf } = makeKeyer([main, ...rerunResults]); // the same key classify() looks the evidence up by
       for (const t of main.tests.filter((x) => x.status === 'failed' && x.error && isLocatorError(evidenceText(x.error)))) {
         if (!extractTestId(evidenceText(t.error))) continue;
         evidence[keyOf(t)] = { locator: analyzeLocator({ html, selector: evidenceText(t.error), bare: false }) };
@@ -133,7 +155,13 @@ async function orchestrate(opts, { env = process.env, fetch = globalThis.fetch, 
   }
 
   // 4. classify
-  const report = classify({ runs: [main, ...reruns], preflight, evidence, threshold: opts.threshold || DEFAULT_THRESHOLD, trustedFormats: opts.trustedFormats || DEFAULT_TRUSTED_FORMATS });
+  const report = classify({ runs: [main, ...rerunResults], preflight, evidence, threshold, trustedFormats });
+  // Strictness needs a witness: if most failures end up undetermined the problem is the evidence (or the rules), not the failures.
+  const und = report.summary.byClass.undetermined;
+  if (und >= UND_ALARM_MIN && und / report.summary.triaged >= UND_ALARM_SHARE) {
+    const why = Object.entries(report.summary.undeterminedReasons).map(([r, n]) => `${r} ×${n}`).join(', ');
+    warnings.push(`${und} of ${report.summary.triaged} failures are undetermined (${why}): the evidence the rules need is missing for this suite — supply DOM snapshots, allow re-runs, or extend the rules. Do not treat these as findings.`);
+  }
   writeJson(path.join(out, 'triage.json'), { ok: true, data: report });
   const files = { triage: path.join(out, 'triage.json') };
 
@@ -152,15 +180,34 @@ async function orchestrate(opts, { env = process.env, fetch = globalThis.fetch, 
     actions = p.actions;
   }
 
+  // 6. self-heal (only if enabled): rename a stale test-id on a local branch, validated by re-run, reverted on any failure. Never pushes.
+  let healResult = null;
+  if (healEnabled && eligible(report).length) {
+    const runCwd = path.resolve(opts.cwd || '.');
+    healResult = await heal({
+      report, cwd: runCwd, runId, paths: cfg.selfHeal.paths, maxFiles: cfg.selfHeal.maxFiles, maxLines: cfg.selfHeal.maxLines, branchPrefix: cfg.selfHeal.branchPrefix, mainRun: main,
+      // an empty list means a shared helper was edited: re-run the same selection the main run used, not nothing
+      validate: async (specs) => { const r = await runResults([...base, ...specArgs(specs.length ? specs : opts.specs), '--out', path.join(out, 'heal-validate')], env); return r.doc && r.doc.data ? r.doc.data : null; },
+    });
+    writeJson(path.join(out, 'heal.json'), { ok: healResult.status === 'healed' || healResult.status === 'nothing-to-heal', data: healResult });
+    files.heal = path.join(out, 'heal.json');
+    const hw = healWarning(healResult);
+    if (hw) warnings.push(hw);
+  } else if (!healEnabled && eligible(report).length) {
+    rerunNotes.push(`${eligible(report).length} stale selector(s) have an exact fix; self-heal is off (triage.selfHeal.enabled or --heal)`);
+  }
+  const healedKeys = new Set(healResult && healResult.status === 'healed' ? healResult.renames.flatMap((r) => r.tests) : []);
+
   const stepOf = new Map((actions || []).map((a) => [a.key, a.step]));
   return {
     code: 0,
     doc: {
       ok: true,
       data: {
-        status: 'triaged', runId, totals: main.totals, runs: 1 + reruns.length, preflight, ...(rerunNotes.length ? { rerunNotes } : {}),
+        status: 'triaged', runId, totals: main.totals, runs: 1 + rerunResults.length, preflight, settings, ...(rerunNotes.length ? { rerunNotes } : {}),
         summary: report.summary,
-        verdicts: report.verdicts.map((v) => ({ test: v.test.name, key: v.key, class: v.class, rule: v.rule, confidence: v.confidence, action: v.action, ...(v.cap ? { cap: v.cap } : {}), ...(stepOf.has(v.key) ? { step: stepOf.get(v.key) } : {}) })),
+        verdicts: report.verdicts.map((v) => ({ test: v.test.name, key: v.key, class: v.class, rule: v.rule, confidence: v.confidence, action: v.action, ...(v.cap ? { cap: v.cap } : {}), ...(v.reason ? { reason: v.reason } : {}), ...(stepOf.has(v.key) ? { step: stepOf.get(v.key) } : {}), ...(v.proposal ? { proposal: v.proposal } : {}), ...(healedKeys.has(v.key) ? { healed: true } : {}) })),
+        ...(healResult ? { heal: healResult } : {}),
         files, ...(warnings.length ? { warnings } : {}),
       },
     },
@@ -171,7 +218,7 @@ async function main({ argv = process.argv.slice(2), env = process.env, stdout = 
   const emit = (obj) => stdout.write(`${JSON.stringify(obj, null, 2)}\n`);
   try {
     if (!argv.length || argv[0] === '-h' || argv[0] === '--help') {
-      stderr.write('Usage: orchestrate.js --framework F [--spec S]... [--test-dir D] [--config-file C] [--cwd D] [--reruns 2] [--preflight ok|failed|unknown] [--snapshot page.html] [--out DIR] [--run-id ID] [--threshold 0.8] [--trusted-formats tap|none] [--timeout-ms N] [--no-plan] [--config P] [--source T] [--base-url U]\n');
+      stderr.write('Usage: orchestrate.js --framework F [--spec S]... [--test-dir D] [--config-file C] [--cwd D] [--reruns 2] [--preflight ok|failed|unknown] [--snapshot page.html] [--out DIR] [--run-id ID] [--threshold 0.8] [--trusted-formats tap|none] [--timeout-ms N] [--no-plan] [--heal | --no-heal] [--config P] [--source T] [--base-url U]\n');
       return argv.length ? 0 : 2;
     }
     const opts = parseArgs(argv);
@@ -187,4 +234,4 @@ async function main({ argv = process.argv.slice(2), env = process.env, stdout = 
 
 if (require.main === module) main().then((code) => { process.exitCode = code; });
 
-module.exports = { main, orchestrate, MAX_RERUNS };
+module.exports = { main, orchestrate, healWarning, MAX_RERUNS };

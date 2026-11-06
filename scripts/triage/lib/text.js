@@ -158,6 +158,14 @@ function testCrash(error) {
   return frame && TEST_PATH.test(frame.file) ? frame : null;
 }
 
+// The runner itself says "error" (an exception, not a failed assertion) and the first source frame is NOT a test file:
+// something in the application threw. Returns the frame, or null when it is not that, or when there is no frame to judge by.
+function appCrash(error) {
+  if (!error || error.kind !== 'error' || isLocatorError(error.message)) return null;
+  const frame = firstSourceFrame(error.details);
+  return frame && !TEST_PATH.test(frame.file) && !/node_modules|[\\/]node:|^node:/.test(frame.file) ? frame : null;
+}
+
 const baseName = (p) => (p ? path.basename(String(p)) : '');
 
-module.exports = { normalizeSignature, evidenceText, diagnosticHead, diagnosticLines, signatureOf, infraSignal, authSignal, errorPageSignal, isLocatorError, extractTestId, testCrash, firstSourceFrame, baseName, INFRA, AUTH, ERROR_PAGE, LOCATOR };
+module.exports = { normalizeSignature, evidenceText, diagnosticHead, diagnosticLines, signatureOf, infraSignal, authSignal, errorPageSignal, isLocatorError, extractTestId, testCrash, appCrash, firstSourceFrame, baseName, INFRA, AUTH, ERROR_PAGE, LOCATOR };

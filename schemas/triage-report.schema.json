@@ -15,7 +15,7 @@
     "trusted": { "type": "boolean", "description": "whether `format` is in `trustedFormats`. When false, product-bug and test-bug verdicts are capped at propose (see each verdict's `cap`)" },
     "summary": {
       "type": "object",
-      "required": ["tests", "triaged", "byClass", "act", "propose"],
+      "required": ["tests", "triaged", "byClass", "undeterminedReasons", "act", "propose"],
       "additionalProperties": false,
       "properties": {
         "tests": { "type": "integer", "minimum": 0 },
@@ -29,6 +29,7 @@
             "environment": { "type": "integer" }, "undetermined": { "type": "integer" }
           }
         },
+        "undeterminedReasons": { "type": "object", "description": "how many undetermined verdicts there are per reason", "additionalProperties": { "type": "integer", "minimum": 1 } },
         "act": { "type": "integer", "minimum": 0 },
         "propose": { "type": "integer", "minimum": 0 }
       }
@@ -46,11 +47,17 @@
             "properties": { "name": { "type": "string" }, "ticket": { "type": "string" }, "caseId": { "type": "string" }, "file": { "type": "string" }, "line": { "type": "integer" } }
           },
           "class": { "enum": ["product-bug", "test-bug", "flaky", "environment", "undetermined"] },
-          "rule": { "enum": ["ENV-1", "ENV-2", "FLK-1", "TST-1", "TST-2", "ENV-3", "PRD-1", "PRD-2", "PRD-3", "UND-1"] },
+          "rule": { "enum": ["ENV-1", "ENV-2", "FLK-1", "TST-1", "TST-2", "TST-3", "ENV-3", "PRD-1", "PRD-2", "PRD-3", "PRD-4", "UND-1"] },
           "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
-          "action": { "enum": ["act", "propose"] },
+          "action": { "enum": ["act", "propose"], "description": "an undetermined verdict is always `propose`" },
           "cap": { "enum": ["unverified-format"], "description": "present when the verdict reached the threshold but was held at propose because its runner format is not trusted" },
+          "reason": { "enum": ["LOCATOR_NO_EVIDENCE", "LOCATOR_PRESENT", "LOCATOR_GONE", "AUTH_OR_SESSION", "ERROR_PAGE", "CONSISTENT_TIMEOUT", "NOT_RERUN", "UNSTABLE_ERRORS", "UNATTRIBUTED_CRASH", "UNCLASSIFIED"], "description": "only on undetermined verdicts: the one reason, from a closed list, that no class could be named" },
           "evidence": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+          "proposal": {
+            "type": "object", "required": ["kind", "from", "to"], "additionalProperties": false,
+            "description": "only on a test-bug the evidence can fix exactly: what would change. Self-heal applies it when enabled; otherwise it is only a proposal.",
+            "properties": { "kind": { "enum": ["rename-testid"] }, "from": { "type": "string" }, "to": { "type": "string" }, "similarity": { "type": "number" } }
+          },
           "alternatives": {
             "type": "array", "description": "other rules that also matched, in precedence order",
             "items": { "type": "object", "required": ["class", "rule", "confidence"], "additionalProperties": false, "properties": { "class": { "type": "string" }, "rule": { "type": "string" }, "confidence": { "type": "number" } } }
