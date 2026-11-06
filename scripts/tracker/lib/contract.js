@@ -1,6 +1,7 @@
 'use strict';
 
 const { TrackerError } = require('./errors');
+const { escapeRe } = require('../../lib/regex');
 
 const OPERATIONS = ['fetch', 'search', 'create-test', 'link', 'comment', 'create-bug'];
 const PRIORITIES = ['High', 'Medium', 'Low'];
@@ -21,7 +22,6 @@ const keyMarker = (key) => `qa-harness-key:${assertKey(key)}`;
 // Trackers that expose tags/labels as a searchable field use this token form instead.
 const keyTag = (key) => `qa-key-${assertKey(key)}`;
 
-const escapeRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // A key must be matched as a WHOLE key. Plain `text.includes(marker)` treats the key "bug-1" as present in text that holds "bug-10", so the
 // second create silently returned the first item and the second bug was never filed. The marker must END where the key ends: the next
 // character may not be one a key can contain.

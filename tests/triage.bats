@@ -64,6 +64,12 @@ node_tests() { cd "$REPO_ROOT" && env -u NODE_TEST_CONTEXT node --test --test-re
   [[ "$output" =~ "# fail 0" ]]
 }
 
+@test "the helpers the self-heal tests stand on (a clean child environment, the stale-selector project) pass their own tests" {
+  run node_tests heal-project.test.js
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "# fail 0" ]]
+}
+
 @test "the planner passes its tests on all five tracker mocks (dedupe, regressions, read-only, degraded modes)" {
   run node_tests plan.test.js
   [ "$status" -eq 0 ]

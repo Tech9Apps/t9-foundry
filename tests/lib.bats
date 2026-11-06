@@ -14,6 +14,12 @@ node_tests() { # <file> -> runs it, echoes the TAP summary lines
   [[ "$output" =~ "# fail 0" ]]
 }
 
+@test "escaping text for a pattern (used for idempotency keys and test ids) matches exactly that text" {
+  run node_tests regex.test.js
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "# fail 0" ]]
+}
+
 @test "every script that takes options exports the FLAGS table the checks read, and nothing parses argv by hand any more" {
   cd "$REPO_ROOT"
   for s in tracker/cli tracker/post-tests tracker/smoke results/run results/normalize triage/classify triage/plan triage/orchestrate triage/heal triage/locators; do

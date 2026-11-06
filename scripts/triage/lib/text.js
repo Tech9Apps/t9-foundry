@@ -78,6 +78,13 @@ const statusComparisons = (codes) => [
   new RegExp(`(?<![\\d.])(?:${codes})\\s*${CMP}\\s*\\d{3}(?![\\d.])`),
   new RegExp(`(?<![\\d.])\\d{3}\\s*${CMP}\\s*(?:${codes})(?![\\d.])`),
 ];
+// The source of the first pattern in `patterns` that matches the message (colour codes ignored), or null. Every signal below reads a message this way.
+const firstMatch = (patterns, message) => {
+  const text = stripAnsi(message || '');
+  const hit = patterns.find((re) => re.test(text));
+  return hit ? hit.source : null;
+};
+
 const INFRA = [
   /\bECONNREFUSED\b/, /\bENOTFOUND\b/, /\bECONNRESET\b/, /\bEAI_AGAIN\b/, /\bEHOSTUNREACH\b/, /\bENETUNREACH\b/,
   /\bgetaddrinfo\b/i, /\bERR_(?:CONNECTION|NAME_NOT_RESOLVED|INTERNET_DISCONNECTED|ADDRESS_UNREACHABLE|TIMED_OUT|CERT|SSL|BAD_SSL|EMPTY_RESPONSE|TUNNEL|PROXY|NETWORK)/,
@@ -92,7 +99,7 @@ const INFRA = [
   /\bfetch failed\b/i, /\bFailed to fetch\b/, /\bNetworkError when attempting to fetch\b/i, /\bLoad failed\b/, /\bNetwork request failed\b/i,
   ...statusComparisons('502|503|504'),
 ];
-const infraSignal = (message) => { const m = stripAnsi(message || ''); const hit = INFRA.find((re) => re.test(m)); return hit ? hit.source : null; };
+const infraSignal = (message) => firstMatch(INFRA, message);
 
 // "Is this an authentication / session problem?" An expired test account, a login page where the app should be, a 401 where
 // a 200 was expected: these look like an app that returns the wrong thing but are as often the test's credentials. They are
@@ -104,12 +111,12 @@ const AUTH = [
   /\bsession (?:has )?(?:expired|timed out)\b/i, /\b(?:token|credentials?) (?:has )?expired\b/i, /\bunauthori[sz]ed\b/i,
   ...statusComparisons('401|403'),
 ];
-const authSignal = (message) => { const m = stripAnsi(message || ''); const hit = AUTH.find((re) => re.test(m)); return hit ? hit.source : null; };
+const authSignal = (message) => firstMatch(AUTH, message);
 
 // The page or API answered with an error page (404 / 500 / "Something went wrong"). A wrong base URL, a dead route and a
 // real regression all look like this from the test alone.
 const ERROR_PAGE = [/\bReceived\b[^\n]{0,60}(?:\b(?:404|500)\b|Not Found|Internal Server Error|Application Error|Something went wrong)/i, ...statusComparisons('404|500')];
-const errorPageSignal = (message) => { const m = stripAnsi(message || ''); const hit = ERROR_PAGE.find((re) => re.test(m)); return hit ? hit.source : null; };
+const errorPageSignal = (message) => firstMatch(ERROR_PAGE, message);
 
 // "I could not find the thing on the page", across Playwright, Cypress, Selenium/WebDriver, Capybara and our own
 // page helpers. Cypress's wording ("Timed out retrying … Expected to find element") is the one that a plain
@@ -168,4 +175,4 @@ function appCrash(error) {
 
 const baseName = (p) => (p ? path.basename(String(p)) : '');
 
-module.exports = { normalizeSignature, evidenceText, diagnosticHead, diagnosticLines, signatureOf, infraSignal, authSignal, errorPageSignal, isLocatorError, extractTestId, testCrash, appCrash, firstSourceFrame, baseName, INFRA, AUTH, ERROR_PAGE, LOCATOR };
+module.exports = { normalizeSignature, evidenceText, diagnosticHead, diagnosticLines, signatureOf, firstMatch, infraSignal, authSignal, errorPageSignal, isLocatorError, extractTestId, testCrash, appCrash, firstSourceFrame, baseName, INFRA, AUTH, ERROR_PAGE, LOCATOR };
