@@ -41,6 +41,10 @@ Add `--test-dir <testFramework.testDir>` and `--config-file <testFramework.confi
 (`triage.reruns`, `triage.confidenceThreshold`) and a flag overrides them; the output's `settings` says which source each value
 came from, so tell the user if a re-run count or threshold came from their config.
 
+Verdicts for runner formats that have not been verified on real failures (everything except TAP, by default) can never `act` on a
+`product-bug` or `test-bug`: they are held at `propose` and marked `cap: "unverified-format"`. Do not pass `--trusted-formats`
+to widen that unless the user tells you a format has been verified; it is their call, not yours.
+
 It prints one JSON document and writes `qa-results/triage.json`, `plan.json` and `flaky.json`. Exit codes:
 
 | Exit | Meaning | You |
@@ -59,14 +63,21 @@ for a failure could not be ruled out, so filing may duplicate.
 
 Any verdict with `reason: "LOCATOR_NO_EVIDENCE"` (a locator was not found and no snapshot was supplied) is **not an answer
 yet** — `undetermined` is a last resort, and this one is undetermined only because the evidence has not been gathered. The same
-holds for `NOT_RERUN`: re-run it. Gather the evidence before you report. For each such failure:
+holds for `NOT_RERUN`: re-run it. Gather the evidence before you report. For each such failure take its `token` from
+`qa-results/triage.json` (`qafp` plus 12 hex digits). It is the **only** thing from the failure that goes on a command line: a test
+title or an error message can contain a quote or `$(...)`.
 
 1. Capture the page **in the state where the test failed**, against the test environment, to
-   `qa-results/snapshots/<key>.html` (the failure's screenshot/trace in `test-results/` shows the state; a short script
+   `qa-results/snapshots/<token>.html` (the failure's screenshot/trace in `test-results/` shows the state; a short script
    that navigates there and writes the page's HTML is enough). Never capture from production.
-2. Run `node scripts/triage/locators.js --html qa-results/snapshots/<key>.html --selector "<the failing selector or error message>"`.
-3. Put its `data` under that test's `key` as `locator` in `qa-results/evidence.json`:
-   `{ "<key>": { "locator": <data> } }`.
+2. Run:
+
+   ```bash
+   node scripts/triage/locators.js --html qa-results/snapshots/<token>.html --report qa-results/triage.json --token <token> --evidence-out qa-results/evidence.json
+   ```
+
+   It finds that failure in the report, reads its error text itself, and merges the result into `qa-results/evidence.json` under the
+   right test. You do not copy a selector or message anywhere, and you do not write the evidence file.
 
 Then re-classify and re-plan from the runs already on disk (no need to run the suite again):
 
@@ -82,13 +93,14 @@ node scripts/triage/plan.js --report qa-results/triage.json --run-id <run-id> --
 | `step` | What it means | What you do |
 |---|---|---|
 | `file-bug` | a real product bug, nothing on file | delegate to the **Bug-reporter** agent (below) |
-| `file-regression` | the only matching report is **closed**: the defect came back | delegate to **Bug-reporter**; the new bug must link the closed one (`regressionOf`) |
-| `comment-existing` | an **open** report already covers it | show the user the comment and the existing report; **only on their yes**, write `commentInput` to `qa-results/comment-<key>.json` and run `node scripts/tracker/cli.js comment --input-file qa-results/comment-<key>.json` |
+| `file-regression` | the only matching report was closed **as fixed**: the defect came back | delegate to **Bug-reporter**; the new bug must link the closed one (`regressionOf`) |
+| `comment-existing` | an **open** report already covers it | show the user the comment (`commentInput.body`) and the existing report; **only on their yes**, run `node scripts/tracker/cli.js comment --input-file qa-results/comments/<token>.json` (the action's `commentInputFile`: the plan already wrote it, so you write nothing) |
+| `report-dismissed` | the only report with this fingerprint was closed **without a fix** (won't fix, not planned, duplicate…) | **report only**: say which report and how it was closed. File nothing and comment on nothing: this is not a regression of a fix. If the user thinks that decision was wrong, they re-open it themselves. |
 | `duplicate-in-run` | the same defect as another failure in this run | nothing: it is covered by `duplicateOf` |
 | `propose-test-fix` | the test is stale or crashed (a test-bug) | **report**: the cause and the `proposal` (the exact id rename, when there is one). **You edit nothing.** If the output has a `heal` section, see "Self-heal results" below. |
 | `report-flaky` | passes and fails with no change | **report only**, with the attempts. Never file it. |
 | `report-environment` | the environment was down or unreachable | **report only**, with the advice to re-run when it is healthy. Never file it. |
-| `propose` | not confident enough to act | **report only**: show the verdict, its confidence, its `alternatives`, and what evidence would settle it |
+| `propose` | not confident enough to act, **or** held back because the runner format is unverified (`cap`) | **report only**: show the verdict, its confidence, its `alternatives` (or the `cap` reason), and what evidence would settle it |
 
 Only `product-bug` verdicts at or above the confidence threshold ever reach `file-bug`, `file-regression` or
 `comment-existing`. Nothing is filed, commented or edited without the human review gate.

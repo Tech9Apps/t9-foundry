@@ -41,7 +41,7 @@ The principle: **code decides what evidence can settle; the model decides the re
 | preflight, run, re-run | scripts | `scripts/preflight.sh`, `scripts/results/run.js` (Phase 1). Re-runs write to `qa-results/rerun-<k>/`. |
 | collect extra evidence | model | DOM snapshot, screenshots, "is the element there under another selector?" — passed to the classifier as `--evidence` JSON. |
 | classify | **code** | `scripts/triage/classify.js`: ordered rules, first match wins, returns class + confidence + the rule id + the evidence it used. |
-| decide the action | **code** | `scripts/triage/plan.js`: fingerprints each product-bug, searches the tracker, returns `file-bug` / `comment-existing` / `file-regression` / `propose`. Read-only. |
+| decide the action | **code** | `scripts/triage/plan.js`: fingerprints each product-bug, searches the tracker, returns `file-bug` / `comment-existing` / `file-regression` / `report-dismissed` / `propose`, and writes each comment input to a file named by the fingerprint token. Read-only toward the tracker. |
 | act | existing gated commands | `/file-bug` (human review gate) or `cli.js comment`. Autonomy tiers that remove the gate are Phase 4. |
 | report | model | summarizes the triage report; never re-labels a failure the classifier proposed. |
 
@@ -102,20 +102,26 @@ something is different." So:
 `fingerprint = sha1(identity | errorKind | signature)[0:12]`:
 - **identity** — `ticket/caseId` when the test name carries one (survives renames and refactors), else
   `<file basename>|<normalized title>`;
-- **signature** — the error message with the volatile parts masked: ANSI, UUIDs, ISO timestamps, long hex/ids, durations
-  (`30000ms`), temp and absolute paths, ports, `file:line:col`.
+- **signature** — the error message **plus the `Expected` / `Received` / `Locator` lines of its details**, with the volatile parts
+  masked: ANSI, UUIDs, ISO timestamps, long hex/ids, durations (`30000ms`), temp and absolute paths, ports, `file:line:col`. The
+  expected/received lines are part of it because two defects can share a one-line summary (`expect(received).toBe(expected)`) and
+  differ only in what was received; the call log and the stack are left out because they change from run to run.
 
 `plan.js` then, per product-bug:
 1. searches the tracker for the fingerprint token (written into every filed bug as `qafp<12 hex>`, one alphanumeric
    token because tracker search tokenizers split on hyphens);
 2. **open match** → `comment-existing` (a ready-to-run `comment` input with a per-run idempotency key);
-3. **only closed matches** → `file-regression`: a *new* bug that links the closed one — a closed bug with the same
+3. **only matches closed as fixed** → `file-regression`: a *new* bug that links the closed one — a closed bug with the same
    fingerprint is a regression, and idempotency-key lookup (which matches closed items too) must **not** swallow it, so
    the key includes the run id (`fp-<fingerprint>-<runId>`: a retry of the same run is safe, a later run is new);
-4. **no match** → `file-bug`.
+4. **only matches closed WITHOUT a fix** (won't fix, not planned, duplicate, rejected) → `report-dismissed`: nothing is filed or
+   commented. The team decided not to fix it, so it is not a regression of a fix, and a comment on it is noise;
+5. **no match** → `file-bug`.
 
-This needs a normalized open/closed on search results, which Phase 1's `search` lacks (each tracker returns its own
-status words). Adapters gain `open: boolean`, mapped per tracker and covered by the contract suite.
+This needs a normalized state on search results, which Phase 1's `search` lacks (each tracker returns its own status words).
+Adapters gain `open: boolean` and, when the tracker says the item was closed without a fix, `dismissed: true`, mapped per
+tracker (GitHub "not planned" and wontfix/invalid/duplicate labels, Bitbucket's wontfix/invalid/duplicate, ClickUp status
+wording, Azure close reasons, GitLab labels) and covered by the contract suite and `tests/tracker/dismissed.test.js`.
 
 **Known limit, stated up front:** GitHub's search index lags writes, so a bug filed minutes ago may not be found, and a
 second run can file a duplicate. Within one run `plan.js` dedupes locally; across runs the Phase 3 ledger is the fix.
@@ -194,3 +200,29 @@ run is `node --test` against a throwaway repository), and any git workflow that 
 4. **Re-runs: default 2, configurable** — `triage.reruns` in `qa-config.json` (0–5) or `--reruns`; a flag beats the config.
    The confidence threshold is configurable the same way (`triage.confidenceThreshold`, `--threshold`).
 5. **Flaky tests: report-only for now.**
+
+## What review of the first version changed
+
+An independent review of the first version found that it classified on the wrong text and then trusted its own classification
+too far. What changed, and why:
+
+- **The classifier now reads the whole failure, not its first line.** Reporters put a one-line summary in `message` and the
+  diagnosis in `details`. Playwright's `Received: <element(s) not found>`, the status a request got back and the locator it
+  was waiting for were all in `details`, so a stale selector, an expired session, a 503 and a 404 page were classified as a failed
+  assertion about the app: `product-bug`, 0.85, `act`, a bug filed. The seeded scenarios use TAP, whose message is whole, so
+  nothing exercised that path. `tests/triage/realworld.test.js` now runs failures as the real Playwright reporter writes them
+  through the real parser.
+- **Three kinds of failure are not evidence about the app:** infrastructure errors (more of them recognised: certificate and TLS
+  errors, empty responses, "Received: 503"), login/authorization signals (a 401/403, a redirect to a login page) and error pages
+  (404/500). The last two become `undetermined` and say what to check, never a product bug.
+- **A runner format that has not been verified on real failures cannot act.** `product-bug` and `test-bug` (the two classes with a
+  side effect) are held at `propose` and marked `cap: unverified-format`. Only TAP is trusted by default; `--trusted-formats`
+  widens it. This is the backstop for patterns nobody thought of yet: a wrong guess costs a human a look, not a bad ticket.
+- **Fingerprints include what was expected and received,** so two different defects with the same one-line summary no longer
+  collide (the second used to be reported as "already filed").
+- **The orchestrator agent has no `Write` tool and no longer claims it "cannot edit files".** It has Bash, so the honest statement
+  is that not editing is a rule it keeps, not a sandbox. The scripts write the files the pipeline needs: `plan.js` writes each
+  comment input to `comments/<token>.json`, and `locators.js --report … --token … --evidence-out` writes the evidence file.
+- **Nothing free-text from a failure reaches a command line or a file name.** Test keys come from test titles (slashes, pipes,
+  quotes); the prose now passes only the fingerprint token (`qafp` plus 12 hex digits) and the scripts read the report themselves.
+- **Closed is not one thing** (see `report-dismissed` above).

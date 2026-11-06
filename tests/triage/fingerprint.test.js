@@ -83,3 +83,62 @@ describe('normalizeSignature', () => {
     assert.equal(normalizeSignature(undefined), '');
   });
 });
+
+// Reporters put a one-line summary in `message` and the diagnosis in `details`. A fingerprint built from the summary alone gave two
+// different defects the same id, so the second was reported as "already filed" and never seen (found by review of PR #9).
+describe('fingerprint: what was expected and received is part of the defect', () => {
+  const JEST_SUMMARY = 'expect(received).toBe(expected) // Object.is equality';
+  const withDetails = (name, details, message = JEST_SUMMARY) => ({ name, file: 'cart.test.js', status: 'failed', error: { kind: 'failure', message, details } });
+  const frames = '    at Object.<anonymous> (/repo/test/cart.test.js:12:20)\n    at processTicksAndRejections (node:internal/process/task_queues:95:5)';
+
+  test('Expected 10 / Received 12 and Expected "EUR" / Received "USD" are different defects (they used to collide)', () => {
+    const a = withDetails('cart total', `${JEST_SUMMARY}\n\nExpected: 10\nReceived: 12\n\n${frames}`);
+    const b = withDetails('cart total', `${JEST_SUMMARY}\n\nExpected: "EUR"\nReceived: "USD"\n\n${frames}`);
+    assert.notEqual(fp(a), fp(b));
+  });
+
+  test('only what was RECEIVED differs (same expected): still a different defect', () => {
+    const a = withDetails('status', `${JEST_SUMMARY}\n\nExpected: 200\nReceived: 500\n\n${frames}`);
+    const b = withDetails('status', `${JEST_SUMMARY}\n\nExpected: 200\nReceived: 418\n\n${frames}`);
+    assert.notEqual(fp(a), fp(b));
+  });
+
+  test('only what was EXPECTED differs (same received): still a different defect', () => {
+    const a = withDetails('status', `${JEST_SUMMARY}\n\nExpected: 200\nReceived: 404\n\n${frames}`);
+    const b = withDetails('status', `${JEST_SUMMARY}\n\nExpected: 201\nReceived: 404\n\n${frames}`);
+    assert.notEqual(fp(a), fp(b));
+  });
+
+  test('the same expected/received is the same defect even when the stack, colours and timings differ between runs', () => {
+    // colour codes wrap the LABELS in real output, which would hide the line from a matcher that did not strip them first
+    const a = withDetails('cart total', `\u001b[2m${JEST_SUMMARY}\u001b[22m\n\n\u001b[32mExpected\u001b[39m: 10\n\u001b[31mReceived\u001b[39m: 12\n\n${frames}`);
+    const b = withDetails('cart total', `${JEST_SUMMARY}\n\nExpected: 10\nReceived: 12\n\n    at Object.<anonymous> (/home/ci/w/test/cart.test.js:99:1)`);
+    assert.equal(fp(a), fp(b));
+  });
+
+  test('the Playwright call log is NOT part of the fingerprint: it repeats a different number of times every run', () => {
+    const head = 'expect(locator).toHaveText(expected)\n\nLocator: getByTestId(\'currency\')\nExpected: "EUR"\nReceived: "USD"\nCall log:\n';
+    const short = withDetails('currency', `${head}  - waiting for getByTestId('currency')\n    9 × locator resolved to <span>USD</span>\n      - unexpected value "USD"`, 'expect(locator).toHaveText(expected)');
+    const long = withDetails('currency', `${head}  - waiting for getByTestId('currency')\n    41 × locator resolved to <span>USD</span>\n      - unexpected value "USD"\n      - unexpected value "USD"`, 'expect(locator).toHaveText(expected)');
+    assert.equal(fp(short), fp(long));
+  });
+
+  test('a different locator is a different defect', () => {
+    const a = withDetails('x', 'expect(locator).toBeVisible()\n\nLocator: getByTestId(\'a\')\nExpected: visible\nReceived: hidden', 'expect(locator).toBeVisible()');
+    const b = withDetails('x', 'expect(locator).toBeVisible()\n\nLocator: getByTestId(\'b\')\nExpected: visible\nReceived: hidden', 'expect(locator).toBeVisible()');
+    assert.notEqual(fp(a), fp(b));
+  });
+
+  test('details without any expected/received lines change nothing (a bare stack is not part of the identity)', () => {
+    const bare = { name: 'x', file: 'a.test.js', status: 'failed', error: { kind: 'failure', message: 'boom' } };
+    const stacked = { ...bare, error: { ...bare.error, details: 'Error: boom\n    at /repo/a.test.js:1:1' } };
+    assert.equal(fp(bare), fp(stacked));
+  });
+
+  test('a diagnostic line the message already contains is not counted twice', () => {
+    const msg = 'expected values differ\nExpected: 1\nReceived: 2';
+    const a = { name: 'x', file: 'a.test.js', status: 'failed', error: { kind: 'failure', message: msg } };
+    const b = { ...a, error: { ...a.error, details: 'Expected: 1\nReceived: 2' } };
+    assert.equal(fingerprint(a).signature, fingerprint(b).signature);
+  });
+});

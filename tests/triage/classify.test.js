@@ -17,7 +17,8 @@ const err = (message, kind = 'failure', details = '') => ({ kind, message, detai
 const T = (name, status, error, extra = {}) => ({ name, status, ...(error ? { error } : {}), ...extra });
 const pass = (name, extra) => T(name, 'passed', undefined, extra);
 const fail = (name, error, extra) => T(name, 'failed', error, extra);
-const run = (...tests) => ({ format: 'junit', totals: {}, tests });
+// 'tap' is the one format trusted by default; the gate for every other format has its own tests below
+const run = (...tests) => ({ format: 'tap', totals: {}, tests });
 const only = (report) => { assert.equal(report.verdicts.length, 1, JSON.stringify(report.verdicts.map((v) => v.test.name))); return report.verdicts[0]; };
 const ok = (report) => { assert.ok(validateReport(report), JSON.stringify(validateReport.errors)); return report; };
 const triage = (runs, opts = {}) => ok(classify({ runs, ...opts }));
@@ -256,6 +257,8 @@ describe('undetermined is STRICT: a last resort with a closed list of reasons', 
       LOCATOR_NO_EVIDENCE: () => twice('ui', stale),
       LOCATOR_PRESENT: () => twice('ui', stale),
       LOCATOR_GONE: () => twice('ui', stale),
+      AUTH_OR_SESSION: () => twice('dashboard', err('expect(page).toHaveURL(expected)', 'failure', 'Expected pattern: /dashboard/\nReceived string:  "http://localhost:3000/login"')),
+      ERROR_PAGE: () => twice('home', err('expect(locator).toHaveText(expected)', 'failure', 'Locator: locator(\'h1\')\nExpected: "Welcome back"\nReceived: "404 Not Found"')),
       CONSISTENT_TIMEOUT: () => twice('slow', err('Timeout 30000ms exceeded.', 'timeout')),
       NOT_RERUN: () => [run(fail('odd', err('Timeout 30000ms exceeded.', 'timeout')))],
       UNSTABLE_ERRORS: () => [run(fail('t', err('first error', 'error'))), run(fail('t', err('second error', 'error')))],
@@ -275,6 +278,16 @@ describe('undetermined is STRICT: a last resort with a closed list of reasons', 
       assert.equal(v.action, 'propose', reason);
       assert.match(v.evidence[0], new RegExp(`^${reason}: `));
     }
+  });
+
+  test('a login or error page is named as such even on a SINGLE attempt (it says more than "not re-run"), but a locator failure is named first', () => {
+    const login = err('expect(page).toHaveURL(expected)', 'failure', 'Expected pattern: /dashboard/\nReceived string:  "http://localhost:3000/login"');
+    assert.equal(only(triage([run(fail('dashboard', login))])).reason, 'AUTH_OR_SESSION', 'one attempt, but the login redirect is the more useful thing to say');
+    const page404 = err('expect(locator).toHaveText(expected)', 'failure', 'Locator: locator(\'h1\')\nExpected: "Welcome"\nReceived: "404 Not Found"');
+    assert.equal(only(triage([run(fail('home', page404))])).reason, 'ERROR_PAGE');
+    // a missing element that ALSO mentions a login page is a locator problem first: capture the page before concluding anything
+    const both = err('expect(locator).toBeVisible()', 'failure', "Locator: getByTestId('add-btn')\nReceived: <element(s) not found>\nReceived string: \"http://localhost/login\"");
+    assert.equal(only(triage([run(fail('x', both)), run(fail('x', both))])).reason, 'LOCATOR_NO_EVIDENCE');
   });
 
   test('an undetermined verdict NEVER acts, even if the threshold is set below its confidence', () => {
@@ -394,7 +407,10 @@ describe('threshold, scope and identity', () => {
 describe('classify CLI', () => {
   const dir = fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), 'qa-triage-'));
   const write = (name, obj) => { const f = path.join(dir, name); fs.writeFileSync(f, typeof obj === 'string' ? obj : JSON.stringify(obj)); return f; };
-  const cli = (argv) => { let out = ''; let e = ''; const code = main({ argv, stdout: { write: (s) => { out += s; } }, stderr: { write: (s) => { e += s; } } }); return { code, err: e, json: out ? JSON.parse(out) : null }; };
+  // Hermetic: unless a test names its own --config, the CLI is pointed at an empty one. Without that it DISCOVERS ./qa-config.json, so a
+  // developer who sets triage.confidenceThreshold (or trustedFormats…) in their own config would see these tests fail for no reason of theirs.
+  const EMPTY_CONFIG = write('empty-config.json', {});
+  const cli = (argv) => { let out = ''; let e = ''; const code = main({ argv: argv.length && !argv.includes('--config') && !argv.includes('-h') && !argv.includes('--help') ? [...argv, '--config', EMPTY_CONFIG] : argv, stdout: { write: (s) => { out += s; } }, stderr: { write: (s) => { e += s; } } }); return { code, err: e, json: out ? JSON.parse(out) : null }; };
 
   test('reads run.js-style { ok, data } documents or bare results; failures are data (exit 0)', () => {
     const wrapped = write('wrapped.json', { ok: false, data: run(fail(CASE, ASSERT)) });

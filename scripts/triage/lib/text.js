@@ -25,21 +25,73 @@ function normalizeSignature(message, max = 300) {
   return s.replace(/\s+/g, ' ').trim().slice(0, max);
 }
 
+// What a failure SAYS. Reporters put the one-line summary in `message` and the diagnosis in `details`: Playwright's
+// "Received: <element(s) not found>", the status a request got back, the locator it was waiting for. Classifying on the
+// message alone mistakes a stale selector, an expired session or a 503 for a failed assertion about the app, so every
+// signal below reads both. (Capped: details can be a whole stack trace.)
+const MAX_EVIDENCE = 4000;
+function evidenceText(error) {
+  if (!error) return '';
+  return stripAnsi(`${error.message || ''}\n${error.details || ''}`).slice(0, MAX_EVIDENCE);
+}
+
+// The lines of a failure's details that tell one defect from another — what was expected, what was received, which
+// locator — and nothing volatile. The call log ("- locator resolved to …", repeated a different number of times on
+// every run) and the stack are deliberately NOT included: a fingerprint that changes between runs files the same bug again.
+const DIAGNOSTIC_LINE = /^\s*(?:Expected|Received|Actual|Locator)\b[^\n]*$/i;
+function diagnosticLines(details, { lines = 4 } = {}) {
+  return stripAnsi(details || '').split('\n').filter((l) => DIAGNOSTIC_LINE.test(l)).slice(0, lines).map((l) => l.trim());
+}
+const diagnosticHead = (details, opts) => diagnosticLines(details, opts).join(' ');
+
+// The fingerprint's signature: the message plus the diagnostic head, volatile parts masked. Two failures that differ only in
+// WHAT was expected or received ("Expected: 10 / Received: 12" vs "Expected: "EUR" / Received: "USD"") are different defects.
+function signatureOf(error, max = 500) {
+  const e = error || {};
+  const message = stripAnsi(e.message || '');
+  // a diagnostic line the message already contains adds nothing — and must not, or the same defect would hash differently
+  // depending on whether a reporter repeated those lines in `details`
+  const extra = diagnosticLines(e.details).filter((l) => !message.includes(l));
+  return normalizeSignature(extra.length ? `${message} ${extra.join(' ')}` : message, max);
+}
+
 // Errors that say "the environment is down", not "the app or the test is wrong". A bare "Timeout 30000ms
 // exceeded" is deliberately NOT here: it is ambiguous (slow app, wrong wait, dead server).
 const INFRA = [
   /\bECONNREFUSED\b/, /\bENOTFOUND\b/, /\bECONNRESET\b/, /\bEAI_AGAIN\b/, /\bEHOSTUNREACH\b/, /\bENETUNREACH\b/,
-  /\bgetaddrinfo\b/i, /net::ERR_(?:CONNECTION|NAME_NOT_RESOLVED|INTERNET_DISCONNECTED|ADDRESS_UNREACHABLE|TIMED_OUT)/,
+  /\bgetaddrinfo\b/i, /\bERR_(?:CONNECTION|NAME_NOT_RESOLVED|INTERNET_DISCONNECTED|ADDRESS_UNREACHABLE|TIMED_OUT|CERT|SSL|BAD_SSL|EMPTY_RESPONSE|TUNNEL|PROXY|NETWORK)/,
   /\bBad Gateway\b/i, /\bService Unavailable\b/i, /\bGateway Time-?out\b/i, /\bHTTP (?:status )?(?:502|503|504)\b/i,
   /\b(?:status|code)[: ]+(?:502|503|504)\b/i, /connect ECONN/i, /socket hang up/i,
+  // a status assertion that RECEIVED a gateway error ("Expected: 200  Received: 503")
+  /\bReceived\b[^\n]{0,30}\b(?:502|503|504)\b/i,
+  // TLS problems with the test environment's certificate (Node and Chromium wording)
+  /\b(?:UNABLE_TO_VERIFY_LEAF_SIGNATURE|CERT_HAS_EXPIRED|DEPTH_ZERO_SELF_SIGNED_CERT|SELF_SIGNED_CERT_IN_CHAIN)\b/, /\bself[- ]signed certificate\b/i,
+  /\bcertificate (?:has expired|is not yet valid|verify failed)\b/i,
 ];
 const infraSignal = (message) => { const m = stripAnsi(message || ''); const hit = INFRA.find((re) => re.test(m)); return hit ? hit.source : null; };
+
+// "Is this an authentication / session problem?" An expired test account, a login page where the app should be, a 401 where
+// a 200 was expected: these look like an app that returns the wrong thing but are as often the test's credentials. They are
+// never evidence of a product bug on their own, so they never reach a bug report without a human.
+const AUTH = [
+  /\bReceived\b[^\n]{0,30}\b(?:401|403)\b/i,
+  /\bReceived\b[^\n]*\/(?:log-?in|sign-?in|signin|auth|sso|session-expired)\b/i, // toHaveURL: bounced to a login page
+  /\b(?:status|code)[: ]+(?:401|403)\b/i, /\bHTTP (?:status )?(?:401|403)\b/i,
+  /\bsession (?:has )?(?:expired|timed out)\b/i, /\b(?:token|credentials?) (?:has )?expired\b/i, /\bunauthori[sz]ed\b/i,
+];
+const authSignal = (message) => { const m = stripAnsi(message || ''); const hit = AUTH.find((re) => re.test(m)); return hit ? hit.source : null; };
+
+// The page or API answered with an error page (404 / 500 / "Something went wrong"). A wrong base URL, a dead route and a
+// real regression all look like this from the test alone.
+const ERROR_PAGE = [/\bReceived\b[^\n]{0,60}(?:\b(?:404|500)\b|Not Found|Internal Server Error|Application Error|Something went wrong)/i];
+const errorPageSignal = (message) => { const m = stripAnsi(message || ''); const hit = ERROR_PAGE.find((re) => re.test(m)); return hit ? hit.source : null; };
 
 // "I could not find the thing on the page", across Playwright, Cypress, Selenium/WebDriver, Capybara and our own
 // page helpers. Cypress's wording ("Timed out retrying … Expected to find element") is the one that a plain
 // "timeout" check misses.
 const LOCATOR = [
   /waiting for (?:getBy\w+|locator|selector)/i, /locator\.\w+: .*(?:timeout|not found)/i, /resolved to 0 elements/i,
+  /<element\(s\) not found>/i, /strict mode violation/i, /resolved to [2-9]\d* elements/i,
   /expected to find (?:element|content)/i, /no such element/i, /unable to locate element/i, /unable to find (?:an? )?(?:element|css|visible)/i,
   /\belement not found\b/i, /\bno element(?:s)? found\b/i, /\blocator not found\b/i, /NoSuchElement/i, /Capybara::ElementNotFound/i,
 ];
@@ -87,4 +139,4 @@ function appCrash(error) {
 
 const baseName = (p) => (p ? path.basename(String(p)) : '');
 
-module.exports = { normalizeSignature, infraSignal, isLocatorError, extractTestId, testCrash, appCrash, firstSourceFrame, baseName, INFRA, LOCATOR };
+module.exports = { normalizeSignature, evidenceText, diagnosticHead, diagnosticLines, signatureOf, infraSignal, authSignal, errorPageSignal, isLocatorError, extractTestId, testCrash, appCrash, firstSourceFrame, baseName, INFRA, AUTH, ERROR_PAGE, LOCATOR };

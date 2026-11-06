@@ -7,11 +7,12 @@
 // ready-made inputs.
 //
 //   node scripts/triage/plan.js --report triage.json [--run-id <id>] [--flaky-out flaky.json] [--out plan.json]
-//                               [--source T] [--config P] [--base-url U] [--timeout-ms N]
+//                               [--comments-dir DIR] [--source T] [--config P] [--base-url U] [--timeout-ms N]
 //
 // Per verdict (class + action → step):
 //   product-bug, act     → comment-existing   an OPEN report with this fingerprint exists: comment, don't file
-//                          file-regression    only CLOSED reports match: the defect came back — file a NEW bug linking the old
+//                          file-regression    only CLOSED (fixed) reports match: the defect came back — file a NEW bug linking the old
+//                          report-dismissed   only reports closed WITHOUT a fix match (won't fix, not planned, duplicate…): say so, file nothing
 //                          file-bug           nothing matches
 //   product-bug, propose → propose            (with what was found, so the human can decide)
 //   test-bug             → propose-test-fix   self-heal is not enabled: name the cause, edit nothing
@@ -21,7 +22,8 @@
 // A hit only counts if the fingerprint token is really in the item's body (search is fuzzy; a lagging index misses
 // brand-new items — a known limit, see docs/phase-2-design.md). Idempotency keys always include the run id so that a
 // retry of THIS run is safe but a later run is never swallowed by an old, closed report.
-// Output: { ok, data: { runId, actions[], flaky[], warnings[] } }. Exit 0 = planned, 1 = unreadable input, 2 = usage.
+// A comment-existing step comes with its input already written to <comments-dir>/<fingerprint token>.json, so nobody has to assemble
+// JSON from text that came out of a failing test. Output: { ok, data: { runId, actions[], flaky[], warnings[] } }. Exit 0 = planned, 1 = unreadable input, 2 = usage.
 
 const fs = require('fs');
 const path = require('path');
@@ -31,10 +33,11 @@ const { TrackerError } = require('../tracker/lib/errors');
 
 // Every step a plan can contain. The prose that tells a model what to do for each one is checked against this list
 // (tests/helpers/orchestrator-drift-check.js), so a step cannot be added here without telling the model about it.
-const STEPS = ['file-bug', 'file-regression', 'comment-existing', 'duplicate-in-run', 'propose-test-fix', 'report-flaky', 'report-environment', 'propose'];
+const STEPS = ['file-bug', 'file-regression', 'report-dismissed', 'comment-existing', 'duplicate-in-run', 'propose-test-fix', 'report-flaky', 'report-environment', 'propose'];
 
 const usage = (message) => Object.assign(new Error(message), { isUsage: true });
 const MAX_CANDIDATES = 5;
+const CAP_REASON = 'held at propose: classification of this runner format has not been verified on real failures (triage.trustedFormats), so a person decides';
 const sanitize = (s) => String(s).replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
 
 function parseArgs(argv) {
@@ -46,6 +49,7 @@ function parseArgs(argv) {
     else if (flag === '--run-id') opts.runId = value();
     else if (flag === '--flaky-out') opts.flakyOut = value();
     else if (flag === '--out') opts.out = value();
+    else if (flag === '--comments-dir') opts.commentsDir = value();
     else if (flag === '--source') opts.source = value();
     else if (flag === '--config') opts.config = value();
     else if (flag === '--base-url') opts.baseUrl = value();
@@ -61,13 +65,14 @@ function parseArgs(argv) {
 // "could not check" and says so.
 async function lookup(adapter, token) {
   const { items } = await run(adapter, 'search', { query: token, kind: 'bug', limit: MAX_CANDIDATES });
-  const open = []; const closed = [];
+  // open: still being worked · closed: closed because it was FIXED · dismissed: closed WITHOUT a fix (won't fix, not planned, duplicate…)
+  const open = []; const closed = []; const dismissed = [];
   for (const item of items.slice(0, MAX_CANDIDATES)) {
     const ticket = await run(adapter, 'fetch', { id: item.id }); // confirm the token is really in it — search is fuzzy
     if (!String(ticket.description || '').includes(token)) continue;
-    (item.open ? open : closed).push({ id: item.id, url: item.url, title: item.title, status: item.status });
+    (item.open ? open : item.dismissed ? dismissed : closed).push({ id: item.id, url: item.url, title: item.title, status: item.status });
   }
-  return { open, closed };
+  return { open, closed, dismissed };
 }
 
 function commentBody(v, runId) {
@@ -80,7 +85,7 @@ function commentBody(v, runId) {
   ].join('\n');
 }
 
-async function plan({ report, runId, adapter, trackerWarning }) {
+async function plan({ report, runId, adapter, trackerWarning, commentsDir }) {
   const warnings = trackerWarning ? [trackerWarning] : [];
   const actions = [];
   const seen = new Map(); // fingerprint -> first test key, for same-run dedupe
@@ -88,7 +93,7 @@ async function plan({ report, runId, adapter, trackerWarning }) {
     const base = { key: v.key, test: v.test.name, class: v.class, rule: v.rule, confidence: v.confidence, fingerprint: v.fingerprint, token: v.token };
     if (v.class === 'flaky') { actions.push({ ...base, step: v.action === 'act' ? 'report-flaky' : 'propose', reason: 'a flaky test is reported, never filed' }); continue; }
     if (v.class === 'environment') { actions.push({ ...base, step: v.action === 'act' ? 'report-environment' : 'propose', reason: 'environment problems are reported with a re-run advice, never filed' }); continue; }
-    if (v.class === 'test-bug') { actions.push({ ...base, step: v.action === 'act' ? 'propose-test-fix' : 'propose', reason: 'the cause is named and, unless self-heal is enabled and succeeds, nothing is edited', evidence: v.evidence, ...(v.proposal ? { proposal: v.proposal } : {}) }); continue; }
+    if (v.class === 'test-bug') { actions.push({ ...base, step: v.action === 'act' ? 'propose-test-fix' : 'propose', reason: v.cap ? CAP_REASON : 'the cause is named and, unless self-heal is enabled and succeeds, nothing is edited', evidence: v.evidence, ...(v.proposal ? { proposal: v.proposal } : {}) }); continue; }
     if (v.class === 'undetermined') { actions.push({ ...base, step: 'propose', reason: 'no rule has enough evidence', evidence: v.evidence }); continue; }
 
     // product-bug
@@ -105,15 +110,20 @@ async function plan({ report, runId, adapter, trackerWarning }) {
       }
     }
     const key = `fp-${v.fingerprint}-${sanitize(runId)}`;
-    const lookupInfo = found ? { open: found.open, closed: found.closed } : { skipped: lookupNote };
-    if (v.action === 'propose') { actions.push({ ...base, step: 'propose', reason: 'low confidence: shown to the human, not acted on', evidence: v.evidence, lookup: lookupInfo }); continue; }
+    const lookupInfo = found ? { open: found.open, closed: found.closed, dismissed: found.dismissed } : { skipped: lookupNote };
+    if (v.action === 'propose') { actions.push({ ...base, step: 'propose', reason: v.cap ? CAP_REASON : 'low confidence: shown to the human, not acted on', evidence: v.evidence, lookup: lookupInfo }); continue; }
     if (found && found.open.length) {
       const existing = found.open[0];
       actions.push({ ...base, step: 'comment-existing', existing, lookup: lookupInfo,
-        commentInput: { id: existing.id, body: commentBody(v, runId), idempotencyKey: `${key}-comment` } });
+        commentInput: { id: existing.id, body: commentBody(v, runId), idempotencyKey: `${key}-comment` },
+        ...(commentsDir ? { commentInputFile: path.join(commentsDir, `${v.token}.json`) } : {}) });
     } else if (found && found.closed.length) {
       actions.push({ ...base, step: 'file-regression', regressionOf: found.closed[0], lookup: lookupInfo, idempotencyKey: key, marker: `qa-harness-fingerprint: ${v.token}`,
-        note: `report #${found.closed[0].id} with this fingerprint is closed, so this is a regression: file a new bug that links it` });
+        note: `report #${found.closed[0].id} with this fingerprint was closed as fixed, so this is a regression: file a new bug that links it` });
+    } else if (found && found.dismissed.length) {
+      // The team decided NOT to fix this. It is not a regression of a fix, and a comment on a dismissed report is noise: say so, file nothing.
+      actions.push({ ...base, step: 'report-dismissed', dismissedAs: found.dismissed[0], lookup: lookupInfo,
+        reason: `report #${found.dismissed[0].id} with this fingerprint was closed WITHOUT a fix (${found.dismissed[0].status}): nothing is filed or commented. If that decision should be revisited, re-open it yourself` });
     } else {
       actions.push({ ...base, step: 'file-bug', lookup: lookupInfo, idempotencyKey: key, marker: `qa-harness-fingerprint: ${v.token}`,
         ...(lookupNote ? { note: `existing reports were not checked (${lookupNote})` } : {}) });
@@ -121,6 +131,19 @@ async function plan({ report, runId, adapter, trackerWarning }) {
   }
   const flaky = report.verdicts.filter((v) => v.class === 'flaky').map((v) => ({ key: v.key, test: v.test.name, rule: v.rule, confidence: v.confidence, attempts: v.attempts }));
   return { runId, actions, flaky, warnings };
+}
+
+// The input for each comment-existing step, written where the step says (named by the fingerprint token — one alphanumeric word — never by
+// the test's key, which is free text from a test title and can hold a slash, a quote or a space).
+function writeCommentInputs(actions) {
+  const written = [];
+  for (const a of actions) {
+    if (a.step !== 'comment-existing' || !a.commentInputFile) continue;
+    fs.mkdirSync(path.dirname(path.resolve(a.commentInputFile)), { recursive: true });
+    fs.writeFileSync(a.commentInputFile, `${JSON.stringify(a.commentInput, null, 2)}\n`);
+    written.push(a.commentInputFile);
+  }
+  return written;
 }
 
 // Only product-bug verdicts need the tracker, so credentials are not demanded otherwise. A tracker that cannot be
@@ -139,7 +162,7 @@ async function main({ argv = process.argv.slice(2), env = process.env, stdout = 
   const out = (obj) => stdout.write(`${JSON.stringify(obj, null, 2)}\n`);
   try {
     if (!argv.length || argv[0] === '-h' || argv[0] === '--help') {
-      stderr.write('Usage: plan.js --report <triage.json> [--run-id ID] [--flaky-out FILE] [--out FILE] [--source T] [--config P] [--base-url U] [--timeout-ms N]\n');
+      stderr.write('Usage: plan.js --report <triage.json> [--run-id ID] [--flaky-out FILE] [--out FILE] [--comments-dir DIR] [--source T] [--config P] [--base-url U] [--timeout-ms N]\n');
       return argv.length ? 0 : 2;
     }
     const opts = parseArgs(argv);
@@ -150,7 +173,9 @@ async function main({ argv = process.argv.slice(2), env = process.env, stdout = 
     const runId = opts.runId || new Date(now()).toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
 
     const { adapter, trackerWarning } = connectIfNeeded(report, { configPath: opts.config, source: opts.source, baseUrl: opts.baseUrl, timeoutMs: opts.timeoutMs, env, fetch });
-    const data = await plan({ report, runId, adapter, trackerWarning });
+    const commentsDir = opts.commentsDir || (opts.out ? path.join(path.dirname(opts.out), 'comments') : undefined);
+    const data = await plan({ report, runId, adapter, trackerWarning, commentsDir });
+    writeCommentInputs(data.actions);
     for (const f of [opts.out && [opts.out, { ok: true, data }], opts.flakyOut && [opts.flakyOut, { runId, flaky: data.flaky }]].filter(Boolean)) {
       fs.mkdirSync(path.dirname(path.resolve(f[0])), { recursive: true });
       fs.writeFileSync(f[0], `${JSON.stringify(f[1], null, 2)}\n`);
@@ -166,4 +191,4 @@ async function main({ argv = process.argv.slice(2), env = process.env, stdout = 
 
 if (require.main === module) main().then((code) => { process.exitCode = code; });
 
-module.exports = { main, plan, connectIfNeeded, sanitize, STEPS };
+module.exports = { main, plan, connectIfNeeded, writeCommentInputs, sanitize, STEPS };

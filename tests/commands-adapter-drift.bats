@@ -131,3 +131,50 @@ teardown() {
   [ "$status" -eq 1 ]
   [[ "$output" =~ "receipt example is invalid" ]]
 }
+
+# ── shell-string safety: text must never be pasted into a command line ─────────────────────────
+
+# edit a copy of the prose with node (sed would need to escape every $ and quote in the text being corrupted)
+corrupt() { # <file under the copy's .claude/commands> <from> <to>
+  node -e '
+    const fs = require("fs"); const [f, from, to] = process.argv.slice(1);
+    const s = fs.readFileSync(f, "utf8"); if (!s.includes(from)) { console.error("test setup: text not found: " + from); process.exit(9); }
+    fs.writeFileSync(f, s.split(from).join(to));' "$TEST_TMP/.claude/commands/$1" "$2" "$3"
+}
+
+@test "drift: the ticket id pasted back into a single-quoted --input string is caught" {
+  corrupt fetch-ticket.md "--input-file tests/cases/.ticket-context/.fetch-input.json" "--input '{\"id\":\"\$ARGUMENTS\"}'"
+  run env DRIFT_ROOT="$TEST_TMP" node "$CHECK"
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "untrusted text must never be pasted into a shell string" ]]
+}
+
+@test "drift: a ticket-title <placeholder> pasted back into an inline search --input is caught" {
+  corrupt file-bug.md "--input-file {testCasesDir}/bugs/.search.input.json" "--input '{\"query\":\"<2-4 words from the title>\",\"kind\":\"bug\"}'"
+  run env DRIFT_ROOT="$TEST_TMP" node "$CHECK"
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "untrusted text must never be pasted into a shell string" ]]
+}
+
+@test "drift: a command split over backslash-continued lines is checked as one command (a bad flag on line 2 is caught)" {
+  corrupt post-tests.md "node scripts/tracker/post-tests.js --parent \$ARGUMENTS" "node scripts/tracker/post-tests.js \\
+  --parent \$ARGUMENTS \\
+  --bogus-flag"
+  run env DRIFT_ROOT="$TEST_TMP" node "$CHECK"
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "post-tests.js has no option --bogus-flag" ]]
+}
+
+@test "drift: a command that puts \$ARGUMENTS on a shell line without stating an allow-list for it is caught" {
+  corrupt post-tests.md 'It must match `^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`' 'It must be sensible'
+  run env DRIFT_ROOT="$TEST_TMP" node "$CHECK"
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "post-tests.md:".*"never states an anchored allow-list" ]]
+}
+
+@test "drift: the profile commands (cp / diff on projects/\$ARGUMENTS.json) must state their allow-list too" {
+  corrupt switch-project.md 'it must match `^[a-z0-9][a-z0-9-]{0,63}$`' 'it should look like a name'
+  run env DRIFT_ROOT="$TEST_TMP" node "$CHECK"
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "switch-project.md:".*"never states an anchored allow-list" ]]
+}

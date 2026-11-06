@@ -47,10 +47,19 @@ One JSON document ([`schemas/run-result.schema.json`](../schemas/run-result.sche
 | 0 | the runner exited 0 **and** every test in its report passed |
 | 1 | tests failed (the failures are in `data`) |
 | 2 | bad invocation (reason on stderr) |
-| 3 | **no trustworthy report** — the runner could not start, was killed at `--timeout-ms`, wrote nothing, listed **zero tests**, or its exit code contradicts its report (e.g. exit 137 but no failures listed = it crashed after a partial report) |
+| 3 | **no trustworthy report** — the runner could not start, was killed at `--timeout-ms`, wrote nothing, listed **zero tests**, **skipped every test** (nothing was verified; pass `--allow-all-skipped` if that is intended), or its exit code contradicts its report (e.g. exit 137 but no failures listed = it crashed after a partial report) |
 
 Exit 3 exists because "I could not tell" must never read as "all green". A stale report from a previous run cannot stand
 in either: `run.js` clears its own `qa-results/raw/` before every run.
+
+Two guards protect the caller, because `--out` and the spec/dir/config arguments are caller-controlled:
+
+- **It only clears a directory it can show is its own.** `raw/` is cleared when it is empty, holds only test reports, or
+  carries the `.qa-results-raw` marker that `run.js` writes when it creates it. Any other file in there (`precious.txt`)
+  makes it refuse with exit 2 instead of deleting somebody's files — choose another `--out`.
+- **`--spec`, `--test-dir` and `--config-file` cannot smuggle an option to the test runner.** A value that starts with
+  `-` (a spec of `--import=./x.js` would make node load that file) is exit 2; write `./-name` for a path that really
+  starts with a dash.
 
 ## Frameworks
 

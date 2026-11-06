@@ -8,6 +8,7 @@ INIT_HOOK="$REPO_ROOT/hooks/session-init.sh"
 FIXTURES="$BATS_TEST_DIRNAME/fixtures"
 
 setup() {
+  unset QA_AUTONOMOUS QA_HARNESS_DIR CLAUDE_PROJECT_DIR # hermetic: an exported autonomous/harness env must not change what these tests mean
   TEST_TMP="$(mktemp -d "${TMPDIR:-/tmp}/qa-test.XXXXXX")"
 }
 

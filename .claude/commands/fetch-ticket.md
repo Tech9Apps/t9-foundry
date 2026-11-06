@@ -6,6 +6,8 @@ You are given a ticket/task/work-item ID: **$ARGUMENTS**
 > "A ticket ID is required. Usage: `/fetch-ticket <TICKET-ID>` (e.g. `/fetch-ticket ABCD-12345`)"
 **Do not proceed with any further steps.**
 
+**Check the id before using it anywhere.** It is typed by a person (or passed on from a ticket) and ends up in file paths and a shell command. It must match `^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$` — letters, digits, `_` and `-`, nothing else. If it does not (a space, quote, `/`, `.`, `;`, `$`, a leading `-`…), stop and tell the user: "That does not look like a ticket id (letters, digits, `-` and `_` only)." Do not "clean it up" and carry on.
+
 ## Prerequisites
 
 Read `qa-config.json > ticketSource.type` to determine which source to fetch from. If `qa-config.json` is missing or `ticketSource.type` is unset, stop and tell the user to run `/init` or `/switch-project <profile>` first.
@@ -46,11 +48,19 @@ Map into the output schema below:
 
 ### github / clickup / azure / gitlab / bitbucket — via the tracker adapter CLI
 
-```bash
-node scripts/tracker/cli.js fetch --input '{"id":"$ARGUMENTS"}' --context-file tests/cases/.ticket-context/$ARGUMENTS.json
+Write the request to `tests/cases/.ticket-context/.fetch-input.json` with the Write tool (never assemble JSON inside a shell string):
+
+```json
+{ "id": "$ARGUMENTS" }
 ```
 
-Pass the id exactly as given (a GitHub / GitLab / Bitbucket issue number, an Azure DevOps work item number, a ClickUp task id). The CLI reads the tracker settings from `qa-config.json > ticketSource`, reads the credential from the environment variable that config names (`GITHUB_TOKEN`, `CLICKUP_TOKEN`, `AZURE_DEVOPS_PAT`, `GITLAB_TOKEN`, `BITBUCKET_TOKEN`, or `ticketSource.<type>.tokenEnvVar`), and:
+then run:
+
+```bash
+node scripts/tracker/cli.js fetch --input-file tests/cases/.ticket-context/.fetch-input.json --context-file tests/cases/.ticket-context/$ARGUMENTS.json
+```
+
+(`$ARGUMENTS` is safe on that command line only because it passed the check above.) Pass the id exactly as given (a GitHub / GitLab / Bitbucket issue number, an Azure DevOps work item number, a ClickUp task id). The CLI reads the tracker settings from `qa-config.json > ticketSource`, reads the credential from the environment variable that config names (`GITHUB_TOKEN`, `CLICKUP_TOKEN`, `AZURE_DEVOPS_PAT`, `GITLAB_TOKEN`, `BITBUCKET_TOKEN`, or `ticketSource.<type>.tokenEnvVar`), and:
 
 - prints `{ "ok": true, "data": <normalized ticket> }`, and
 - writes the ticket-context file (schema below) itself — **you do not map fields by hand**.

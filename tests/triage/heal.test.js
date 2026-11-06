@@ -358,7 +358,8 @@ describe('heal CLI', () => {
   const reportFor = (p) => {
     const t = (status, extra = {}) => ({ name: 'DEMO-101/TC-901: the Apply button is on the cart panel', ticket: 'DEMO-101', caseId: 'TC-901', file: path.join(p.proj, 'tests', 'ui.test.js'), status, ...extra });
     const stale = { kind: 'failure', message: "locator not found: getByTestId('coupon-apply-btn')" };
-    const rep = classify({ runs: [{ tests: [t('failed', { error: stale })] }, { tests: [t('failed', { error: stale })] }, { tests: [t('failed', { error: stale })] }], evidence: { 'DEMO-101/TC-901': { locator: { target: 'coupon-apply-btn', present: false, candidates: [{ testid: 'coupon-apply', similarity: 0.8, tag: 'button', text: 'Apply' }] } } } });
+    // 'tap' is trusted by default; a result with no format, or an unverified one, is held at propose and never healed
+    const rep = classify({ runs: [1, 2, 3].map(() => ({ format: 'tap', tests: [t('failed', { error: stale })] })), evidence: { 'DEMO-101/TC-901': { locator: { target: 'coupon-apply-btn', present: false, candidates: [{ testid: 'coupon-apply', similarity: 0.8, tag: 'button', text: 'Apply' }] } } } });
     const f = path.join(p.root, 'triage.json'); fs.writeFileSync(f, JSON.stringify({ ok: true, data: rep }));
     return f;
   };

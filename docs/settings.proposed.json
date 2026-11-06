@@ -44,8 +44,6 @@
       "Bash(gh repo view *)",
       "Bash(gh auth status)",
       "Bash(gh api *)",
-      "Bash(curl -fsS --max-time 30 *api/v4/*)",
-      "Bash(curl -fsS --max-time 30 *api.bitbucket.org*)",
       "Bash(npx playwright --version)",
       "Bash(npx playwright test --list*)",
       "Bash(npx cypress --version)",
@@ -56,7 +54,8 @@
       "Bash(bash scripts/check-prereqs.sh)",
       "Bash(node scripts/tracker/cli.js fetch *)",
       "Bash(node scripts/tracker/cli.js search *)",
-      "Bash(node scripts/tracker/post-tests.js * --dry-run*)"
+      "Bash(node scripts/tracker/post-tests.js * --dry-run*)",
+      "Bash(node scripts/results/normalize.js *)"
     ]
   }
 }

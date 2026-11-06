@@ -21,6 +21,14 @@ const keyMarker = (key) => `qa-harness-key:${assertKey(key)}`;
 // Trackers that expose tags/labels as a searchable field use this token form instead.
 const keyTag = (key) => `qa-key-${assertKey(key)}`;
 
+const escapeRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// A key must be matched as a WHOLE key. Plain `text.includes(marker)` treats the key "bug-1" as present in text that holds "bug-10", so the
+// second create silently returned the first item and the second bug was never filed. The marker must END where the key ends: the next
+// character may not be one a key can contain.
+const hasMarker = (text, key) => new RegExp(`${escapeRe(keyMarker(key))}(?![A-Za-z0-9._-])`).test(String(text == null ? '' : text));
+// Tag lists (Azure: "a; b; c"): exact, case-insensitive tag equality.
+const hasTag = (tagField, key) => String(tagField || '').split(';').map((t) => t.trim().toLowerCase()).includes(keyTag(key).toLowerCase());
+
 function requireFields(input, fields, what) {
   const missing = fields.filter((f) => input == null || input[f] === undefined || input[f] === null || input[f] === '');
   if (missing.length) throw new TrackerError('VALIDATION', `${what} requires: ${missing.join(', ')}`);
@@ -80,6 +88,6 @@ function stripHtml(html = '') {
 const escapeXml = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 module.exports = {
-  OPERATIONS, PRIORITIES, validate, requireFields, keyMarker, keyTag, assertKey,
+  OPERATIONS, PRIORITIES, validate, requireFields, keyMarker, keyTag, hasMarker, hasTag, assertKey,
   stepsAsMarkdown, extractAcceptanceCriteria, stripHtml, escapeXml,
 };

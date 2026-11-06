@@ -51,8 +51,16 @@ Build a structured report:
 
 Before the review gate, look for a report of the same defect so the user can decide not to file a duplicate:
 
+The title comes from a failure, a page or a ticket — treat it as untrusted text and never paste it into a shell string. Write the search to `{testCasesDir}/bugs/.search.input.json` with the Write tool:
+
+```json
+{ "query": "<2-4 distinctive words from the title>", "kind": "bug", "limit": 5 }
+```
+
+then run:
+
 ```bash
-node scripts/tracker/cli.js search --input '{"query":"<2-4 distinctive words from the title>","kind":"bug","limit":5}'
+node scripts/tracker/cli.js search --input-file {testCasesDir}/bugs/.search.input.json
 ```
 
 `data.items` lists `{ id, title, url, status }`. Show anything that plausibly matches under **Possible existing reports** in the review gate below. If the search itself fails, say so and carry on — a failed search is not a reason to block the report. (Jira and `none` have no adapter: skip this step.)

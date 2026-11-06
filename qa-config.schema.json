@@ -157,7 +157,7 @@
         "allowedUrlPatterns": {
           "type": "array",
           "items": { "type": "string" },
-          "description": "Regex patterns for URLs that are known-safe and exempt from the suspicious-URL heuristic (e.g. docs or CDN links). Never overrides prodUrlPatterns. Tracker/code-host URLs (github.com, dev.azure.com, api.clickup.com, ...) are already exempt."
+          "description": "Regex patterns for URLs that are known-safe and exempt from the unrecognized-host check (e.g. docs or CDN links). Matched against the URL without its query string and fragment, so write them anchored (^https://partner\\.io/guide). Never override prodUrlPatterns. Tracker/code-host/registry URLs (github.com, dev.azure.com, api.clickup.com, registry.npmjs.org, ...) and the host of environments.testEnvironmentBaseUrl are already exempt."
         }
       }
     },
@@ -184,6 +184,11 @@
         "confidenceThreshold": {
           "type": "number", "exclusiveMinimum": 0, "maximum": 1, "default": 0.8,
           "description": "A verdict at or above this confidence is `act`; below it, `propose`."
+        },
+        "trustedFormats": {
+          "type": "array", "uniqueItems": true, "default": ["tap"],
+          "items": { "enum": ["junit", "tap", "playwright-json", "jest-json"] },
+          "description": "Runner formats whose classification has been verified on real failure output. Only these may let a product-bug or test-bug verdict `act`; for every other format those verdicts are held at `propose` (marked cap: unverified-format). Widen it only after checking a format against real failures. An empty list means nothing may act."
         },
         "selfHeal": {
           "type": "object",

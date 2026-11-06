@@ -9,7 +9,7 @@ You are given a profile name: **$ARGUMENTS**
 ## Prerequisites
 
 - `qa-config.json` must exist in the workspace root. If it doesn't, tell the user to run `/init` first and stop.
-- The profile name should be filesystem-safe: lowercase letters, digits, and hyphens. If it isn't, suggest a sanitized version and ask before proceeding.
+- **Check the profile name first.** It becomes part of a file path in a shell command, so it must match `^[a-z0-9][a-z0-9-]{0,63}$` (lowercase letters, digits, hyphens). If it does not, stop and say so — suggest a corrected name, but do not use it until the user agrees.
 
 ## Check for Secrets Before Committing Anything
 

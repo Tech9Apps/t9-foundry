@@ -124,6 +124,48 @@ function runContractSuite(name, makeMock) {
       assert.equal(byId[old.id].open, false, 'a closed bug is still returned, marked not open');
     });
 
+    test('search marks an item DISMISSED when the tracker says it was closed without a fix (and a dismissed item is never open)', async () => {
+      const { mock, adapter } = fresh();
+      const live = await run(adapter, 'create-bug', bugInput({ title: 'Receipt total is wrong on refunds' }));
+      const fixed = await run(adapter, 'create-bug', bugInput({ title: 'Receipt rounding is wrong on refunds' }));
+      const wont = await run(adapter, 'create-bug', bugInput({ title: 'Receipt tax is wrong on refunds' }));
+      mock.closeItem(fixed.id);   // closed because it was fixed
+      mock.dismissItem(wont.id);  // closed because nobody will fix it: the tracker's NATIVE "won't fix"
+      const { items } = await run(adapter, 'search', { query: 'Receipt', kind: 'bug' });
+      assertValid('tracker-search-result', { items });
+      const byId = Object.fromEntries(items.map((i) => [i.id, i]));
+      assert.deepEqual([byId[wont.id].open, byId[wont.id].dismissed], [false, true], 'won\'t fix: not open, and dismissed');
+      assert.deepEqual([byId[fixed.id].open, byId[fixed.id].dismissed], [false, undefined], 'fixed: closed, but NOT dismissed — if it comes back that IS a regression');
+      assert.deepEqual([byId[live.id].open, byId[live.id].dismissed], [true, undefined]);
+    });
+
+    test('a key that is a PREFIX of another key never dedupes a different item (bug-1 vs bug-10): bugs, test cases and comments', async () => {
+      const { mock, adapter } = fresh();
+      const parent = seed(mock);
+      // bugs
+      const ten = await run(adapter, 'create-bug', bugInput({ title: 'First bug', idempotencyKey: 'bug-10' }));
+      const one = await run(adapter, 'create-bug', bugInput({ title: 'A different bug entirely', body: 'something else', idempotencyKey: 'bug-1' }));
+      assert.equal(one.deduplicated, false, 'a different key must create a different bug');
+      assert.notEqual(one.id, ten.id);
+      assert.equal(mock.createdItems().length, 2, 'both bugs exist');
+      // ...and each key still finds exactly its own item on a retry
+      assert.equal((await run(adapter, 'create-bug', bugInput({ title: 'x', idempotencyKey: 'bug-1' }))).id, one.id);
+      assert.equal((await run(adapter, 'create-bug', bugInput({ title: 'x', idempotencyKey: 'bug-10' }))).id, ten.id);
+      assert.equal(mock.createdItems().length, 2, 'retries created nothing');
+      // test cases
+      const tc = (n, key) => ({ parentId: parent, tcId: `TC-00${n}`, title: `case ${n}`, steps: [{ action: 'a', expected: 'b' }], idempotencyKey: key });
+      const t10 = await run(adapter, 'create-test', tc(1, 'case-10'));
+      const t1 = await run(adapter, 'create-test', tc(2, 'case-1'));
+      assert.equal(t1.deduplicated, false);
+      assert.notEqual(t1.id, t10.id);
+      // comments
+      const c10 = await run(adapter, 'comment', { id: parent, body: 'first comment', idempotencyKey: 'run-10' });
+      const c1 = await run(adapter, 'comment', { id: parent, body: 'second comment', idempotencyKey: 'run-1' });
+      assert.equal(c1.deduplicated, false, 'a different comment key must post a different comment');
+      assert.notEqual(c1.id, c10.id);
+      assert.deepEqual(mock.commentsOn(parent).filter((b) => /comment/.test(b)).length, 2);
+    });
+
     test('comment adds a comment and returns a schema-valid result', async () => {
       const { mock, adapter } = fresh();
       const id = seed(mock);

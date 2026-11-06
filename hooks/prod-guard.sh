@@ -19,6 +19,17 @@ fi
 # Resolve qa-config.json independent of cwd (see lib/qa-config-path.sh)
 QA_CONFIG_PATH=$(resolve_qa_config || echo "qa-config.json")
 
+# A config that exists but is not valid JSON would silently drop every production pattern. Unattended, that must not pass.
+# (The URL checks below report it too; this catches it before anything else runs.)
+if [ -f "$QA_CONFIG_PATH" ] && ! jq -e . "$QA_CONFIG_PATH" >/dev/null 2>&1; then
+  if [ "$(resolve_guard_mode "$QA_CONFIG_PATH")" = "enforce" ]; then
+    echo "BLOCKED: $QA_CONFIG_PATH is not valid JSON, so its production URL patterns cannot be applied."
+    echo "Guard mode is 'enforce' (QA_AUTONOMOUS=1 or productionProtection.mode), so the guard fails closed. Fix qa-config.json."
+    exit 2
+  fi
+  echo "WARNING: $QA_CONFIG_PATH is not valid JSON — production URL patterns are NOT being applied. Fix qa-config.json."
+fi
+
 # Load production URL patterns from qa-config.json if available
 PROD_PATTERNS=()
 if [ -f "$QA_CONFIG_PATH" ]; then
@@ -59,13 +70,13 @@ if [ "${#PROD_PATTERNS[@]}" -gt 0 ]; then
     if [ -z "$pattern" ]; then continue; fi
     # Pre-validate regex — grep exits 2 on invalid pattern, 1 on no match, 0 on match
     grep_rc=0
-    echo "" | grep -qE -e "$pattern" 2>/dev/null || grep_rc=$?
+    echo "" | grep -qiE -e "$pattern" 2>/dev/null || grep_rc=$?
     if [ "$grep_rc" -eq 2 ]; then
       echo "WARNING: Skipping invalid production URL pattern: $pattern"
       echo "Fix productionProtection.prodUrlPatterns in qa-config.json to use valid regex."
       continue
     fi
-    if echo "$COMMAND" | grep -qE -e "$pattern"; then
+    if echo "$COMMAND" | grep -qiE -e "$pattern"; then
       echo "BLOCKED: Command contains a production URL matching pattern: $pattern"
       echo "Tests must never run against production environments."
       echo "Your configured test environment is: $(jq -r '.environments.testEnvironmentBaseUrl // "not set"' "$QA_CONFIG_PATH" 2>/dev/null || echo 'not set')"
@@ -74,46 +85,56 @@ if [ "${#PROD_PATTERNS[@]}" -gt 0 ]; then
   done
 fi
 
-# Heuristic check: block bare apex domains and prod-named subdomains
-# (catches cases where prod patterns haven't been configured yet)
-SUSPICIOUS_PATTERNS=(
-  "https?://[a-z0-9-]+\.(com|io|app|dev|net|org)/[^[:space:]]"
-  "https?://prod\."
-  "https?://production\."
-  "https?://live\."
-  "https?://app\.[a-z0-9-]+\.(com|io|app|net|org)"
-)
+# URL checks: configured production patterns (matched against every normalized spelling of each URL: case, userinfo, port, trailing dot,
+# query/fragment, numeric IPs) and the "is this recognizably NOT production?" heuristic. One implementation, hooks/lib/url-guard.js,
+# shared with the runtime guards' test table (tests/fixtures/guard-cases.json).
+GUARD_MODE=$(resolve_guard_mode "$QA_CONFIG_PATH")
+HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-if [ "$(jq -r 'if .productionProtection.blockOnSuspiciousUrls == false then "false" else "true" end' "$QA_CONFIG_PATH" 2>/dev/null || echo 'true')" = "true" ]; then
-  GUARD_MODE=$(resolve_guard_mode "$QA_CONFIG_PATH")
+fail_closed_or_warn() { # <message> — enforce mode blocks; otherwise it is only a warning
+  if [ "$GUARD_MODE" = "enforce" ]; then
+    echo "BLOCKED: $1"
+    echo "Guard mode is 'enforce' (QA_AUTONOMOUS=1 or productionProtection.mode), so the guard fails closed."
+    exit 2
+  fi
+  echo "WARNING: $1"
+}
 
-  # Judge each URL on its own — a staging URL elsewhere in the same command
-  # must not excuse a production-looking one.
-  while IFS= read -r url; do
-    [ -n "$url" ] || continue
-    if url_is_exempt "$url" "$QA_CONFIG_PATH"; then continue; fi
-    if echo "$url" | grep -qiE "(staging|test|dev|qa|localhost|127\.0\.0\.1)"; then continue; fi
+NODE_BIN=$(command -v node || true)
+if [ -z "$NODE_BIN" ]; then
+  fail_closed_or_warn "node is not installed, so URLs in this command cannot be checked (only the configured regexes above were applied)."
+else
+  RESULT=$(printf '%s' "$COMMAND" | "$NODE_BIN" "$HOOK_DIR/lib/url-guard.js" --config "$QA_CONFIG_PATH" --mode "$GUARD_MODE" 2>/dev/null || true)
+  if ! echo "$RESULT" | jq -e . >/dev/null 2>&1; then
+    fail_closed_or_warn "the URL check failed to run, so URLs in this command cannot be verified."
+  else
+    CONFIG_ERROR=$(echo "$RESULT" | jq -r '.configError // empty')
+    if [ -n "$CONFIG_ERROR" ]; then
+      fail_closed_or_warn "$CONFIG_ERROR — its production patterns cannot be applied. Fix qa-config.json."
+    fi
 
-    for pattern in "${SUSPICIOUS_PATTERNS[@]}"; do
-      if echo "$url" | grep -qiE -e "$pattern"; then
-        if [ "$GUARD_MODE" = "enforce" ]; then
-          # Unattended: a warning nobody reads is no guard. Block.
-          echo "BLOCKED: Command contains a URL that looks like production: $url"
-          echo "Guard mode is 'enforce' (QA_AUTONOMOUS=1 or productionProtection.mode), so heuristic matches block."
-          echo "If this URL is safe, add a regex for it to productionProtection.allowedUrlPatterns in qa-config.json."
-          echo "If it is production, add it to productionProtection.prodUrlPatterns and use your staging URL instead."
-          exit 2
-        fi
-        # warn mode: heuristic matches may be false positives, so only warn.
-        # Always warn, even when prodUrlPatterns is configured: a configured
-        # pattern list only covers what's been typed in, and this heuristic is
-        # meant to layer on top of it, not disable itself once any pattern exists.
-        echo "WARNING: Command may contain a production URL: $url"
-        echo "Configure productionProtection.prodUrlPatterns in qa-config.json to enable strict blocking."
-        break 2
+    # One finding per URL that is not allowed. A staging URL elsewhere in the same command never excuses another URL.
+    while IFS=$'\t' read -r decision reason url detail; do
+      [ -n "$decision" ] || continue
+      if [ "$reason" = "PROD_PATTERN" ]; then
+        echo "BLOCKED: Command contains a production URL matching pattern: $detail"
+        echo "URL: $url"
+        echo "Tests must never run against production environments."
+        echo "Your configured test environment is: $(jq -r '.environments.testEnvironmentBaseUrl // "not set"' "$QA_CONFIG_PATH" 2>/dev/null || echo 'not set')"
+        exit 2
       fi
-    done
-  done < <(echo "$COMMAND" | extract_urls)
+      if [ "$decision" = "block" ]; then
+        echo "BLOCKED: Command contains a URL that looks like production: $url"
+        echo "Why: $reason. Guard mode is 'enforce' (QA_AUTONOMOUS=1 or productionProtection.mode), so anything not recognizably a test environment blocks."
+        echo "If this URL is safe, add a regex for it to productionProtection.allowedUrlPatterns in qa-config.json."
+        echo "If it is production, add it to productionProtection.prodUrlPatterns and use your staging URL instead."
+        exit 2
+      fi
+      # warn mode: a human is watching, so say what is unverified and carry on
+      echo "WARNING: Command may contain a production URL: $url"
+      echo "Why: $reason. Configure productionProtection.prodUrlPatterns in qa-config.json to enable strict blocking."
+    done < <(echo "$RESULT" | jq -r '.findings[] | [.decision, .reason, .url, (.detail // "")] | @tsv')
+  fi
 fi
 
 exit 0

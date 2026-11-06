@@ -188,7 +188,18 @@ describe('orchestrate: settings come from flag > qa-config.json > default', () =
     const s = failing();
     const r = await go({ framework: 'node', reruns: undefined, noPlan: true }, { runResults: s.runResults });
     assert.equal(s.calls.length, 3);
-    assert.deepEqual(r.doc.data.settings, { reruns: { value: 2, from: 'default' }, confidenceThreshold: { value: 0.8, from: 'default' }, selfHeal: { value: false, from: 'default' } });
+    assert.deepEqual(r.doc.data.settings, { reruns: { value: 2, from: 'default' }, confidenceThreshold: { value: 0.8, from: 'default' }, trustedFormats: { value: ['tap'], from: 'default' }, selfHeal: { value: false, from: 'default' } });
+  });
+
+  test('trusted formats come from the flag, then qa-config.json, then the default — and the output says which', async () => {
+    const doc = () => { const d = result(T('DEMO-101/TC-005: x', 'failed', { ...ids(5), error: E('expect(locator).toHaveCount(expected)', 'failure', 'Locator: getByTestId(\'cart-line\')\nExpected: 3\nReceived: 0') })); d.data.format = 'playwright-json'; return d; };
+    const run = async (args) => (await go({ framework: 'playwright', noPlan: true, ...args }, { runResults: scripted(() => ({ doc: doc() })).runResults })).doc.data;
+    const byDefault = await run({});
+    assert.deepEqual([byDefault.settings.trustedFormats, byDefault.verdicts[0].action, byDefault.verdicts[0].cap], [{ value: ['tap'], from: 'default' }, 'propose', 'unverified-format']);
+    const fromConfig = await run({ config: cfgFile({ triage: { trustedFormats: ['tap', 'playwright-json'] } }) });
+    assert.deepEqual([fromConfig.settings.trustedFormats, fromConfig.verdicts[0].action], [{ value: ['tap', 'playwright-json'], from: 'config' }, 'act']);
+    const flagWins = await run({ config: cfgFile({ triage: { trustedFormats: ['tap', 'playwright-json'] } }), trustedFormats: [] });
+    assert.deepEqual([flagWins.settings.trustedFormats, flagWins.verdicts[0].action], [{ value: [], from: 'flag' }, 'propose'], 'a flag overrides the config, and an empty list means nothing may act');
   });
 
   test('triage.reruns in qa-config.json sets the number of re-runs', async () => {
@@ -244,5 +255,70 @@ describe('orchestrate CLI', () => {
     for (const argv of [[], ['--bogus'], ['--framework'], ['--framework', 'node', '--reruns', '-1'], ['--framework', 'node', '--reruns', '6'], ['--framework', 'node', '--reruns', '1.5'], ['--framework', 'node', '--preflight', 'maybe'], ['--framework', 'node', '--threshold', '0']]) {
       assert.equal((await cli(argv)).code, 2, argv.join(' '));
     }
+  });
+});
+
+describe('orchestrate: what the review of PR #9 found', () => {
+  const { createAdapter, run: callAdapter } = require('../../scripts/tracker/adapters');
+  const asPlaywright = (doc) => { doc.data.format = 'playwright-json'; return doc; };
+  // as Playwright reports it: a one-line summary, with the diagnosis (and the test-id) only in the details
+  const staleSelector = () => T('DEMO-101/TC-901: apply', 'failed', { ticket: 'DEMO-101', caseId: 'TC-901', file: '/w/tests/ui.test.js',
+    error: E('expect(locator).toBeVisible()', 'failure', "expect(locator).toBeVisible()\n\nLocator: getByTestId('coupon-apply-btn')\nExpected: visible\nReceived: <element(s) not found>\nCall log:\n  - waiting for getByTestId('coupon-apply-btn')\n") });
+
+  test('a locator failure whose test-id is only in the DETAILS still gets DOM evidence from the snapshot', async () => {
+    const snap = path.join(tmp(), 'page.html');
+    fs.writeFileSync(snap, '<button data-testid="coupon-apply">Apply</button>');
+    const s = scripted(() => ({ doc: asPlaywright(result(staleSelector())) }));
+    const r = await go({ framework: 'playwright', snapshot: snap, noPlan: true, trustedFormats: ['tap', 'playwright-json'] }, { runResults: s.runResults });
+    assert.deepEqual(r.doc.data.verdicts.map((v) => [v.class, v.rule, v.action]), [['test-bug', 'TST-1', 'act']]);
+  });
+
+  test('the same verdict from an unverified format is held at propose, and the run summary says so', async () => {
+    const snap = path.join(tmp(), 'page.html');
+    fs.writeFileSync(snap, '<button data-testid="coupon-apply">Apply</button>');
+    const s = scripted(() => ({ doc: asPlaywright(result(staleSelector())) }));
+    const r = await go({ framework: 'playwright', snapshot: snap, noPlan: true }, { runResults: s.runResults });
+    assert.deepEqual(r.doc.data.verdicts.map((v) => [v.class, v.rule, v.action, v.cap]), [['test-bug', 'TST-1', 'propose', 'unverified-format']]);
+    assert.equal(r.doc.data.summary.act, 0);
+  });
+
+  test('a product-bug candidate from Playwright output is held at propose by default and files nothing', async () => {
+    const mock = MOCKS.github();
+    const cfg = path.join(tmp(), 'cfg.json');
+    fs.writeFileSync(cfg, JSON.stringify({ ticketSource: { type: 'github', github: mock.settings } }));
+    const count = T('DEMO-101/TC-005: x', 'failed', { ...ids(5), error: E('expect(locator).toHaveCount(expected)', 'failure', "expect(locator).toHaveCount(expected)\n\nLocator: getByTestId('cart-line')\nExpected: 3\nReceived: 0\n") });
+    const s = scripted(() => ({ doc: asPlaywright(result(count)) }));
+    const r = await go({ framework: 'playwright', config: cfg, baseUrl: mock.baseUrl, runId: 'r9' }, { runResults: s.runResults, env: { [mock.tokenEnv]: mock.token }, fetch: mock.fetch });
+    assert.deepEqual(r.doc.data.verdicts.map((v) => [v.rule, v.action, v.cap, v.step]), [['PRD-1', 'propose', 'unverified-format', 'propose']]);
+    assert.equal(mock.createdItems().length, 0);
+  });
+
+  test('comment-existing steps arrive with their input file already written under <out>/comments/, named by token', async () => {
+    const mock = MOCKS.github();
+    const cfg = path.join(tmp(), 'cfg.json');
+    fs.writeFileSync(cfg, JSON.stringify({ ticketSource: { type: 'github', github: mock.settings } }));
+    const failing = () => T('DEMO-101/TC-005: x', 'failed', { ...ids(5), error: ASSERT });
+    const deps = (s) => ({ runResults: s.runResults, env: { [mock.tokenEnv]: mock.token }, fetch: mock.fetch });
+    const first = await go({ framework: 'node', config: cfg, baseUrl: mock.baseUrl, runId: 'r1' }, deps(scripted(() => ({ doc: result(failing()) }))));
+    const token = JSON.parse(fs.readFileSync(path.join(first.out, 'triage.json'), 'utf8')).data.verdicts[0].token;
+    // the bug gets filed (by a human-gated step, outside this script) with the marker in its body
+    const adapter = createAdapter('github', { settings: mock.settings, env: { [mock.tokenEnv]: mock.token }, fetch: mock.fetch, baseUrl: mock.baseUrl, timeoutMs: 500, retryDelayMs: 0 });
+    const bug = await callAdapter(adapter, 'create-bug', { title: '[BUG] x', body: `qa-harness-fingerprint: ${token}`, priority: 'High' });
+    const second = await go({ framework: 'node', config: cfg, baseUrl: mock.baseUrl, runId: 'r2' }, deps(scripted(() => ({ doc: result(failing()) }))));
+    assert.deepEqual(second.doc.data.verdicts.map((v) => v.step), ['comment-existing']);
+    const file = path.join(second.out, 'comments', `${token}.json`);
+    assert.deepEqual(second.doc.data.files.comments, [file]);
+    const input = JSON.parse(fs.readFileSync(file, 'utf8'));
+    assert.equal(input.id, bug.id);
+    assert.match(input.body, new RegExp(token));
+    assert.equal(first.doc.data.files.comments, undefined, 'no comment files when there is nothing to comment on');
+  });
+
+  test('--trusted-formats is parsed (and an unknown format is a usage error, so a typo cannot widen trust)', async () => {
+    const out = tmp();
+    let err = '';
+    const code = await main({ argv: ['--framework', 'node', '--trusted-formats', 'tap,playwrite-json', '--out', out], env: {}, stdout: { write: () => {} }, stderr: { write: (x) => { err += x; } } });
+    assert.equal(code, 2);
+    assert.match(err, /unknown format "playwrite-json"/);
   });
 });

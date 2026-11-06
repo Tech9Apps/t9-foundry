@@ -1,8 +1,9 @@
 'use strict';
 
 const { TrackerError } = require('../lib/errors');
+const { checkBaseUrl } = require('../lib/base-url');
 const { request } = require('../lib/http');
-const { keyMarker, stepsAsMarkdown, extractAcceptanceCriteria } = require('../lib/contract');
+const { keyMarker, hasMarker, stepsAsMarkdown, extractAcceptanceCriteria } = require('../lib/contract');
 
 // GitLab Issues, REST v4, personal/project access token.
 // settings = qa-config.json > ticketSource.gitlab  ({ projectId, host, tokenEnvVar, testLabelName })
@@ -16,7 +17,7 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
   const token = env[tokenVar];
   if (!token) throw new TrackerError('CONFIG', `${tokenVar} is not set`);
   // `baseUrl` overrides the whole API root (mocks); otherwise <host>/api/v4
-  const api = (baseUrl || `${(settings.host || 'https://gitlab.com').replace(/\/$/, '')}/api/v4`).replace(/\/$/, '');
+  const api = checkBaseUrl(baseUrl || `${(settings.host || 'https://gitlab.com').replace(/\/$/, '')}/api/v4`, 'the GitLab API URL');
   const testLabel = settings.testLabelName || 'test-case';
   const project = `/projects/${encodeURIComponent(projectId)}`;
 
@@ -29,7 +30,10 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
     if (!/^\d+$/.test(String(id))) throw new TrackerError('VALIDATION', `GitLab issue ids are numbers (got "${id}")`);
     return `${project}/issues/${id}`;
   };
-  const summarize = (i) => ({ id: String(i.iid), title: i.title, url: i.web_url, status: i.state, open: i.state === 'opened' });
+  // GitLab has no "won't fix" resolution, so the team's own labels are the only signal: a closed issue carrying one of these was dismissed.
+  const DISMISS_LABEL = /^(?:wontfix|won't fix|invalid|duplicate|not a bug)$/i;
+  const dismissedIssue = (i) => i.state === 'closed' && (i.labels || []).some((l) => DISMISS_LABEL.test(typeof l === 'string' ? l : l.title || l.name || ''));
+  const summarize = (i) => ({ id: String(i.iid), title: i.title, url: i.web_url, status: i.state, open: i.state === 'opened', ...(dismissedIssue(i) ? { dismissed: true } : {}) });
   const priorityLabel = (p) => (p ? [`priority:${p}`] : []);
 
   async function fetchTicket(id) {
@@ -63,13 +67,12 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
 
   // Lists by label (consistent) rather than searching: see the GitHub adapter for why.
   async function findByKey(key, { op, input } = {}) {
-    const marker = keyMarker(key);
     const labels = op === 'create-test' ? [testLabel, String(input.parentId)] : op === 'create-bug' ? ['bug'] : [];
     for (let page = 1; page <= LIST_PAGES; page += 1) {
       const qs = `state=all&order_by=created_at&sort=desc&per_page=100&page=${page}${labels.length ? `&labels=${encodeURIComponent(labels.join(','))}` : ''}`;
       const { json } = await call('GET', `${project}/issues?${qs}`, undefined, 'look up idempotency key');
       const batch = json || [];
-      const hit = batch.find((i) => (i.description || '').includes(marker));
+      const hit = batch.find((i) => hasMarker(i.description, key));
       if (hit) return { id: String(hit.iid), url: hit.web_url };
       if (batch.length < 100) break;
     }
@@ -115,9 +118,8 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
   }
 
   async function findCommentByKey(id, key) {
-    const marker = keyMarker(key);
     const { json } = await call('GET', `${issuePath(id)}/notes?sort=asc&order_by=created_at&per_page=100`, undefined, `look up idempotency key on GitLab issue ${id}`);
-    const hit = (json || []).find((n) => !n.system && (n.body || '').includes(marker));
+    const hit = (json || []).find((n) => !n.system && hasMarker(n.body, key));
     return hit ? { id: String(hit.id) } : null;
   }
 

@@ -88,6 +88,7 @@ function createClickupMock({ token = 'pk_test_token', listId = '9001' } = {}) {
       return { id, title: t.name, text: [t.description, ...items].join('\n') };
     }),
     closeItem: (id) => { state.tasks.get(String(id)).status = { status: 'complete', type: 'closed' }; },
+    dismissItem: (id) => { state.tasks.get(String(id)).status = { status: "Won't do", type: 'custom' }; }, // a workspace's own status: type is custom, not closed
     commentsOn: (id) => state.comments.get(id).map((c) => c.comment_text),
     paths: { create: '/list/[^/]+/task$', search: '/list/[^/]+/task', ticket: '/task/[^/]+$', link: '/link/' },
     linkMethod: 'POST',

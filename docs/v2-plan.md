@@ -82,8 +82,9 @@ Fix what is wrong today and make unattended runs *safe to attempt*.
 > and the four seeded scenarios; **self-heal** (decided for v2.0: one narrow fix, off by default, validated, reverted on failure, never
 > pushes — see the design doc); `undetermined` made strict; re-runs and threshold configurable in `qa-config.json`. **Not built:** flake
 > tagging/quarantine (report-only by decision), cross-run flake rate and tracker-search-lag protection (Phase 3's ledger). **Not verified:** classification quality on real
-> Playwright/Cypress failures, tracker search by body marker on real services (`smoke.js` now checks it), the agent's
-> prose under a live model.
+> Playwright/Cypress/Jest failures (so only TAP, which the seeded scenarios use, may let a product-bug or test-bug verdict act;
+> every other format is held at `propose`, and so is self-heal for it), tracker search by body marker on real services (`smoke.js` now
+> checks it), the agent's prose under a live model.
 
 - **`QA-run-orchestrator` agent**: `preflight → run → re-run failures ×N → classify → act → report`.
 - **Failure classification** with a binding rubric `.claude/memory/failure-triage-rules.md`: `product-bug | test-bug | flaky | environment`. Evidence rules (e.g. passes on re-run ⇒ flaky; locator-not-found with element present under a different testid ⇒ test-bug; 5xx/connection refused/preflight failure ⇒ environment). The classifier returns a confidence and cites evidence; low confidence ⇒ `propose` regardless of tier.

@@ -6,7 +6,8 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const Ajv = require('../node_modules/ajv');
-const { triageConfig, validate, DEFAULTS, MAX_RERUNS } = require('../../scripts/triage/lib/config');
+const { triageConfig, validate, DEFAULTS, MAX_RERUNS, FORMATS } = require('../../scripts/triage/lib/config');
+const { FORMATS: NORMALIZER_FORMATS } = require('../../scripts/results/normalize');
 
 const dir = fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), 'qa-cfg-'));
 const write = (obj) => { const f = path.join(dir, `c-${Math.random().toString(36).slice(2)}.json`); fs.writeFileSync(f, JSON.stringify(obj)); return f; };
@@ -18,7 +19,8 @@ describe('triage config: values', () => {
     assert.equal(c.reruns, 2);
     assert.equal(c.confidenceThreshold, 0.8);
     assert.deepEqual(c.selfHeal, { enabled: false, paths: null, maxFiles: 5, maxLines: 20, branchPrefix: 'qa/heal-' });
-    assert.deepEqual(c.explicit, { reruns: false, confidenceThreshold: false });
+    assert.deepEqual(c.trustedFormats, ['tap']);
+    assert.deepEqual(c.explicit, { reruns: false, confidenceThreshold: false, trustedFormats: false });
     assert.deepEqual([DEFAULTS.reruns, DEFAULTS.confidenceThreshold, MAX_RERUNS], [2, 0.8, 5]);
   });
 
@@ -26,7 +28,19 @@ describe('triage config: values', () => {
     const c = triageConfig({ configPath: write({ triage: { reruns: 4, confidenceThreshold: 0.9, selfHeal: { enabled: true, maxFiles: 2, maxLines: 7, branchPrefix: 'qa/fix-', paths: ['e2e'] } } }) });
     assert.deepEqual([c.reruns, c.confidenceThreshold], [4, 0.9]);
     assert.deepEqual(c.selfHeal, { enabled: true, paths: ['e2e'], maxFiles: 2, maxLines: 7, branchPrefix: 'qa/fix-' });
-    assert.deepEqual(c.explicit, { reruns: true, confidenceThreshold: true });
+    assert.deepEqual(c.explicit, { reruns: true, confidenceThreshold: true, trustedFormats: false });
+  });
+
+  test('trusted formats: the default is tap only; a list in the config wins and is reported as explicit; the caller\'s copy cannot change the default', () => {
+    const d = triageConfig({ configPath: write({}) });
+    assert.deepEqual(d.trustedFormats, ['tap']);
+    d.trustedFormats.push('junit');
+    assert.deepEqual(triageConfig({ configPath: write({}) }).trustedFormats, ['tap'], 'mutating a result must not widen the default for the next caller');
+    assert.deepEqual(DEFAULTS.trustedFormats, ['tap']);
+    const c = triageConfig({ configPath: write({ triage: { trustedFormats: ['tap', 'playwright-json'] } }) });
+    assert.deepEqual(c.trustedFormats, ['tap', 'playwright-json']);
+    assert.equal(c.explicit.trustedFormats, true);
+    assert.deepEqual(triageConfig({ configPath: write({ triage: { trustedFormats: [] } }) }).trustedFormats, [], 'an empty list is a real setting: nothing may act');
   });
 
   test('0 re-runs is a real setting, not "unset" (the zero must not fall back to the default)', () => {
@@ -64,8 +78,25 @@ describe('triage config: validation names the key', () => {
     for (const ok of ['qa/heal-', 'qa/', 'qa/fix_1.x-']) assert.doesNotThrow(() => validate({ selfHeal: { branchPrefix: ok } }, 'cfg'));
   });
   test('an unknown key is an error that lists the known ones (a typo must not silently do nothing)', () => {
-    fails({ rerun: 3 }, /unknown key "triage\.rerun" \(known: reruns, confidenceThreshold, selfHeal\)/);
+    fails({ rerun: 3 }, /unknown key "triage\.rerun" \(known: reruns, confidenceThreshold, trustedFormats, selfHeal\)/);
     fails({ selfHeal: { enable: true } }, /unknown key "triage\.selfHeal\.enable"/);
+  });
+  test('trusted formats: only known formats, each once, in a list', () => {
+    fails({ trustedFormats: ['playwrite-json'] }, /"triage\.trustedFormats" must be a list of distinct formats from: junit, tap, playwright-json, jest-json/);
+    fails({ trustedFormats: ['tap', 'tap'] }, /"triage\.trustedFormats"/);
+    fails({ trustedFormats: 'tap' }, /"triage\.trustedFormats"/);
+    fails({ trustedFormats: [1] }, /"triage\.trustedFormats"/);
+    assert.doesNotThrow(() => validate({ trustedFormats: [] }, 'cfg'));
+  });
+  test('"triage": null is rejected, as the schema rejects it (it used to read as "no triage block")', () => {
+    fails(null, /"triage" must be an object/);
+    assert.doesNotThrow(() => validate(undefined, 'cfg'), 'absent is fine');
+  });
+  test('the format list is one list: the loader, the normalizer that produces the formats, and qa-config.schema.json agree', () => {
+    assert.deepEqual([...FORMATS].sort(), [...NORMALIZER_FORMATS].sort());
+    const schema = require('../../qa-config.schema.json').properties.triage.properties.trustedFormats;
+    assert.deepEqual([...schema.items.enum].sort(), [...FORMATS].sort());
+    assert.deepEqual(schema.default, DEFAULTS.trustedFormats);
   });
   test('wrong shapes', () => {
     fails([], /"triage" must be an object/);

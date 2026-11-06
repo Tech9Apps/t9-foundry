@@ -75,6 +75,7 @@ function createGitlabMock({ token = 'glpat-test-token', projectId = '42' } = {})
     },
     createdItems: () => state.created.map((iid) => ({ id: String(iid), title: state.issues.get(iid).title, text: state.issues.get(iid).description })),
     closeItem: (id) => { state.issues.get(Number(id)).state = 'closed'; },
+    dismissItem: (id) => { const i = state.issues.get(Number(id)); i.state = 'closed'; i.labels = [...i.labels, 'wontfix']; }, // GitLab has no resolution: a label is the team's own signal
     commentsOn: (id) => state.notes.get(Number(id)).map((n) => n.body),
     paths: { create: '/issues$', search: '/issues', ticket: '/issues/\\d+(\\?|$)', link: '/links' },
     linkMethod: 'POST',

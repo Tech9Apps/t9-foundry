@@ -1,8 +1,9 @@
 'use strict';
 
 const { TrackerError } = require('../lib/errors');
+const { checkBaseUrl } = require('../lib/base-url');
 const { request } = require('../lib/http');
-const { keyMarker, extractAcceptanceCriteria } = require('../lib/contract');
+const { keyMarker, hasMarker, extractAcceptanceCriteria } = require('../lib/contract');
 
 // ClickUp v2 REST API.
 // settings = qa-config.json > ticketSource.clickup  ({ listId, tokenEnvVar, assignToSelf, apiBaseUrl })
@@ -15,7 +16,7 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
   const tokenVar = settings.tokenEnvVar || 'CLICKUP_TOKEN';
   const token = env[tokenVar];
   if (!token) throw new TrackerError('CONFIG', `${tokenVar} is not set`);
-  const base = (baseUrl || settings.apiBaseUrl || 'https://api.clickup.com/api/v2').replace(/\/$/, '');
+  const base = checkBaseUrl(baseUrl || settings.apiBaseUrl || 'https://api.clickup.com/api/v2', 'the ClickUp API base URL');
 
   const call = (method, path, body, what) => request({
     fetch, method, url: `${base}${path}`, body, timeoutMs, retryDelayMs, what,
@@ -28,7 +29,11 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
   };
   // ClickUp statuses are per-list and custom: trust the status `type` (done/closed) when present, else the usual words
   const clickupClosed = (s) => !!s && (s.type === 'closed' || s.type === 'done' || /^(closed|complete|completed|done|resolved)$/i.test(s.status || ''));
-  const summarize = (t) => ({ id: String(t.id), title: t.name, url: t.url, status: t.status && t.status.status, open: !clickupClosed(t.status) });
+  // ClickUp statuses are whatever the workspace named them, and a custom one ("Rejected", "Won't do", "Cancelled") has type "custom", not
+  // "closed" — so it used to read as OPEN and a bug that came back was commented on forever. Match the wording instead.
+  const DISMISSED_STATUS = /\b(?:won'?t|wont|reject(?:ed)?|declined?|cancel(?:l?ed)?|invalid|duplicate|not (?:a )?(?:bug|issue|defect)|by design|obsolete|dismissed)\b/i;
+  const clickupDismissed = (s) => !!s && DISMISSED_STATUS.test(s.status || '');
+  const summarize = (t) => ({ id: String(t.id), title: t.name, url: t.url, status: t.status && t.status.status, open: !clickupClosed(t.status) && !clickupDismissed(t.status), ...(clickupDismissed(t.status) ? { dismissed: true } : {}) });
   const iso = (ms) => (/^\d+$/.test(String(ms)) ? new Date(Number(ms)).toISOString() : null);
 
   async function fetchTicket(id) {
@@ -74,8 +79,7 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
   }
 
   async function findByKey(key) {
-    const marker = keyMarker(key);
-    const hit = (await listTasks()).find((t) => (t.description || t.text_content || '').includes(marker));
+    const hit = (await listTasks()).find((t) => hasMarker(t.description || t.text_content, key));
     return hit ? { id: String(hit.id), url: hit.url } : null;
   }
 
@@ -140,9 +144,8 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
   }
 
   async function findCommentByKey(id, key) {
-    const marker = keyMarker(key);
     const { json } = await call('GET', `${taskPath(id)}/comment`, undefined, `look up idempotency key on ClickUp task ${id}`);
-    const hit = ((json && json.comments) || []).find((c) => (c.comment_text || '').includes(marker));
+    const hit = ((json && json.comments) || []).find((c) => hasMarker(c.comment_text, key));
     return hit ? { id: String(hit.id) } : null;
   }
 

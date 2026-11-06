@@ -7,7 +7,7 @@
 //
 //   node scripts/triage/orchestrate.js --framework <f> [--spec S]... [--test-dir D] [--config-file C] [--cwd D]
 //        [--reruns N] [--preflight ok|failed|unknown] [--snapshot page.html] [--out qa-results] [--run-id ID]
-//        [--threshold T] [--timeout-ms N] [--no-plan] [--heal | --no-heal] [--config qa-config.json] [--source T] [--base-url U]
+//        [--threshold T] [--trusted-formats tap] [--timeout-ms N] [--no-plan] [--heal | --no-heal] [--config qa-config.json] [--source T] [--base-url U]
 //
 // Steps (each tool is the one documented elsewhere; this only wires them):
 //   1. scripts/results/run.js   the main run                       → <out>/main/
@@ -17,8 +17,9 @@
 //   5. scripts/triage/plan.js   (read-only tracker search)          → <out>/plan.json, <out>/flaky.json
 //   6. scripts/triage/heal.js   ONLY if self-heal is enabled (triage.selfHeal.enabled / --heal): rename a stale test-id on a local
 //      qa/ branch, validated by re-run, fully reverted on any failure; it never pushes   → <out>/heal.json
-// --reruns (default 2, 0–5) and --threshold (default 0.8) can also be set once in qa-config.json under "triage"
-// (reruns, confidenceThreshold); a flag overrides the config. The output says which source each setting came from.
+// --reruns (default 2, 0–5), --threshold (default 0.8) and --trusted-formats (default tap: the runner formats whose classification may
+// let a product-bug or test-bug verdict ACT; every other format is held at propose) can also be set once in qa-config.json under "triage"
+// (reruns, confidenceThreshold, trustedFormats); a flag overrides the config. The output says which source each setting came from.
 // A green run ends after step 1. Output: { ok, data } with the verdict and step for every failure.
 // Exit: 0 = completed (green, or triaged — failures are data) · 2 = bad invocation · 3 = no trustworthy main run
 // (see scripts/results/run.js: could not start, hung, wrote nothing, zero tests, or exit code contradicting the report).
@@ -26,11 +27,11 @@
 const fs = require('fs');
 const path = require('path');
 const { defaultRunResults } = require('./lib/run-results');
-const { classify } = require('./classify');
+const { classify, parseTrustedFormats } = require('./classify');
 const { analyzeLocator } = require('./locators');
 const { identity } = require('./fingerprint');
-const { isLocatorError, extractTestId } = require('./lib/text');
-const { plan, connectIfNeeded } = require('./plan');
+const { isLocatorError, extractTestId, evidenceText } = require('./lib/text');
+const { plan, connectIfNeeded, writeCommentInputs } = require('./plan');
 const { triageConfig, MAX_RERUNS } = require('./lib/config');
 const { heal, eligible } = require('./heal');
 
@@ -54,6 +55,7 @@ function parseArgs(argv) {
     else if (flag === '--out') opts.out = value();
     else if (flag === '--run-id') opts.runId = value();
     else if (flag === '--threshold') opts.threshold = Number(value());
+    else if (flag === '--trusted-formats') opts.trustedFormats = parseTrustedFormats(value());
     else if (flag === '--timeout-ms') opts.timeoutMs = Number(value());
     else if (flag === '--no-plan') opts.noPlan = true;
     else if (flag === '--heal') opts.heal = true;
@@ -78,10 +80,12 @@ async function orchestrate(opts, { env = process.env, fetch = globalThis.fetch, 
   const cfg = triageConfig({ configPath: opts.config, env });
   const reruns = opts.reruns !== undefined ? opts.reruns : cfg.reruns;
   const threshold = opts.threshold !== undefined ? opts.threshold : cfg.confidenceThreshold;
+  const trustedFormats = opts.trustedFormats !== undefined ? opts.trustedFormats : cfg.trustedFormats;
   const healEnabled = opts.heal !== undefined ? opts.heal : cfg.selfHeal.enabled;
   const settings = {
     reruns: { value: reruns, from: opts.reruns !== undefined ? 'flag' : cfg.explicit.reruns ? 'config' : 'default' },
     confidenceThreshold: { value: threshold, from: opts.threshold !== undefined ? 'flag' : cfg.explicit.confidenceThreshold ? 'config' : 'default' },
+    trustedFormats: { value: trustedFormats, from: opts.trustedFormats !== undefined ? 'flag' : cfg.explicit.trustedFormats ? 'config' : 'default' },
     selfHeal: { value: healEnabled, from: opts.heal !== undefined ? 'flag' : cfg.explicitSelfHeal ? 'config' : 'default' },
   };
   const runId = opts.runId || new Date(now()).toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
@@ -124,15 +128,16 @@ async function orchestrate(opts, { env = process.env, fetch = globalThis.fetch, 
     let html = null;
     try { html = fs.readFileSync(opts.snapshot, 'utf8'); } catch (e) { warnings.push(`snapshot not readable (${e.message}): locator failures stay undetermined`); }
     if (html !== null) {
-      for (const t of main.tests.filter((x) => x.status === 'failed' && x.error && isLocatorError(x.error.message))) {
-        if (!extractTestId(t.error.message)) continue;
-        evidence[identity(t)] = { locator: analyzeLocator({ html, selector: t.error.message }) };
+      // read the whole failure text, not just its first line: Playwright keeps "waiting for getByTestId('x')" in the details
+      for (const t of main.tests.filter((x) => x.status === 'failed' && x.error && isLocatorError(evidenceText(x.error)))) {
+        if (!extractTestId(evidenceText(t.error))) continue;
+        evidence[identity(t)] = { locator: analyzeLocator({ html, selector: evidenceText(t.error), bare: false }) };
       }
     }
   }
 
   // 4. classify
-  const report = classify({ runs: [main, ...rerunResults], preflight, evidence, threshold });
+  const report = classify({ runs: [main, ...rerunResults], preflight, evidence, threshold, trustedFormats });
   // Strictness needs a witness: if most failures end up undetermined the problem is the evidence (or the rules), not the failures.
   const und = report.summary.byClass.undetermined;
   if (und >= UND_ALARM_MIN && und / report.summary.triaged >= UND_ALARM_SHARE) {
@@ -146,10 +151,13 @@ async function orchestrate(opts, { env = process.env, fetch = globalThis.fetch, 
   let actions = null;
   if (!opts.noPlan) {
     const { adapter, trackerWarning } = connectIfNeeded(report, { configPath: opts.config, source: opts.source, baseUrl: opts.baseUrl, timeoutMs: opts.timeoutMs, env, fetch });
-    const p = await plan({ report, runId, adapter, trackerWarning });
+    const commentsDir = path.join(out, 'comments');
+    const p = await plan({ report, runId, adapter, trackerWarning, commentsDir });
+    const commentFiles = writeCommentInputs(p.actions);
     writeJson(path.join(out, 'plan.json'), { ok: true, data: p });
     writeJson(path.join(out, 'flaky.json'), { runId, flaky: p.flaky });
     files.plan = path.join(out, 'plan.json'); files.flaky = path.join(out, 'flaky.json');
+    if (commentFiles.length) files.comments = commentFiles;
     warnings.push(...p.warnings);
     actions = p.actions;
   }
@@ -178,7 +186,7 @@ async function orchestrate(opts, { env = process.env, fetch = globalThis.fetch, 
       data: {
         status: 'triaged', runId, totals: main.totals, runs: 1 + rerunResults.length, preflight, settings, ...(rerunNotes.length ? { rerunNotes } : {}),
         summary: report.summary,
-        verdicts: report.verdicts.map((v) => ({ test: v.test.name, key: v.key, class: v.class, rule: v.rule, confidence: v.confidence, action: v.action, ...(v.reason ? { reason: v.reason } : {}), ...(stepOf.has(v.key) ? { step: stepOf.get(v.key) } : {}), ...(v.proposal ? { proposal: v.proposal } : {}), ...(healedKeys.has(v.key) ? { healed: true } : {}) })),
+        verdicts: report.verdicts.map((v) => ({ test: v.test.name, key: v.key, class: v.class, rule: v.rule, confidence: v.confidence, action: v.action, ...(v.cap ? { cap: v.cap } : {}), ...(v.reason ? { reason: v.reason } : {}), ...(stepOf.has(v.key) ? { step: stepOf.get(v.key) } : {}), ...(v.proposal ? { proposal: v.proposal } : {}), ...(healedKeys.has(v.key) ? { healed: true } : {}) })),
         ...(healResult ? { heal: healResult } : {}),
         files, ...(warnings.length ? { warnings } : {}),
       },
@@ -190,7 +198,7 @@ async function main({ argv = process.argv.slice(2), env = process.env, stdout = 
   const emit = (obj) => stdout.write(`${JSON.stringify(obj, null, 2)}\n`);
   try {
     if (!argv.length || argv[0] === '-h' || argv[0] === '--help') {
-      stderr.write('Usage: orchestrate.js --framework F [--spec S]... [--test-dir D] [--config-file C] [--cwd D] [--reruns 2] [--preflight ok|failed|unknown] [--snapshot page.html] [--out DIR] [--run-id ID] [--threshold 0.8] [--timeout-ms N] [--no-plan] [--config P] [--source T] [--base-url U]\n');
+      stderr.write('Usage: orchestrate.js --framework F [--spec S]... [--test-dir D] [--config-file C] [--cwd D] [--reruns 2] [--preflight ok|failed|unknown] [--snapshot page.html] [--out DIR] [--run-id ID] [--threshold 0.8] [--trusted-formats tap|none] [--timeout-ms N] [--no-plan] [--heal | --no-heal] [--config P] [--source T] [--base-url U]\n');
       return argv.length ? 0 : 2;
     }
     const opts = parseArgs(argv);

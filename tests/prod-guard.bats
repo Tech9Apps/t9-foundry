@@ -8,6 +8,7 @@ GUARD="$REPO_ROOT/hooks/prod-guard.sh"
 FIXTURES="$BATS_TEST_DIRNAME/fixtures"
 
 setup() {
+  unset QA_AUTONOMOUS QA_HARNESS_DIR CLAUDE_PROJECT_DIR # hermetic: an exported autonomous/harness env must not change what these tests mean
   TEST_TMP="$(mktemp -d "${TMPDIR:-/tmp}/qa-test.XXXXXX")"
 }
 
@@ -262,4 +263,171 @@ guard_input() {
   run bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json"
   [ "$status" -eq 2 ]
   [[ "$output" =~ "BLOCKED" ]]
+}
+
+# ── Review findings: the heuristic reads the HOST, and every spelling of a configured pattern is caught ─────────────────
+
+# Config helper for the cases below: enforce mode plus the given prodUrlPatterns (JSON array, default none).
+enforce_config() {
+  jq -n --argjson p "${1:-[]}" '{productionProtection:{mode:"enforce",prodUrlPatterns:$p}}' > "$TEST_TMP/qa-config.json"
+}
+run_guard() { run env -u QA_AUTONOMOUS bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json"; }
+
+@test "enforce: dev/test/qa/staging in a URL's path, query, userinfo or TLD no longer excuses it (it used to skip the heuristic)" {
+  enforce_config
+  for cmd in \
+    'curl https://prod.mybank.com/api/latest' \
+    'curl https://shop.acme.com/login?x=test' \
+    'curl https://shop.acme.com/dev/x' \
+    'curl https://shop.acme.com/qa/x#staging' \
+    'curl https://acme.dev/x' \
+    'curl https://devices.acme.com/' \
+    'curl https://aqua.com/' \
+    'curl https://staging.acme.com@evil.com/' \
+    'curl https://test-prod.acme.com/'; do
+    guard_input "$cmd"
+    run_guard
+    echo "$cmd -> $status: $output"
+    [ "$status" -eq 2 ]
+  done
+}
+
+@test "enforce: any host that is not recognizably a test environment blocks — www, api, apex without a path, ports, two-part TLDs, numeric and IPv6 hosts" {
+  enforce_config
+  for cmd in \
+    'curl https://www.acme.com/x' \
+    'curl https://api.acme.com/v1/users' \
+    'curl https://acme.com' \
+    'curl https://acme.co.uk/' \
+    'curl https://acme.com:8443/' \
+    'curl https://x@acme.com/' \
+    'curl https://app.acme.com' \
+    'curl http://134744072/' \
+    'curl http://0x08080808/' \
+    'curl "https://[2001:db8::1]/"'; do
+    guard_input "$cmd"
+    run_guard
+    echo "$cmd -> $status: $output"
+    [ "$status" -eq 2 ]
+  done
+}
+
+@test "enforce: recognizably-not-production hosts still pass (staging/qa/dev labels, reserved TLDs, loopback and private addresses)" {
+  enforce_config
+  for cmd in \
+    'curl https://staging.acme.com/x' \
+    'curl https://acme-staging.com/' \
+    'curl https://qa.acme.com' \
+    'curl http://localhost:3000' \
+    'curl http://127.0.0.1:8080' \
+    'curl http://10.1.2.3' \
+    'curl http://192.168.1.5/x' \
+    'curl http://[::1]:3000' \
+    'curl http://2130706433/' \
+    'curl https://acme.test'; do
+    guard_input "$cmd"
+    run_guard
+    echo "$cmd -> $status: $output"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "a configured production pattern matches every spelling of the host: case, userinfo, port, no path, query, fragment, trailing dot, numeric IP" {
+  jq -n '{productionProtection:{prodUrlPatterns:["://myapp\\.example\\.com/","myapp\\.com$","^http://203\\.0\\.113\\.7"]}}' > "$TEST_TMP/qa-config.json"
+  for cmd in \
+    'curl https://myapp.example.com/x' \
+    'curl https://MyApp.Example.com/x' \
+    'curl https://staging@myapp.example.com/x' \
+    'curl https://user:pw@myapp.example.com/x' \
+    'curl https://myapp.example.com:8443/x' \
+    'curl https://myapp.example.com' \
+    'curl https://myapp.example.com?x=1' \
+    'curl https://myapp.example.com#frag' \
+    'curl https://myapp.example.com./x' \
+    'curl https://myapp.com:8443' \
+    'curl https://MYAPP.COM/' \
+    'curl http://3405803783/' \
+    'curl http://0xcb007107/x'; do
+    guard_input "$cmd"
+    for mode in warn enforce; do
+      if [ "$mode" = enforce ]; then run env QA_AUTONOMOUS=1 bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json"; else run_guard; fi
+      echo "[$mode] $cmd -> $status: $output"
+      [ "$status" -eq 2 ]
+      [[ "$output" =~ "BLOCKED" ]]
+    done
+  done
+}
+
+@test "enforce: a host held in a shell variable cannot be verified, so it blocks; in warn mode it only warns" {
+  enforce_config
+  for cmd in 'H=myapp.example.com; curl https://$H/x' 'curl https://${HOST}/x' 'curl https://$(hostname)/x'; do
+    guard_input "$cmd"
+    run_guard
+    echo "$cmd -> $status: $output"
+    [ "$status" -eq 2 ]
+    [[ "$output" =~ "UNVERIFIABLE_HOST" ]]
+  done
+  jq -n '{productionProtection:{mode:"warn"}}' > "$TEST_TMP/qa-config.json"
+  guard_input 'curl https://$H/x'
+  run_guard
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "WARNING" ]]
+}
+
+@test "allowedUrlPatterns cannot be satisfied by text in the query string or fragment of some other URL" {
+  jq -n '{productionProtection:{mode:"enforce",allowedUrlPatterns:["://partner\\.io/guide"]}}' > "$TEST_TMP/qa-config.json"
+  for cmd in 'curl https://evil.com/?x=://partner.io/guide' 'curl https://evil.com/x#://partner.io/guide'; do
+    guard_input "$cmd"
+    run_guard
+    echo "$cmd -> $status: $output"
+    [ "$status" -eq 2 ]
+  done
+  guard_input 'curl https://partner.io/guide'
+  run_guard
+  [ "$status" -eq 0 ]
+}
+
+@test "the test environment's own host is allowed in enforce mode, and only that exact host" {
+  jq -n '{environments:{testEnvironmentBaseUrl:"https://check9.tech9app.com"},productionProtection:{mode:"enforce"}}' > "$TEST_TMP/qa-config.json"
+  guard_input 'curl https://check9.tech9app.com/api/health'
+  run_guard
+  [ "$status" -eq 0 ]
+  guard_input 'curl https://api.check9.tech9app.com/health'
+  run_guard
+  [ "$status" -eq 2 ]
+}
+
+@test "a malformed qa-config.json: an unattended run is BLOCKED (it used to fall through with no patterns); an attended one is warned" {
+  printf '{ not json' > "$TEST_TMP/qa-config.json"
+  guard_input 'curl https://www.acme.com/x'
+  run env QA_AUTONOMOUS=1 bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json"
+  [ "$status" -eq 2 ]
+  [[ "$output" =~ "not valid JSON" ]]
+  guard_input 'curl https://staging.acme.com/x'
+  run env QA_AUTONOMOUS=1 bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json"
+  [ "$status" -eq 2 ]   # even a harmless command: the guard cannot know the patterns, so it does not guess
+  run_guard
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "NOT being applied" ]]
+}
+
+@test "without node the URL checks cannot run: an unattended run is blocked, an attended one is warned" {
+  enforce_config
+  guard_input 'curl https://staging.acme.com/x'
+  # a PATH with jq, bash and coreutils but no node
+  run env -i HOME="$HOME" PATH="/usr/bin:/bin" QA_AUTONOMOUS=1 bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json"
+  [ "$status" -eq 2 ]
+  [[ "$output" =~ "node is not installed" ]]
+  jq -n '{productionProtection:{mode:"warn"}}' > "$TEST_TMP/qa-config.json"
+  run env -i HOME="$HOME" PATH="/usr/bin:/bin" bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "node is not installed" ]]
+}
+
+@test "a command with several URLs is judged URL by URL: one bad URL blocks however many good ones surround it" {
+  enforce_config
+  guard_input 'curl https://staging.acme.com/a && curl http://localhost:3000/b && curl https://www.acme.com/c && curl https://github.com/x/y'
+  run_guard
+  [ "$status" -eq 2 ]
+  [[ "$output" =~ "www.acme.com" ]]
 }
