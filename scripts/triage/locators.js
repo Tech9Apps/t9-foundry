@@ -21,7 +21,9 @@ const path = require('path');
 const { extractTestId, evidenceText } = require('./lib/text');
 
 const SYNONYMS = { btn: 'button', qty: 'quantity', cta: 'button', img: 'image', nav: 'navigation', msg: 'message', num: 'number', amt: 'amount', info: 'information' };
-const THRESHOLD = 0.5;
+// Strictly more than half: two ids that share ONE word out of two (cart-count / cart-total, Dice 0.5) are different elements, and a removed
+// feature next to a similarly named one must not read as a rename. A real rename shares most of its words (add-to-cart / add-to-basket 0.67).
+const THRESHOLD = 0.6;
 const usage = (message) => Object.assign(new Error(message), { isUsage: true });
 
 const tokens = (id) => String(id).replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);

@@ -14,9 +14,10 @@ function createAzureMock({ pat = 'test-pat', org = 'acme', project = 'shop' } = 
 
   function seedItem({ type = 'User Story', fields = {}, relations = [] }) {
     const id = state.seq++;
+    const created = new Date(Date.UTC(2026, 0, 2, 3, 4, 5) + (id - 100) * 1000).toISOString().replace('.000Z', 'Z'); // later items are created later
     state.items.set(id, {
       id, rev: 1, url: `${baseUrl}/${org}/${project}/_apis/wit/workItems/${id}`, _links: { html: { href: htmlUrl(id) } },
-      fields: { 'System.WorkItemType': type, 'System.State': 'Active', 'System.AreaPath': `${project}\\Checkout`, 'System.IterationPath': `${project}\\Sprint 1`, 'Microsoft.VSTS.Common.Priority': 2, 'System.Tags': '', ...fields },
+      fields: { 'System.WorkItemType': type, 'System.State': 'Active', 'System.AreaPath': `${project}\\Checkout`, 'System.IterationPath': `${project}\\Sprint 1`, 'Microsoft.VSTS.Common.Priority': 2, 'System.Tags': '', 'System.CreatedDate': created, ...fields },
       relations,
     });
     state.comments.set(id, []);
@@ -107,6 +108,7 @@ function createAzureMock({ pat = 'test-pat', org = 'acme', project = 'shop' } = 
       const f = state.items.get(id).fields;
       return { id: String(id), title: f['System.Title'], text: [f['System.Description'], f['Microsoft.VSTS.TCM.Steps'], f['Microsoft.VSTS.TCM.ReproSteps']].map(stripTags).join('\n') };
     }),
+    setState: (id, st, reason) => { const w = state.items.get(Number(id)); w.fields['System.State'] = st; w.fields['System.Reason'] = reason; },
     closeItem: (id) => { const w = state.items.get(Number(id)); w.fields['System.State'] = 'Closed'; w.fields['System.Reason'] = 'Fixed'; },
     dismissItem: (id) => { const w = state.items.get(Number(id)); w.fields['System.State'] = 'Resolved'; w.fields['System.Reason'] = 'Will not Fix'; },
     commentsOn: (id) => state.comments.get(Number(id)).map((c) => c.text),

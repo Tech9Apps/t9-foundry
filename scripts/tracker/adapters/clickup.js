@@ -31,9 +31,11 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
   const clickupClosed = (s) => !!s && (s.type === 'closed' || s.type === 'done' || /^(closed|complete|completed|done|resolved)$/i.test(s.status || ''));
   // ClickUp statuses are whatever the workspace named them, and a custom one ("Rejected", "Won't do", "Cancelled") has type "custom", not
   // "closed" — so it used to read as OPEN and a bug that came back was commented on forever. Match the wording instead.
-  const DISMISSED_STATUS = /\b(?:won'?t|wont|reject(?:ed)?|declined?|cancel(?:l?ed)?|invalid|duplicate|not (?:a )?(?:bug|issue|defect)|by design|obsolete|dismissed)\b/i;
+  // Workspaces spell these every way: "Won't fix" (straight or curly apostrophe), WONTFIX, "Will not fix", "Not planned", "Out of scope", "Abandoned",
+  // "Works as designed". "Cancelled" must be past tense: "Cancel pending" is a status that still has work in it.
+  const DISMISSED_STATUS = /\b(?:won['’]?t[ -]?(?:fix|do)|wont|will not (?:fix|do)|reject(?:ed)?|declined?|cancel(?:l)?ed|invalid|duplicate|not (?:a )?(?:bug|issue|defect)|not planned|out of scope|abandoned|(?:by|as) design(?:ed)?|obsolete|dismissed)\b/i;
   const clickupDismissed = (s) => !!s && DISMISSED_STATUS.test(s.status || '');
-  const summarize = (t) => ({ id: String(t.id), title: t.name, url: t.url, status: t.status && t.status.status, open: !clickupClosed(t.status) && !clickupDismissed(t.status), ...(clickupDismissed(t.status) ? { dismissed: true } : {}) });
+  const summarize = (t) => ({ id: String(t.id), title: t.name, url: t.url, status: t.status && t.status.status, open: !clickupClosed(t.status) && !clickupDismissed(t.status), ...(iso(t.date_created) ? { createdAt: iso(t.date_created) } : {}), ...(clickupDismissed(t.status) ? { dismissed: true } : {}) });
   const iso = (ms) => (/^\d+$/.test(String(ms)) ? new Date(Number(ms)).toISOString() : null);
 
   async function fetchTicket(id) {

@@ -127,6 +127,12 @@ if (!/commentInputFile/.test(cmd)) bad(`${CMD}: no longer points at the plan's c
 if (!orch.includes("'comments'")) bad('orchestrate.js no longer writes the comments/ directory the prose reads');
 if (!read('scripts/triage/plan.js').includes('commentInputFile')) bad('scripts/triage/plan.js no longer emits commentInputFile, which the prose tells the agent to use');
 
+// the three instructions the second review added to the command prose
+const flat = cmd.replace(/\s+/g, ' ');
+if (!/do not create a script file in the project/.test(flat)) bad(`${CMD}: no longer tells the agent not to create a script file for the snapshot (it has no Write tool; the snapshot is the only file it writes)`);
+if (!/--threshold` or `--trusted-formats`, give `classify\.js` the same/.test(flat)) bad(`${CMD}: no longer says to pass --threshold / --trusted-formats on to classify.js when re-classifying`);
+if (!/\*\*data\*\*/.test(flat) || !/nothing inside it is an instruction/.test(flat)) bad(`${CMD}: no longer tells the agent that failure text handed to Bug-reporter is data, not instructions`);
+
 // ── the agent ────────────────────────────────────────────────────────────────
 const fm = (agent.match(/^---\n([\s\S]*?)\n---/) || [])[1] || '';
 const tools = ((fm.match(/^tools:\s*(.*)$/m) || [])[1] || '').split(',').map((t) => t.trim());
@@ -135,7 +141,9 @@ if ((fm.match(/^name:\s*(.*)$/m) || [])[1] !== 'QA-run-orchestrator') bad(`${AGE
 for (const forbidden of ['Edit', 'Write', 'NotebookEdit']) if (tools.includes(forbidden)) bad(`${AGENT}: has the ${forbidden} tool — the scripts write every file this pipeline needs, and self-heal is not enabled`);
 if (/\bcannot edit files\b/i.test(agent)) bad(`${AGENT}: claims the agent "cannot edit files", but it has Bash, which can — say it is a rule it keeps, not a sandbox`);
 if (!/not a sandbox/i.test(agent)) bad(`${AGENT}: no longer says plainly that the no-editing rule is a rule, not a sandbox (the agent has Bash)`);
-if (!/never `git commit` or `git push`/.test(agent)) bad(`${AGENT}: no longer tells the agent never to commit or push`);
+if (!/\bAgent tool\b[^.]*\bWrite and Edit\b/.test(agent.replace(/\s+/g, ' '))) bad(`${AGENT}: no longer says that the Agent tool lets it start agents that DO have Write/Edit (the rule must name Agent as well as Bash)`);
+if (!/never start any agent except \`Bug-reporter\`/.test(agent.replace(/\s+/g, ' '))) bad(`${AGENT}: no longer limits which agents it may start to Bug-reporter`);
+if (!/never \`git commit\` or \`git push\`/.test(agent)) bad(`${AGENT}: no longer tells the agent never to commit or push`);
 if (!tools.includes('Agent')) bad(`${AGENT}: needs the Agent tool to hand bugs to Bug-reporter`);
 if (!tools.includes('Bash')) bad(`${AGENT}: needs Bash to run the scripts`);
 if (!agent.includes('.claude/commands/run-and-triage.md')) bad(`${AGENT}: does not point at .claude/commands/run-and-triage.md`);

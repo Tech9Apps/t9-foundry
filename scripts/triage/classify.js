@@ -17,7 +17,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { fingerprint, identity } = require('./fingerprint');
+const { fingerprint, identity, pathTail } = require('./fingerprint');
 const { signatureOf, evidenceText, infraSignal, authSignal, errorPageSignal, isLocatorError, testCrash, appCrash, baseName } = require('./lib/text');
 const { triageConfig, FORMATS, DEFAULTS } = require('./lib/config');
 
@@ -69,15 +69,41 @@ const msgOf = (a) => (a.error && a.error.message) || '';
 // what the failure SAYS: message + the reporter's diagnostics (see lib/text.js evidenceText) — every signal reads this, not just the first line
 const textOf = (a) => evidenceText(a.error);
 
-// The same test across runs: ticket/caseId when the name has them, else file + title.
-const keyOf = (t) => identity(t);
+// The same test across runs. identity() (ticket/caseId, else file + title) survives renames, but it is not UNIQUE: one case runs once per
+// browser project, and two files may reuse a case id. Tests that share an identity are told apart by their full title and file, or one
+// failure would hide behind a passing sibling (and be dropped) or be averaged with it (and be called flaky).
+// And node's TAP gives only a FAILING test a file, so the same test passing on a re-run has none: a missing file is taken from the same title
+// elsewhere in the runs — but only when that title maps to ONE file, never by guessing between two.
+const titleKey = (t) => `${t.suite || ''}\u0000${t.name}`;
+const discriminator = (t) => `${t.suite ? `${t.suite} > ` : ''}${t.name}${t.file ? ` @ ${pathTail(t.file)}` : ''}`;
+function makeKeyer(runs) {
+  const files = new Map(); // title -> the one file it is seen with, or null when it is seen with several
+  for (const run of runs) for (const t of run.tests) if (t.file) { const k = titleKey(t); files.set(k, files.has(k) && files.get(k) !== t.file ? null : t.file); }
+  const withFile = (t) => (t.file || !files.get(titleKey(t)) ? t : { ...t, file: files.get(titleKey(t)) });
+  // Two tests are different only if they appear TOGETHER in one run. The same identity under a different title in two runs is one test that was
+  // reworded (that is what the ticket/case identity is for), not two.
+  const shared = new Set();
+  for (const run of runs) {
+    const together = new Map(); // identity -> the distinct tests carrying it in THIS run
+    for (const raw of run.tests) {
+      if (raw.status === 'skipped') continue;
+      const t = withFile(raw); const id = identity(t);
+      if (!together.has(id)) together.set(id, new Set());
+      together.get(id).add(discriminator(t));
+    }
+    for (const [id, set] of together) if (set.size > 1) shared.add(id);
+  }
+  const keyOf = (raw) => { const t = withFile(raw); const id = identity(t); return shared.has(id) ? `${id} [${discriminator(t)}]` : id; };
+  return { keyOf, withFile };
+}
 
-function gatherAttempts(runs) {
+function gatherAttempts(runs, keyer) {
   const map = new Map();
   runs.forEach((run, i) => {
-    for (const t of run.tests) {
-      if (t.status === 'skipped') continue;
-      const key = keyOf(t);
+    for (const raw of run.tests) {
+      if (raw.status === 'skipped') continue;
+      const key = keyer.keyOf(raw);
+      const t = keyer.withFile(raw);
       if (!map.has(key)) map.set(key, { key, attempts: [] });
       map.get(key).attempts.push({ run: i, status: t.status, flaky: !!t.flaky, retries: t.retries || 0, error: t.error, test: t });
     }
@@ -193,7 +219,7 @@ function classify({ runs, preflight = 'unknown', evidence = {}, threshold = DEFA
   if (!runs.length) throw usage('at least one run is required');
   const format = runs[0].format || 'unknown'; // a result that does not say what it was parsed from cannot be trusted
   const trusted = trustedFormats.includes(format);
-  const attemptsByKey = gatherAttempts(runs);
+  const attemptsByKey = gatherAttempts(runs, makeKeyer(runs));
   const blast = blastSignatures(runs[0]);
   const verdicts = [];
   for (const entry of attemptsByKey.values()) {
@@ -302,4 +328,4 @@ function main({ argv = process.argv.slice(2), stdout = process.stdout, stderr = 
 
 if (require.main === module) process.exitCode = main();
 
-module.exports = { main, classify, RULES, RULE_TABLE, CLASSES, UND_REASONS, DEFAULT_THRESHOLD, DEFAULT_TRUSTED_FORMATS, FORMATS, CAPPED_CLASSES, parseTrustedFormats };
+module.exports = { main, classify, makeKeyer, RULES, RULE_TABLE, CLASSES, UND_REASONS, DEFAULT_THRESHOLD, DEFAULT_TRUSTED_FORMATS, FORMATS, CAPPED_CLASSES, parseTrustedFormats };

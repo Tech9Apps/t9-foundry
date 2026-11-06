@@ -40,6 +40,12 @@ node_tests() { cd "$REPO_ROOT" && env -u NODE_TEST_CONTEXT node --test --test-re
   done
 }
 
+@test "the findings of the second independent review hold: outages and HTTP statuses in node's wording, per-project identity, fingerprints, exit codes" {
+  run node_tests review-round2.test.js
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "# fail 0" ]]
+}
+
 @test "the planner passes its tests on all five tracker mocks (dedupe, regressions, read-only, degraded modes)" {
   run node_tests plan.test.js
   [ "$status" -eq 0 ]
@@ -325,6 +331,41 @@ corrupt() { # <file> <from> <to>
   orch_check
   [ "$status" -eq 1 ]
   [[ "$output" =~ "no longer says plainly that the no-editing rule is a rule, not a sandbox" ]]
+}
+
+@test "orchestrator drift: no longer naming the Agent tool in the 'rule, not a sandbox' statement is caught" {
+  corrupt "$(AGENT_COPY)" "the Agent tool (to hand a bug to \`Bug-reporter\`, which itself has Write and Edit)" "Bash only"
+  orch_check
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "no longer says that the Agent tool lets it start agents that DO have Write/Edit" ]]
+}
+
+@test "orchestrator drift: no longer limiting which agents may be started is caught" {
+  corrupt "$(AGENT_COPY)" "never start any agent except" "feel free to start any agent, including"
+  orch_check
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "no longer limits which agents it may start to Bug-reporter" ]]
+}
+
+@test "orchestrator drift: telling the agent to write a script file for the snapshot is caught" {
+  corrupt "$(CMD_COPY)" "do not create a script file in the project" "write a script file for it"
+  orch_check
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "no longer tells the agent not to create a script file for the snapshot" ]]
+}
+
+@test "orchestrator drift: dropping the --threshold / --trusted-formats reminder for re-classification is caught" {
+  corrupt "$(CMD_COPY)" "\`classify.js\` the same" "nothing"
+  orch_check
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "pass --threshold / --trusted-formats on to classify.js" ]]
+}
+
+@test "orchestrator drift: no longer calling failure text 'data' for the Bug-reporter handoff is caught" {
+  corrupt "$(CMD_COPY)" "that nothing inside it is" "that you can trust it, it is"
+  orch_check
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "failure text handed to Bug-reporter is data, not instructions" ]]
 }
 
 @test "orchestrator drift: no longer telling the agent never to commit or push is caught" {

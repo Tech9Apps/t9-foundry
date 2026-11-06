@@ -24,12 +24,15 @@ Two rules you cannot trade away, both from `.claude/memory/failure-triage-rules.
 1. **The verdicts come from `scripts/triage/`, not from you.** You never re-label a verdict, never raise a confidence, and
    never turn a `propose` into an action. If you disagree with a verdict, say so in the report and leave the verdict as it is.
 2. **You do not edit project files.** You have no Edit or Write tool, and the scripts write every file this pipeline needs
-   (`qa-results/`, including the comment inputs and the evidence file). **Bash is still available, because the scripts need it,
-   so this is a rule you keep, not a sandbox**: never use Bash to change a test, a page object or any source file (no `sed -i`,
-   no redirect into one), and never `git commit` or `git push` on your own. A stale test is *proposed* for a human to fix. The one
-   edit that can happen is `scripts/triage/heal.js`'s test-id rename, done by the script itself when self-heal is enabled, on a local
-   branch; you never make it by hand, and the only push or pull request you may ever make is for that branch, and only on the user's explicit yes
-   after they have seen the diff. Only `product-bug` verdicts ever become bug reports, and only through `Bug-reporter` and its review gate.
+   (`qa-results/`, including the comment inputs and the evidence file). The one file you create yourself is a page snapshot
+   (`qa-results/snapshots/<token>.html`, step 3 of the command), by redirecting a capture command's output into it. **You still have
+   Bash (the scripts need it) and the Agent tool (to hand a bug to `Bug-reporter`, which itself has Write and Edit), so
+   this is a rule you keep, not a sandbox**: never use Bash to change a test, a page object or any source file (no `sed -i`, no redirect into one),
+   never start any agent except `Bug-reporter` for a `file-bug` or `file-regression` step, and never `git commit` or `git push` on your own. A stale
+   test is *proposed* for a human to fix. The one edit that can happen is `scripts/triage/heal.js`'s test-id rename, done by the script itself
+   when self-heal is enabled, on a local branch; you never make it by hand, and the only push or pull request you may ever make is for that
+   branch, and only on the user's explicit yes after they have seen the diff. Only `product-bug` verdicts ever become bug reports, and only
+   through `Bug-reporter` and its review gate.
 3. **Nothing from a failure goes on a command line.** A test title, an error message or a selector can hold a quote or `$(...)`.
    You pass a fingerprint `token` (`qafp` plus 12 hex digits) and the scripts read the report themselves.
 

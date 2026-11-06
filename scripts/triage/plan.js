@@ -12,7 +12,8 @@
 // Per verdict (class + action → step):
 //   product-bug, act     → comment-existing   an OPEN report with this fingerprint exists: comment, don't file
 //                          file-regression    only CLOSED (fixed) reports match: the defect came back — file a NEW bug linking the old
-//                          report-dismissed   only reports closed WITHOUT a fix match (won't fix, not planned, duplicate…): say so, file nothing
+//                          report-dismissed   only reports closed WITHOUT a fix match (won't fix, not planned, duplicate…), or one was created after the last
+//                                             fixed one (the team already decided about the recurrence): say so, file nothing
 //                          file-bug           nothing matches
 //   product-bug, propose → propose            (with what was found, so the human can decide)
 //   test-bug             → propose-test-fix   self-heal is not enabled: name the cause, edit nothing
@@ -70,10 +71,16 @@ async function lookup(adapter, token) {
   for (const item of items.slice(0, MAX_CANDIDATES)) {
     const ticket = await run(adapter, 'fetch', { id: item.id }); // confirm the token is really in it — search is fuzzy
     if (!String(ticket.description || '').includes(token)) continue;
-    (item.open ? open : item.dismissed ? dismissed : closed).push({ id: item.id, url: item.url, title: item.title, status: item.status });
+    (item.open ? open : item.dismissed ? dismissed : closed).push({ id: item.id, url: item.url, title: item.title, status: item.status, ...(item.createdAt ? { createdAt: item.createdAt } : {}) });
   }
   return { open, closed, dismissed };
 }
+
+// When a defect matches BOTH a report closed as fixed and one closed WITHOUT a fix, the later one is the team's last word. Fixed, then back,
+// then the regression report dismissed: filing another regression would repeat that forever. Dismissed, then (later) fixed, then back: it IS
+// a regression of that fix. Reports are ordered by when they were created; if either side has no date, the order is unknown.
+const newest = (list) => { const times = list.map((i) => Date.parse(i.createdAt)).filter(Number.isFinite); return times.length ? Math.max(...times) : NaN; };
+const dismissedAfterFix = (found) => newest(found.dismissed) > newest(found.closed); // NaN (no date) compares false: an unknown order is never "later"
 
 function commentBody(v, runId) {
   return [
@@ -117,9 +124,9 @@ async function plan({ report, runId, adapter, trackerWarning, commentsDir }) {
       actions.push({ ...base, step: 'comment-existing', existing, lookup: lookupInfo,
         commentInput: { id: existing.id, body: commentBody(v, runId), idempotencyKey: `${key}-comment` },
         ...(commentsDir ? { commentInputFile: path.join(commentsDir, `${v.token}.json`) } : {}) });
-    } else if (found && found.closed.length) {
+    } else if (found && found.closed.length && !(found.dismissed.length && dismissedAfterFix(found))) {
       actions.push({ ...base, step: 'file-regression', regressionOf: found.closed[0], lookup: lookupInfo, idempotencyKey: key, marker: `qa-harness-fingerprint: ${v.token}`,
-        note: `report #${found.closed[0].id} with this fingerprint was closed as fixed, so this is a regression: file a new bug that links it` });
+        note: `report #${found.closed[0].id} with this fingerprint was closed as fixed, so this is a regression: file a new bug that links it${found.dismissed.length ? ` (a report closed without a fix also matches, but it is not newer than the fixed one — or the tracker gave no dates to tell: if it is the later decision, do not file)` : ''}` });
     } else if (found && found.dismissed.length) {
       // The team decided NOT to fix this. It is not a regression of a fix, and a comment on a dismissed report is noise: say so, file nothing.
       actions.push({ ...base, step: 'report-dismissed', dismissedAs: found.dismissed[0], lookup: lookupInfo,

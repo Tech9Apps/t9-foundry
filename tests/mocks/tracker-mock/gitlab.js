@@ -9,9 +9,10 @@ function createGitlabMock({ token = 'glpat-test-token', projectId = '42' } = {})
   const P = '/api/v4/projects/:pid';
   const web = (iid) => `https://gitlab.test/acme/shop/-/issues/${iid}`;
 
+  const stamp = (n) => new Date(Date.UTC(2026, 0, 2, 3, 4, 5) + (Number(n) - 1) * 1000).toISOString().replace('.000Z', 'Z'); // item n is created n-1 seconds after item 1
   function seedIssue({ title, description = '', labels = [], user = 'qa-lead', st = 'opened' }) {
     const iid = state.nextIid++;
-    state.issues.set(iid, { id: state.nextGlobal++, iid, project_id: Number(projectId), title, description, state: st, labels, web_url: web(iid), author: { username: user }, created_at: '2026-01-02T03:04:05Z', issue_type: 'issue' });
+    state.issues.set(iid, { id: state.nextGlobal++, iid, project_id: Number(projectId), title, description, state: st, labels, web_url: web(iid), author: { username: user }, created_at: stamp(iid), issue_type: 'issue' });
     state.notes.set(iid, []);
     return iid;
   }

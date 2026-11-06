@@ -10,11 +10,12 @@ function createGithubMock({ token = 'test-token', repo = 'acme/shop' } = {}) {
   const [owner, name] = repo.split('/');
   const html = (n) => `https://github.test/${repo}/issues/${n}`;
 
+  const stamp = (n) => new Date(Date.UTC(2026, 0, 2, 3, 4, 5) + (Number(n) - 1) * 1000).toISOString().replace('.000Z', 'Z'); // item n is created n-1 seconds after item 1
   function seedIssue({ title, body = '', labels = [], user = 'qa-lead', state: st = 'open' }) {
     const number = state.nextNumber++;
     state.issues.set(number, {
       number, title, body, state: st, user: { login: user }, html_url: html(number),
-      labels: labels.map((l) => ({ name: l })), created_at: '2026-01-02T03:04:05Z',
+      labels: labels.map((l) => ({ name: l })), created_at: stamp(number),
     });
     state.comments.set(number, []);
     return number;
@@ -93,6 +94,7 @@ function createGithubMock({ token = 'test-token', repo = 'acme/shop' } = {}) {
     settle: () => state.unindexed.clear(), // the search index catches up
     tokenEnv: 'GITHUB_TOKEN',
     createdItems: () => state.created.map((n) => ({ id: String(n), title: state.issues.get(n).title, text: state.issues.get(n).body })),
+    closeAs: (id, reason) => { const i = state.issues.get(Number(id)); i.state = 'closed'; i.state_reason = reason; }, // completed | not_planned | duplicate
     closeItem: (id) => { const i = state.issues.get(Number(id)); i.state = 'closed'; i.state_reason = 'completed'; },
     dismissItem: (id) => { const i = state.issues.get(Number(id)); i.state = 'closed'; i.state_reason = 'not_planned'; }, // "Close as not planned"
     commentsOn: (id) => state.comments.get(Number(id)).map((c) => c.body),
