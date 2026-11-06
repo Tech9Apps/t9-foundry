@@ -56,6 +56,16 @@
       "Bash(node scripts/tracker/cli.js search *)",
       "Bash(node scripts/tracker/post-tests.js * --dry-run*)",
       "Bash(node scripts/results/normalize.js *)"
+    ],
+    "ask": [
+      "Bash(node scripts/tracker/cli.js*--base-url*)",
+      "Bash(node scripts/tracker/cli.js*--config*)",
+      "Bash(node scripts/tracker/post-tests.js*--base-url*)",
+      "Bash(node scripts/tracker/post-tests.js*--config*)",
+      "Bash(node scripts/results/normalize.js*--out*)",
+      "Bash(node scripts/tracker/cli.js*--context-file /*)",
+      "Bash(node scripts/tracker/cli.js*--context-file ~*)",
+      "Bash(node scripts/tracker/cli.js*--context-file*..*)"
     ]
   }
 }
