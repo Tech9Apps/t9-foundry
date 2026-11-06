@@ -52,6 +52,12 @@ node_tests() { cd "$REPO_ROOT" && env -u NODE_TEST_CONTEXT node --test --test-re
   [[ "$output" =~ "# fail 0" ]]
 }
 
+@test "the triage tests give the same results when a hostile qa-config.json is in the working directory (slow: it re-runs them)" {
+  run node_tests hermetic.test.js
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "# fail 0" ]]
+}
+
 @test "the planner passes its tests on all five tracker mocks (dedupe, regressions, read-only, degraded modes)" {
   run node_tests plan.test.js
   [ "$status" -eq 0 ]

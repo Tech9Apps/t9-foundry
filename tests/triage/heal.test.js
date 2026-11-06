@@ -778,7 +778,7 @@ describe('heal CLI', () => {
     const p = makeProject({ files: { 'tests/ui.test.js': slow } }); const before = p.state(); const original = fs.readFileSync(path.join(p.proj, 'tests', 'ui.test.js'));
     const mainRun = path.join(p.root, 'main.json'); fs.writeFileSync(mainRun, JSON.stringify({ tests: [] }));
     const script = path.join(__dirname, '..', '..', 'scripts', 'triage', 'heal.js');
-    const child = spawn(process.execPath, [script, '--report', reportFor(p), '--main', mainRun, '--framework', 'node', '--cwd', p.proj, '--paths', 'tests', '--apply', '--enable', '--run-id', 'sig1'], { env: baseEnv(), stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(process.execPath, [script, '--report', reportFor(p), '--main', mainRun, '--framework', 'node', '--cwd', p.proj, '--paths', 'tests', '--apply', '--enable', '--run-id', 'sig1', '--config', p.cfg({ selfHeal: { enabled: true, paths: ['tests'] } })], { env: baseEnv(), stdio: ['ignore', 'pipe', 'pipe'] });
     let stderr = ''; child.stderr.on('data', (d) => { stderr += d; });
     const exited = new Promise((resolve) => child.on('exit', (code, signal) => resolve({ code, signal })));
     // wait until the heal is genuinely in the middle of it: on its branch, with the edit on disk, the validation run in progress
