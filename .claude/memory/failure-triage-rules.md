@@ -171,8 +171,11 @@ the edit by hand.
 
 - The error-message patterns (infrastructure, locator, login and error-page signatures) come from experience of how common tools word
   their errors, not from a corpus; a tool that words an error differently will land in `undetermined` or be capped, not acted on.
-- Classification of Playwright, Jest and JUnit output has been checked only against failures written by hand to match those reporters'
-  formats, never against real runs. That is why those formats are capped (see "Which runners may act"). The seeded demo scenarios use TAP.
+- Jest 30.5.2 and Playwright 1.65.0 output has been checked against real runs of ONE small demo app (assertion, 503 / 401 / 404, nothing listening, a
+  timeout, a crashing test, a stale selector, wrong text: `tests/fixtures/results/real/`). That found two mistakes in the classification (now fixed),
+  so a wrong guess about real wording is not hypothetical. It is still thin evidence: one app, one version each, and JUnit from anything but node
+  has not been seen at all. That is why those formats stay capped by default (see "Which runners may act"); a project that has checked a format on
+  its own failures can trust it with `triage.trustedFormats`. The seeded demo scenarios use TAP.
 - "Closed without a fix" is read in each tracker's own words: GitHub "not planned" and its wontfix/invalid/duplicate labels, Bitbucket
   wontfix/invalid/duplicate, ClickUp status wording ("rejected", "won't do", "not planned", "out of scope", "cancelled"…), Azure close reasons, GitLab labels. A
   workspace that names these differently reads as closed-as-fixed, and a recurrence is then filed as a regression.
