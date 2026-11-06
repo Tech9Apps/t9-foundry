@@ -4,7 +4,13 @@ An AI-powered QA workspace for Claude Code. You open this repo in Claude Code, p
 
 > **Two repos, not one.** This repo is the QA workspace. Your application lives in a separate repo. You run Claude Code *here*, and the harness reads and writes *there*.
 
-> **Want to see it in action first?** The [`examples/`](examples/) folder has a demo ticket and pre-generated outputs — no Jira or ticket system needed. Follow [`examples/README.md`](examples/README.md) to run the full workflow in ~15 minutes.
+> **Want to see it in action first?** There's a demo project built in — a tiny coffee-shop app with two planted bugs. No Jira, no accounts, no install:
+>
+> ```bash
+> bash demo/run-demo.sh      # 2-minute tour: ticket → test cases → run → bugs found → production guards → fix
+> ```
+>
+> Then open this repo in Claude Code and run `/demo` to drive the real commands against it yourself. Details: [`demo/README.md`](demo/README.md).
 
 ---
 

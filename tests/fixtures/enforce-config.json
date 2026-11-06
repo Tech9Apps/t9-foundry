@@ -1,0 +1,12 @@
+{
+  "project": { "name": "Enforce App" },
+  "ticketSource": { "type": "none" },
+  "codeRepository": { "type": "local", "localPath": "../enforce-app" },
+  "environments": { "testEnvironmentBaseUrl": "https://staging.myapp.example.com" },
+  "productionProtection": {
+    "prodUrlPatterns": ["://myapp\\.example\\.com/", "://app\\.myapp\\.example\\.com/"],
+    "blockOnSuspiciousUrls": true,
+    "mode": "enforce",
+    "allowedUrlPatterns": ["://partner\\.io/guide"]
+  }
+}

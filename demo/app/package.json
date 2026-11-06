@@ -1,0 +1,11 @@
+{
+  "name": "brew-and-co-demo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Brew & Co — a tiny coffee shop checkout app used by the tech9foundry demo. Zero dependencies.",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test"
+  },
+  "engines": { "node": ">=20" }
+}

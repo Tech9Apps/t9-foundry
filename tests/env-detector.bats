@@ -8,7 +8,8 @@ DETECTOR="$REPO_ROOT/hooks/env-detector.sh"
 FIXTURES="$BATS_TEST_DIRNAME/fixtures"
 
 setup() {
-  TEST_TMP="$(mktemp -d)"
+  unset QA_AUTONOMOUS QA_HARNESS_DIR CLAUDE_PROJECT_DIR # hermetic: an exported autonomous/harness env must not change what these tests mean
+  TEST_TMP="$(mktemp -d "${TMPDIR:-/tmp}/qa-test.XXXXXX")"
 }
 
 teardown() {
@@ -174,13 +175,42 @@ edit_input() {
   [[ "$output" =~ "WARNING" ]]
 }
 
+# ── Enforce mode (unattended runs fail closed) ───────────────────────────────
+
+@test "enforce mode via config: blocks a Write of code containing a suspicious hardcoded URL" {
+  write_input "/project/e2e/config.ts" "const other = 'https://otherapp.io/page';" "enforce-config.json"
+  run bash -c "cd '$TEST_TMP' && bash '$DETECTOR' < input.json"
+  [ "$status" -eq 2 ]
+  [[ "$output" =~ "BLOCKED" ]]
+}
+
+@test "enforce mode via QA_AUTONOMOUS=1: blocks even when the config says warn" {
+  write_input "/project/e2e/config.ts" "const other = 'https://otherapp.io/page';" "prod-url-config.json"
+  run env QA_AUTONOMOUS=1 bash -c "cd '$TEST_TMP' && bash '$DETECTOR' < input.json"
+  [ "$status" -eq 2 ]
+  [[ "$output" =~ "BLOCKED" ]]
+}
+
+@test "enforce mode: documentation files only warn (they legitimately link out)" {
+  write_input "/project/test-cases/notes.md" "See https://otherapp.io/page for details." "enforce-config.json"
+  run bash -c "cd '$TEST_TMP' && bash '$DETECTOR' < input.json"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "WARNING" ]]
+}
+
+@test "enforce mode: tracker/code-host URLs and allowedUrlPatterns are exempt" {
+  write_input "/project/e2e/links.ts" "// https://github.com/Tech9Apps/t9-foundry/issues/1 and https://partner.io/guide/setup" "enforce-config.json"
+  run bash -c "cd '$TEST_TMP' && bash '$DETECTOR' < input.json"
+  [ "$status" -eq 0 ]
+}
+
 # ── cwd-independent config resolution ─────────────────────────────────────────
 
 @test "resolves qa-config.json via CLAUDE_PROJECT_DIR when the tool's cwd has no config" {
   # qa-config.json is gitignored repo-wide, so build the CLAUDE_PROJECT_DIR
   # fixture at runtime (like write_input does for cwd) instead of committing
   # a file with that literal name under tests/fixtures/.
-  local project_dir="$(mktemp -d)"
+  local project_dir="$(mktemp -d "${TMPDIR:-/tmp}/qa-test.XXXXXX")"
   cp "$FIXTURES/prod-url-config.json" "$project_dir/qa-config.json"
   write_input "/project/e2e/config.ts" "const base = 'https://myapp.example.com/';"
   run env CLAUDE_PROJECT_DIR="$project_dir" bash -c "cd '$TEST_TMP' && bash '$DETECTOR' < input.json"
@@ -208,4 +238,58 @@ edit_input() {
   run bash -c "cd '$TEST_TMP' && bash '$DETECTOR' < input.json"
   [ "$status" -eq 2 ]
   [[ "$output" =~ "BLOCKED" ]]
+}
+
+# ── Review findings: the file-content scan shares the host-based decision ─────────────────────────────────────────────────
+
+enforce_config() {
+  jq -n --argjson p "${1:-[]}" '{productionProtection:{mode:"enforce",prodUrlPatterns:$p}}' > "$TEST_TMP/qa-config.json"
+}
+run_detector() { run env -u QA_AUTONOMOUS bash -c "cd '$TEST_TMP' && bash '$DETECTOR' < input.json"; }
+
+@test "enforce: dev/test/qa/staging in a hardcoded URL's path or query no longer excuses it (the old whole-URL substring exemption)" {
+  enforce_config
+  for url in 'https://prod.mybank.com/api/latest' 'https://shop.acme.com/login?x=test' 'https://shop.acme.com/dev/x' 'https://acme.dev/x' 'https://www.acme.com/x'; do
+    write_input "tests/api.spec.ts" "const base = \"$url\";"
+    run_detector
+    echo "$url -> $status: $output"
+    [ "$status" -eq 2 ]
+  done
+}
+
+@test "enforce: hardcoded URLs that are recognizably a test environment still pass" {
+  enforce_config
+  write_input "tests/api.spec.ts" 'const a = "https://staging.acme.com/x"; const b = "http://localhost:3000"; const c = "http://127.0.0.1:8080"; const d = "https://acme.test";'
+  run_detector
+  [ "$status" -eq 0 ]
+}
+
+@test "enforce: a hardcoded URL matching a configured pattern in ANY spelling blocks (case, userinfo, port, no path, trailing dot)" {
+  enforce_config '["://myapp\\.example\\.com/"]'
+  for url in 'https://MyApp.Example.com/x' 'https://u:pw@myapp.example.com/x' 'https://myapp.example.com:8443/x' 'https://myapp.example.com' 'https://myapp.example.com./x'; do
+    write_input "tests/api.spec.ts" "const base = \"$url\";"
+    run_detector
+    echo "$url -> $status: $output"
+    [ "$status" -eq 2 ]
+    [[ "$output" =~ "BLOCKED" ]]
+  done
+}
+
+@test "enforce: documentation files still only warn about external links, and say why" {
+  enforce_config
+  write_input "docs/notes.md" "See https://www.acme.com/pricing for details."
+  run_detector
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "WARNING" ]]
+}
+
+@test "a malformed qa-config.json: unattended is BLOCKED, attended is warned" {
+  printf '{ not json' > "$TEST_TMP/qa-config.json"
+  write_input "tests/api.spec.ts" 'const base = "https://staging.acme.com/x";'
+  run env QA_AUTONOMOUS=1 bash -c "cd '$TEST_TMP' && bash '$DETECTOR' < input.json"
+  [ "$status" -eq 2 ]
+  [[ "$output" =~ "not valid JSON" ]]
+  run_detector
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "not valid JSON" ]]
 }

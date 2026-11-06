@@ -103,14 +103,14 @@ curl -fsS --max-time 30 -X POST -H "PRIVATE-TOKEN: $GITLAB_TOKEN" \
 ```
 
 ### Bitbucket
-Create an issue in the configured repo (`ticketSource.bitbucket.workspace`/`repo`, app password from `ticketSource.bitbucket.tokenEnvVar` default `BITBUCKET_TOKEN`):
+Create an issue in the configured repo (`ticketSource.bitbucket.workspace`/`repo`, account username from `ticketSource.bitbucket.username`, app password from `ticketSource.bitbucket.tokenEnvVar` default `BITBUCKET_TOKEN`):
 ```bash
-curl -fsS --max-time 30 -X POST -u ":$BITBUCKET_TOKEN" \
+curl -fsS --max-time 30 -X POST -u "{username}:$BITBUCKET_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"title": "[BUG] <bug title>", "content": {"raw": "<full report body>", "markup": "markdown"}}' \
   "https://api.bitbucket.org/2.0/repositories/{workspace}/{repo}/issues"
 ```
-Bitbucket app passwords are tied to a specific account — if `-u ":$BITBUCKET_TOKEN"` returns 401, the workspace likely requires `-u "<username>:$BITBUCKET_TOKEN"` instead. Ask the user for their Bitbucket username if this happens; there is no config field for it today.
+Bitbucket app passwords authenticate as `username:app_password`, so `ticketSource.bitbucket.username` is required. If it is unset, stop and tell the user to set it with `/reconfigure` (or add it to `qa-config.json`) — do not guess it and do not retry with an empty username.
 
 ### None
 Save the report to `{testCasesDir}/bugs/<slugified-title>.md` and report the path — nothing leaves the workspace.

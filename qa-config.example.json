@@ -76,7 +76,9 @@
       "prod-api\\.myapp\\.com"
     ],
     "prodEnvVarValues": ["production", "prod"],
-    "blockOnSuspiciousUrls": true
+    "blockOnSuspiciousUrls": true,
+    "mode": "warn",
+    "allowedUrlPatterns": []
   },
   "testFramework": {
     "type": "playwright",
