@@ -22,9 +22,8 @@
 const fs = require('fs');
 const path = require('path');
 const { main: runResultsMain } = require('../results/run');
-const { classify, DEFAULT_THRESHOLD, DEFAULT_TRUSTED_FORMATS, parseTrustedFormats } = require('./classify');
+const { classify, makeKeyer, DEFAULT_THRESHOLD, DEFAULT_TRUSTED_FORMATS, parseTrustedFormats } = require('./classify');
 const { analyzeLocator } = require('./locators');
-const { identity } = require('./fingerprint');
 const { isLocatorError, extractTestId, evidenceText } = require('./lib/text');
 const { plan, connectIfNeeded, writeCommentInputs } = require('./plan');
 
@@ -82,8 +81,17 @@ async function orchestrate(opts, { env = process.env, fetch = globalThis.fetch, 
     ...(opts.cwd ? ['--cwd', opts.cwd] : []), ...(opts.config ? ['--config', opts.config] : []), ...(opts.timeoutMs ? ['--timeout-ms', String(opts.timeoutMs)] : []), '--quiet'];
   const specArgs = (specs) => specs.flatMap((s) => ['--spec', s]);
 
+  // Re-runs left in <out> by an EARLIER run would be read as this run's attempts (the prose says "one --rerun per rerun-<k> directory that exists"):
+  // clear exactly those, by name. Nothing else in <out> is touched.
+  if (fs.existsSync(out)) for (const e of fs.readdirSync(out, { withFileTypes: true })) if (e.isDirectory() && /^rerun-\d+$/.test(e.name)) fs.rmSync(path.join(out, e.name), { recursive: true, force: true });
+
   // 1. the main run
   const first = await runResults([...base, ...specArgs(opts.specs), '--out', path.join(out, 'main')], env);
+  // code 3 is "no trustworthy main run" (see scripts/results/run.js) — including a runner whose exit code contradicts its own report, which still
+  // comes back WITH a report. A report that may be partial is not a pass: stop here instead of declaring the run green.
+  if (first.code === 3 && first.doc && first.doc.data) {
+    return { code: 3, doc: { ok: false, stage: 'run', error: first.doc.error || { code: 'CONTRADICTORY_RUN', message: (first.doc.warnings && first.doc.warnings[0]) || 'the runner\'s exit code contradicts its report, so this run cannot be trusted' }, ...(first.doc.warnings ? { warnings: first.doc.warnings } : {}) } };
+  }
   if (!first.doc || !first.doc.data) {
     return { code: first.code === 2 ? 2 : 3, doc: { ok: false, stage: 'run', error: (first.doc && first.doc.error) || { code: 'NO_REPORT', message: 'the run produced no result' }, ...(first.doc && first.doc.warnings ? { warnings: first.doc.warnings } : {}) } };
   }
@@ -116,9 +124,10 @@ async function orchestrate(opts, { env = process.env, fetch = globalThis.fetch, 
     try { html = fs.readFileSync(opts.snapshot, 'utf8'); } catch (e) { warnings.push(`snapshot not readable (${e.message}): locator failures stay undetermined`); }
     if (html !== null) {
       // read the whole failure text, not just its first line: Playwright keeps "waiting for getByTestId('x')" in the details
+      const { keyOf } = makeKeyer([main, ...reruns]); // the same key classify() looks the evidence up by
       for (const t of main.tests.filter((x) => x.status === 'failed' && x.error && isLocatorError(evidenceText(x.error)))) {
         if (!extractTestId(evidenceText(t.error))) continue;
-        evidence[identity(t)] = { locator: analyzeLocator({ html, selector: evidenceText(t.error), bare: false }) };
+        evidence[keyOf(t)] = { locator: analyzeLocator({ html, selector: evidenceText(t.error), bare: false }) };
       }
     }
   }

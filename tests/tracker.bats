@@ -39,6 +39,12 @@ node_tests() { # <file> -> runs it, echoes the TAP summary lines
   [[ "$output" =~ "# fail 0" ]]
 }
 
+@test "every tracker reads 'closed without a fix' in the words real workspaces use, and reports when an item was created" {
+  run node_tests vocabulary.test.js
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "# fail 0" ]]
+}
+
 @test "the tracker CLI passes its tests" {
   run node_tests cli.test.js
   [ "$status" -eq 0 ]

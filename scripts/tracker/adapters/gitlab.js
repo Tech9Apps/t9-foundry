@@ -33,7 +33,7 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
   // GitLab has no "won't fix" resolution, so the team's own labels are the only signal: a closed issue carrying one of these was dismissed.
   const DISMISS_LABEL = /^(?:wontfix|won't fix|invalid|duplicate|not a bug)$/i;
   const dismissedIssue = (i) => i.state === 'closed' && (i.labels || []).some((l) => DISMISS_LABEL.test(typeof l === 'string' ? l : l.title || l.name || ''));
-  const summarize = (i) => ({ id: String(i.iid), title: i.title, url: i.web_url, status: i.state, open: i.state === 'opened', ...(dismissedIssue(i) ? { dismissed: true } : {}) });
+  const summarize = (i) => ({ id: String(i.iid), title: i.title, url: i.web_url, status: i.state, open: i.state === 'opened', ...(i.created_at ? { createdAt: i.created_at } : {}), ...(dismissedIssue(i) ? { dismissed: true } : {}) });
   const priorityLabel = (p) => (p ? [`priority:${p}`] : []);
 
   async function fetchTicket(id) {

@@ -13,6 +13,7 @@
         "required": ["id", "title", "open"],
         "properties": {
           "id": { "type": "string" }, "title": { "type": "string" }, "url": { "type": "string" },
+          "createdAt": { "type": "string", "description": "when the item was created (ISO 8601), where the tracker reports it. Used to tell which of two matching reports is the later decision" },
           "status": { "type": "string", "description": "the tracker's own word (open, opened, Active, a custom ClickUp status …)" },
           "open": { "type": "boolean", "description": "normalized: false once the item is closed/resolved/done — a match that is not open means a defect that came back is a regression" },
           "dismissed": { "type": "boolean", "description": "present (true) only when the tracker says the item was closed WITHOUT a fix: not planned, won't fix, invalid, duplicate, rejected, removed. Such an item is never `open`, and a defect that reappears is not a regression of a fix" }

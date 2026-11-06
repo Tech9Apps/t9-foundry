@@ -114,6 +114,18 @@ for (const type of Object.keys(MOCKS)) {
       assert.equal(a.regressionOf.id, fixed.id);
     });
 
+    test('a FIXED report, then a later report closed without a fix (the regression was dismissed): report it, do not file the regression again', async () => {
+      const mock = MOCKS[type]();
+      const rep = report(productBug());
+      await seedBug(type, mock, tokenOf(rep), { close: true, title: '[BUG] First, fixed' });
+      const wont = await seedBug(type, mock, tokenOf(rep), { dismiss: true, title: '[BUG] The regression, then dismissed' });
+      const before = mock.createdItems().length;
+      const a = stepOf(await plan(type, rep, { mock }));
+      assert.equal(a.step, 'report-dismissed');
+      assert.equal(a.dismissedAs.id, wont.id);
+      assert.equal(mock.createdItems().length, before, 'the plan writes nothing');
+    });
+
     test('a dismissed report AND an open one: the open one gets the comment', async () => {
       const mock = MOCKS[type]();
       const rep = report(productBug());
