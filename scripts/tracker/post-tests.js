@@ -27,35 +27,25 @@
 const fs = require('fs');
 const path = require('path');
 const { run } = require('./adapters');
-const { connect } = require('./lib/connect');
+const { connect, CONNECT_FLAGS } = require('./lib/connect');
+const { usage, parseFlags, jsonPrinter } = require('../lib/cli');
 const { TrackerError } = require('./lib/errors');
 const { parseTestCases } = require('./lib/test-cases');
 
 // Failing every remaining case the same way helps nobody: stop and report.
 const SYSTEMIC = new Set(['UNAUTHENTICATED', 'FORBIDDEN', 'CONFIG', 'NOT_FOUND', 'RATE_LIMITED']);
 
-const usage = (message) => Object.assign(new Error(message), { isUsage: true });
+const FLAGS = {
+  '--parent': { key: 'parent' },
+  '--cases': { key: 'cases' },
+  '--keys-file': { key: 'keysFile' },
+  '--only': { key: 'only', parse: (v) => v.split(',').map((s) => s.trim()).filter(Boolean) },
+  '--dry-run': { key: 'dryRun', set: true },
+  ...CONNECT_FLAGS,
+};
 
 function parseArgs(argv) {
-  const opts = {};
-  for (let n = 0; n < argv.length; n += 1) {
-    const flag = argv[n];
-    const value = () => {
-      if (n + 1 >= argv.length) throw usage(`${flag} needs a value`);
-      n += 1;
-      return argv[n];
-    };
-    if (flag === '--parent') opts.parent = value();
-    else if (flag === '--cases') opts.cases = value();
-    else if (flag === '--keys-file') opts.keysFile = value();
-    else if (flag === '--only') opts.only = value().split(',').map((s) => s.trim()).filter(Boolean);
-    else if (flag === '--dry-run') opts.dryRun = true;
-    else if (flag === '--source') opts.source = value();
-    else if (flag === '--config') opts.config = value();
-    else if (flag === '--base-url') opts.baseUrl = value();
-    else if (flag === '--timeout-ms') opts.timeoutMs = Number(value());
-    else throw usage(`unknown option ${flag}`);
-  }
+  const opts = parseFlags(argv, FLAGS);
   if (!opts.parent) throw usage('--parent <ticket-id> is required');
   return opts;
 }
@@ -74,7 +64,7 @@ function writeKeysAtomically(file, doc) {
 }
 
 async function main({ argv = process.argv.slice(2), env = process.env, stdout = process.stdout, stderr = process.stderr, fetch = globalThis.fetch, now = Date.now } = {}) {
-  const out = (obj) => stdout.write(`${JSON.stringify(obj, null, 2)}\n`);
+  const out = jsonPrinter(stdout);
   try {
     if (!argv.length || argv[0] === '-h' || argv[0] === '--help') {
       stderr.write('Usage: post-tests.js --parent <id> [--cases <md>] [--keys-file <json>] [--only TC-001,..] [--dry-run] [--source T] [--config P] [--base-url U] [--timeout-ms N]\n');
@@ -188,4 +178,4 @@ if (require.main === module) {
   main().then((code) => { process.exitCode = code; });
 }
 
-module.exports = { main };
+module.exports = { main, FLAGS };

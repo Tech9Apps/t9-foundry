@@ -32,14 +32,15 @@ const { execFileSync } = require('child_process');
 const os = require('os');
 const core = require('./lib/heal-core');
 const { identity } = require('./fingerprint');
-const { triageConfig } = require('./lib/config');
+const { triageConfig, LIMITS, isInt } = require('./lib/config');
+const { usage, readJson, writeJson, parseFlags, jsonPrinter } = require('../lib/cli');
+const { readReport } = require('./lib/documents');
 const { extractTestId, evidenceText } = require('./lib/text');
 const { defaultRunResults, killActive } = require('./lib/run-results');
 
 // every status a heal can end in; the prose that tells a model what to do for each is checked against this list
 const HEAL_STATUSES = ['healed', 'nothing-to-heal', 'refused', 'reverted', 'preview'];
 
-const usage = (message) => Object.assign(new Error(message), { isUsage: true });
 const sanitize = (s) => String(s).replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
 
 class Refused extends Error {}
@@ -253,31 +254,31 @@ async function heal({ report, cwd, runId, paths, maxFiles = 5, maxLines = 20, br
 }
 
 // ── CLI ──────────────────────────────────────────────────────────────────────
+const FLAGS = {
+  '--report': { key: 'report' },
+  '--main': { key: 'main' },
+  '--framework': { key: 'framework' },
+  '--cwd': { key: 'cwd' },
+  '--paths': { key: 'paths', parse: (v) => v.split(',').map((s) => s.trim()).filter(Boolean) },
+  '--spec': { key: 'specs', list: true },
+  '--apply': { key: 'apply', set: true },
+  '--enable': { key: 'enable', set: true },
+  '--run-id': { key: 'runId' },
+  '--max-files': { key: 'maxFiles', parse: Number },
+  '--max-lines': { key: 'maxLines', parse: Number },
+  '--out': { key: 'out' },
+  '--config': { key: 'config' },
+};
+
 function parseArgs(argv) {
-  const opts = {};
-  for (let n = 0; n < argv.length; n += 1) {
-    const flag = argv[n];
-    const value = () => { if (n + 1 >= argv.length) throw usage(`${flag} needs a value`); n += 1; return argv[n]; };
-    if (flag === '--report') opts.report = value();
-    else if (flag === '--main') opts.main = value();
-    else if (flag === '--framework') opts.framework = value();
-    else if (flag === '--cwd') opts.cwd = value();
-    else if (flag === '--paths') opts.paths = value().split(',').map((s) => s.trim()).filter(Boolean);
-    else if (flag === '--spec') (opts.specs = opts.specs || []).push(value());
-    else if (flag === '--apply') opts.apply = true;
-    else if (flag === '--enable') opts.enable = true;
-    else if (flag === '--run-id') opts.runId = value();
-    else if (flag === '--max-files') opts.maxFiles = Number(value());
-    else if (flag === '--max-lines') opts.maxLines = Number(value());
-    else if (flag === '--out') opts.out = value();
-    else if (flag === '--config') opts.config = value();
-    else throw usage(`unknown option ${flag}`);
-  }
+  const opts = parseFlags(argv, FLAGS);
   if (!opts.report) throw usage('--report <triage.json> is required');
   if (opts.apply && !(opts.main && opts.framework)) throw usage('--apply needs --main <the main run result.json> and --framework, to validate the heal by re-running');
-  // the same bounds the config and the schema enforce: a flag may tighten a cap, not lift it
-  const BOUNDS = { maxFiles: [20, '--max-files'], maxLines: [200, '--max-lines'] };
-  for (const [k, [hi, name]] of Object.entries(BOUNDS)) if (opts[k] !== undefined && !(Number.isInteger(opts[k]) && opts[k] >= 1 && opts[k] <= hi)) throw usage(`${name} must be a whole number from 1 to ${hi}`);
+  // the bounds the config and the schema enforce: a flag may tighten a cap, not lift it
+  for (const [key, flag] of [['maxFiles', '--max-files'], ['maxLines', '--max-lines']]) {
+    const [lo, hi] = LIMITS[key];
+    if (opts[key] !== undefined && !isInt(opts[key], lo, hi)) throw usage(`${flag} must be a whole number from ${lo} to ${hi}`);
+  }
   if (opts.enable && !opts.apply) throw usage('--enable only means something with --apply');
   return opts;
 }
@@ -291,14 +292,8 @@ function configFloorProblem(report, cfg) {
   return null;
 }
 
-const readJson = (file) => {
-  let doc;
-  try { doc = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { throw Object.assign(new Error(`cannot read ${file}: ${e.message}`), { code: 'UNREADABLE' }); }
-  return doc && doc.data ? doc.data : doc;
-};
-
 async function main({ argv = process.argv.slice(2), env = process.env, stdout = process.stdout, stderr = process.stderr, runResults = defaultRunResults, now = Date.now } = {}) {
-  const out = (obj) => stdout.write(`${JSON.stringify(obj, null, 2)}\n`);
+  const out = jsonPrinter(stdout);
   try {
     if (!argv.length || argv[0] === '-h' || argv[0] === '--help') {
       stderr.write('Usage: heal.js --report <triage.json> [--main <result.json> --framework F] [--cwd D] [--paths a,b] [--spec S]... [--apply [--enable]] [--run-id ID] [--max-files N] [--max-lines N] [--out FILE] [--config P]\n');
@@ -306,9 +301,8 @@ async function main({ argv = process.argv.slice(2), env = process.env, stdout = 
     }
     const opts = parseArgs(argv);
     const cfg = triageConfig({ configPath: opts.config, env });
-    const report = readJson(opts.report);
-    if (!report || !Array.isArray(report.verdicts)) throw Object.assign(new Error(`${opts.report} is not a triage report (no "verdicts" array)`), { code: 'UNREADABLE' });
-    const mainRun = opts.main ? readJson(opts.main) : undefined;
+    const report = readReport(opts.report);
+    const mainRun = opts.main ? readJson(opts.main, { unwrap: true }) : undefined;
     const cwd = path.resolve(opts.cwd || '.');
     const runId = opts.runId || new Date(now()).toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
     const validate = async (specs) => {
@@ -321,7 +315,7 @@ async function main({ argv = process.argv.slice(2), env = process.env, stdout = 
     if (opts.apply && !opts.enable && !cfg.selfHeal.enabled) {
       const data = { status: 'refused', reason: 'self-heal is off (triage.selfHeal.enabled in qa-config.json). Enable it there, or pass --enable to say you mean it for this run. Without --apply this only previews' };
       const doc = { ok: false, data };
-      if (opts.out) { fs.mkdirSync(path.dirname(path.resolve(opts.out)), { recursive: true }); fs.writeFileSync(opts.out, `${JSON.stringify(doc, null, 2)}\n`); }
+      if (opts.out) writeJson(opts.out, doc);
       out(doc);
       return 1;
     }
@@ -330,7 +324,7 @@ async function main({ argv = process.argv.slice(2), env = process.env, stdout = 
     const floor = opts.apply ? configFloorProblem(report, cfg) : null;
     if (floor) {
       const doc = { ok: false, data: { status: 'refused', reason: floor } };
-      if (opts.out) { fs.mkdirSync(path.dirname(path.resolve(opts.out)), { recursive: true }); fs.writeFileSync(opts.out, `${JSON.stringify(doc, null, 2)}\n`); }
+      if (opts.out) writeJson(opts.out, doc);
       out(doc);
       return 1;
     }
@@ -339,7 +333,7 @@ async function main({ argv = process.argv.slice(2), env = process.env, stdout = 
       branchPrefix: cfg.selfHeal.branchPrefix, mainRun, validate, apply: !!opts.apply,
     });
     const doc = { ok: data.status === 'healed' || data.status === 'preview' || data.status === 'nothing-to-heal', data };
-    if (opts.out) { fs.mkdirSync(path.dirname(path.resolve(opts.out)), { recursive: true }); fs.writeFileSync(opts.out, `${JSON.stringify(doc, null, 2)}\n`); }
+    if (opts.out) writeJson(opts.out, doc);
     out(doc);
     return doc.ok ? 0 : 1;
   } catch (err) {
@@ -351,4 +345,4 @@ async function main({ argv = process.argv.slice(2), env = process.env, stdout = 
 
 if (require.main === module) main().then((code) => { process.exitCode = code; });
 
-module.exports = { main, heal, planHeal, eligible, provenanceProblems, HEAL_STATUSES };
+module.exports = { main, heal, planHeal, eligible, provenanceProblems, HEAL_STATUSES, FLAGS };

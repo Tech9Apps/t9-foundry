@@ -15,11 +15,11 @@
 // Output: { "ok": true, "data": <triage report> } (schemas/triage-report.schema.json). Exit 0 = report produced
 // (failures are data), 1 = an input could not be read, 2 = bad invocation.
 
-const fs = require('fs');
-const path = require('path');
 const { fingerprint, identity, pathTail } = require('./fingerprint');
 const { signatureOf, evidenceText, infraSignal, authSignal, errorPageSignal, isLocatorError, testCrash, appCrash, baseName } = require('./lib/text');
-const { triageConfig, FORMATS, DEFAULTS } = require('./lib/config');
+const { triageConfig, FORMATS, DEFAULTS, checkTriageFlags } = require('./lib/config');
+const { usage, readJson, writeJson, parseFlags, jsonPrinter } = require('../lib/cli');
+const { readRunResult } = require('./lib/documents');
 
 const DEFAULT_THRESHOLD = 0.8;
 // The raw formats scripts/results/normalize.js produces. Only formats whose classification has been checked against REAL failure
@@ -63,7 +63,6 @@ const UND_REASONS = {
 const RULES = Object.keys(RULE_TABLE);
 const CLASSES = ['product-bug', 'test-bug', 'flaky', 'environment', 'undetermined'];
 
-const usage = (message) => Object.assign(new Error(message), { isUsage: true });
 const short = (s, n = 140) => (String(s).length > n ? `${String(s).slice(0, n)}…` : String(s));
 const msgOf = (a) => (a.error && a.error.message) || '';
 // what the failure SAYS: message + the reporter's diagnostics (see lib/text.js evidenceText) — every signal reads this, not just the first line
@@ -269,54 +268,40 @@ function parseTrustedFormats(text) {
   return list;
 }
 
+const FLAGS = {
+  '--run': { key: 'run' },
+  '--rerun': { key: 'reruns', list: true },
+  '--preflight': { key: 'preflight' },
+  '--evidence': { key: 'evidence' },
+  '--threshold': { key: 'threshold', parse: Number },
+  '--trusted-formats': { key: 'trustedFormats', parse: parseTrustedFormats },
+  '--out': { key: 'out' },
+  '--config': { key: 'config' },
+};
+
 function parseArgs(argv) {
-  const opts = { reruns: [] };
-  for (let n = 0; n < argv.length; n += 1) {
-    const flag = argv[n];
-    const value = () => { if (n + 1 >= argv.length) throw usage(`${flag} needs a value`); n += 1; return argv[n]; };
-    if (flag === '--run') opts.run = value();
-    else if (flag === '--rerun') opts.reruns.push(value());
-    else if (flag === '--preflight') opts.preflight = value();
-    else if (flag === '--evidence') opts.evidence = value();
-    else if (flag === '--threshold') opts.threshold = Number(value());
-    else if (flag === '--trusted-formats') opts.trustedFormats = parseTrustedFormats(value());
-    else if (flag === '--out') opts.out = value();
-    else if (flag === '--config') opts.config = value();
-    else throw usage(`unknown option ${flag}`);
-  }
+  const opts = parseFlags(argv, FLAGS, { init: { reruns: [] } });
   if (!opts.run) throw usage('--run <result.json> is required');
-  if (opts.preflight && !['ok', 'failed', 'unknown'].includes(opts.preflight)) throw usage('--preflight must be ok, failed or unknown');
-  if (opts.threshold !== undefined && !(opts.threshold > 0 && opts.threshold <= 1)) throw usage('--threshold must be between 0 and 1');
+  checkTriageFlags(opts);
   return opts;
 }
 
-function readResult(file) {
-  let doc;
-  try { doc = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { throw Object.assign(new Error(`cannot read ${file}: ${e.message}`), { code: 'UNREADABLE' }); }
-  const data = doc && doc.data ? doc.data : doc; // run.js / normalize.js wrap it in { ok, data }
-  if (!data || !Array.isArray(data.tests)) throw Object.assign(new Error(`${file} is not a normalized run result (no "tests" array)`), { code: 'UNREADABLE' });
-  return data;
-}
-
 function main({ argv = process.argv.slice(2), stdout = process.stdout, stderr = process.stderr } = {}) {
-  const out = (obj) => stdout.write(`${JSON.stringify(obj, null, 2)}\n`);
+  const out = jsonPrinter(stdout);
   try {
     if (!argv.length || argv[0] === '-h' || argv[0] === '--help') {
       stderr.write('Usage: classify.js --run <result.json> [--rerun <result.json>]... [--preflight ok|failed] [--evidence <json>] [--threshold T] [--trusted-formats tap,junit|none] [--config <qa-config.json>] [--out <file>]\n');
       return argv.length ? 0 : 2;
     }
     const opts = parseArgs(argv);
-    const runs = [readResult(opts.run), ...opts.reruns.map(readResult)];
-    let evidence = {};
-    if (opts.evidence) {
-      try { evidence = JSON.parse(fs.readFileSync(opts.evidence, 'utf8')); } catch (e) { throw Object.assign(new Error(`cannot read ${opts.evidence}: ${e.message}`), { code: 'UNREADABLE' }); }
-    }
+    const runs = [readRunResult(opts.run), ...opts.reruns.map(readRunResult)];
+    const evidence = opts.evidence ? readJson(opts.evidence) : {};
     const settings = triageConfig({ configPath: opts.config }); // flag > qa-config.json > default
     const threshold = opts.threshold !== undefined ? opts.threshold : settings.confidenceThreshold;
     const trustedFormats = opts.trustedFormats || settings.trustedFormats;
     const data = classify({ runs, preflight: opts.preflight || 'unknown', evidence, threshold, trustedFormats });
     const doc = { ok: true, data };
-    if (opts.out) { fs.mkdirSync(path.dirname(path.resolve(opts.out)), { recursive: true }); fs.writeFileSync(opts.out, `${JSON.stringify(doc, null, 2)}\n`); }
+    if (opts.out) writeJson(opts.out, doc);
     out(doc);
     return 0;
   } catch (err) {
@@ -328,4 +313,4 @@ function main({ argv = process.argv.slice(2), stdout = process.stdout, stderr = 
 
 if (require.main === module) process.exitCode = main();
 
-module.exports = { main, classify, makeKeyer, RULES, RULE_TABLE, CLASSES, UND_REASONS, DEFAULT_THRESHOLD, DEFAULT_TRUSTED_FORMATS, FORMATS, CAPPED_CLASSES, parseTrustedFormats };
+module.exports = { main, classify, makeKeyer, RULES, RULE_TABLE, CLASSES, UND_REASONS, DEFAULT_THRESHOLD, DEFAULT_TRUSTED_FORMATS, FORMATS, CAPPED_CLASSES, parseTrustedFormats, FLAGS };

@@ -33,10 +33,8 @@ const FILES = {
 };
 
 // ── what the code really supports ─────────────────────────────────────────────
-const flagsIn = (src) => new Set([...src.matchAll(/flag === '(--[a-z-]+)'/g)].map((m) => m[1]).concat(['--help']));
-const cliSrc = read('scripts/tracker/cli.js');
-const postSrc = read('scripts/tracker/post-tests.js');
-const FLAGS = { 'cli.js': flagsIn(cliSrc), 'post-tests.js': flagsIn(postSrc) };
+const scriptFlags = require('./script-flags');
+const FLAGS = { 'cli.js': scriptFlags(ROOT, 'scripts/tracker/cli.js'), 'post-tests.js': scriptFlags(ROOT, 'scripts/tracker/post-tests.js') };
 const OPS = new Set(require(path.join(ROOT, 'scripts/tracker/lib/contract.js')).OPERATIONS);
 const registry = read('scripts/tracker/adapters/index.js');
 const SUPPORTED = [...registry.match(/const ADAPTERS = \{([\s\S]*?)\n\};/)[1].matchAll(/^\s+([a-z]+):/gm)].map((m) => m[1]);
@@ -136,7 +134,7 @@ for (const [name, file] of Object.entries(FILES)) {
 {
   const file = '.claude/commands/run-spec-tests.md';
   const md = read(file);
-  const runFlags = flagsIn(read('scripts/results/run.js'));
+  const runFlags = scriptFlags(ROOT, 'scripts/results/run.js');
   const { SUPPORTED: FRAMEWORKS } = require(path.join(ROOT, 'scripts/results/frameworks.js'));
   logicalLines(md).forEach(({ text: line, n }) => {
     const i = n - 1;

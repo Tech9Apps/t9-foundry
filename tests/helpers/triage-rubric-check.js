@@ -78,8 +78,8 @@ else if (trusted[1].split(/[,\s]+/).filter(Boolean).sort().join(',') !== [...DEF
 if (!/\bcap: unverified-format\b/.test(md)) bad(`${FILE}: no longer explains the \`cap: unverified-format\` marker`);
 
 // ── flags ───────────────────────────────────────────────────────────────────
-const flagsIn = (src) => new Set([...src.matchAll(/flag === '(--[a-z-]+)'/g)].map((m) => m[1]).concat(['--help']));
-const FLAGS = { 'classify.js': flagsIn(read('scripts/triage/classify.js')), 'locators.js': flagsIn(read('scripts/triage/locators.js')), 'orchestrate.js': flagsIn(read('scripts/triage/orchestrate.js')), 'heal.js': flagsIn(read('scripts/triage/heal.js')) };
+const scriptFlags = require('./script-flags');
+const FLAGS = Object.fromEntries(['classify.js', 'locators.js', 'orchestrate.js', 'heal.js'].map((f) => [f, scriptFlags(ROOT, `scripts/triage/${f}`)]));
 const mentioned = new Set();
 md.split('\n').forEach((line, i) => {
   for (const script of Object.keys(FLAGS)) {

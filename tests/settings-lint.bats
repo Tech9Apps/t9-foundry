@@ -136,7 +136,8 @@ missing_ask() { # <settings file> -> prints every required fragment that no "ask
 @test "the allowed scripts take only options that have been reviewed" {
   check() { # <script> <known options...>
     local script="$1"; shift
-    local found; found=$(grep -oE "flag === '--[a-z-]+'" "$REPO_ROOT/$script" | grep -oE -- '--[a-z-]+' | sort -u)
+    # the options a script defines are the keys of the FLAGS table it exports; none at all is a failure, not a pass
+    local found; found=$(node -e "const f = (require('$REPO_ROOT/$script').FLAGS) || {}; if (!Object.keys(f).length) process.exit(3); console.log(Object.keys(f).sort().join('\n'))") || { echo "$script: exports no FLAGS table"; return 1; }
     local opt
     for opt in $found; do case " $* " in *" $opt "*) ;; *) echo "$script: unreviewed option $opt"; return 1 ;; esac; done
   }

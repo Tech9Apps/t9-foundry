@@ -31,42 +31,39 @@ const { classify, makeKeyer, parseTrustedFormats } = require('./classify');
 const { analyzeLocator } = require('./locators');
 const { isLocatorError, extractTestId, evidenceText } = require('./lib/text');
 const { plan, connectIfNeeded, writeCommentInputs } = require('./plan');
-const { triageConfig, MAX_RERUNS } = require('./lib/config');
+const { triageConfig, MAX_RERUNS, LIMITS, isInt, checkTriageFlags } = require('./lib/config');
+const { usage, writeJson, parseFlags } = require('../lib/cli');
 const { heal, eligible } = require('./heal');
 
-const usage = (message) => Object.assign(new Error(message), { isUsage: true });
 const UND_ALARM_MIN = 3; // at least this many undetermined verdicts, and at least this share of the triaged failures,
 const UND_ALARM_SHARE = 0.5; // before the report says the rules lack what they need for this suite
 
+const FLAGS = {
+  '--framework': { key: 'framework' },
+  '--spec': { key: 'specs', list: true },
+  '--test-dir': { key: 'testDir' },
+  '--config-file': { key: 'configFile' },
+  '--cwd': { key: 'cwd' },
+  '--reruns': { key: 'reruns', parse: Number },
+  '--preflight': { key: 'preflight' },
+  '--snapshot': { key: 'snapshot' },
+  '--out': { key: 'out' },
+  '--run-id': { key: 'runId' },
+  '--threshold': { key: 'threshold', parse: Number },
+  '--trusted-formats': { key: 'trustedFormats', parse: parseTrustedFormats },
+  '--timeout-ms': { key: 'timeoutMs', parse: Number },
+  '--no-plan': { key: 'noPlan', set: true },
+  '--heal': { key: 'heal', set: true },
+  '--no-heal': { key: 'heal', set: false },
+  '--config': { key: 'config' },
+  '--source': { key: 'source' },
+  '--base-url': { key: 'baseUrl' },
+};
+
 function parseArgs(argv) {
-  const opts = { specs: [] };
-  for (let n = 0; n < argv.length; n += 1) {
-    const flag = argv[n];
-    const value = () => { if (n + 1 >= argv.length) throw usage(`${flag} needs a value`); n += 1; return argv[n]; };
-    if (flag === '--framework') opts.framework = value();
-    else if (flag === '--spec') opts.specs.push(value());
-    else if (flag === '--test-dir') opts.testDir = value();
-    else if (flag === '--config-file') opts.configFile = value();
-    else if (flag === '--cwd') opts.cwd = value();
-    else if (flag === '--reruns') opts.reruns = Number(value());
-    else if (flag === '--preflight') opts.preflight = value();
-    else if (flag === '--snapshot') opts.snapshot = value();
-    else if (flag === '--out') opts.out = value();
-    else if (flag === '--run-id') opts.runId = value();
-    else if (flag === '--threshold') opts.threshold = Number(value());
-    else if (flag === '--trusted-formats') opts.trustedFormats = parseTrustedFormats(value());
-    else if (flag === '--timeout-ms') opts.timeoutMs = Number(value());
-    else if (flag === '--no-plan') opts.noPlan = true;
-    else if (flag === '--heal') opts.heal = true;
-    else if (flag === '--no-heal') opts.heal = false;
-    else if (flag === '--config') opts.config = value();
-    else if (flag === '--source') opts.source = value();
-    else if (flag === '--base-url') opts.baseUrl = value();
-    else throw usage(`unknown option ${flag}`);
-  }
-  if (opts.reruns !== undefined && (!Number.isInteger(opts.reruns) || opts.reruns < 0 || opts.reruns > MAX_RERUNS)) throw usage(`--reruns must be a whole number from 0 to ${MAX_RERUNS}`);
-  if (opts.preflight && !['ok', 'failed', 'unknown'].includes(opts.preflight)) throw usage('--preflight must be ok, failed or unknown');
-  if (opts.threshold !== undefined && !(opts.threshold > 0 && opts.threshold <= 1)) throw usage('--threshold must be between 0 and 1');
+  const opts = parseFlags(argv, FLAGS, { init: { specs: [] } });
+  if (opts.reruns !== undefined && !isInt(opts.reruns, ...LIMITS.reruns)) throw usage(`--reruns must be a whole number from ${LIMITS.reruns[0]} to ${MAX_RERUNS}`);
+  checkTriageFlags(opts);
   return opts;
 }
 
@@ -79,7 +76,6 @@ function healWarning(h) {
   return `self-heal reverted: ${h.reason} (the repository was restored)`;
 }
 
-const writeJson = (file, obj) => { fs.mkdirSync(path.dirname(path.resolve(file)), { recursive: true }); fs.writeFileSync(file, `${JSON.stringify(obj, null, 2)}\n`); };
 const needsTriage = (t) => t.status === 'failed' || t.flaky;
 
 async function orchestrate(opts, { env = process.env, fetch = globalThis.fetch, runResults = defaultRunResults, now = Date.now } = {}) {
@@ -234,4 +230,4 @@ async function main({ argv = process.argv.slice(2), env = process.env, stdout = 
 
 if (require.main === module) main().then((code) => { process.exitCode = code; });
 
-module.exports = { main, orchestrate, healWarning, MAX_RERUNS };
+module.exports = { main, orchestrate, healWarning, MAX_RERUNS, FLAGS };

@@ -20,36 +20,22 @@
 // behind writes), not broken adapters. Output: one JSON document on stdout, a readable table on stderr.
 // Exit: 0 no failures · 1 at least one failure · 2 bad invocation or --yes missing. Tokens are never printed.
 
-const fs = require('fs');
 const { run } = require('./adapters');
-const { connect, findConfig } = require('./lib/connect');
+const { connect, findConfig, CONNECT_FLAGS } = require('./lib/connect');
+const { readJson, parseFlags, jsonPrinter } = require('../lib/cli');
 const { TrackerError } = require('./lib/errors');
 
-const usage = (message) => Object.assign(new Error(message), { isUsage: true });
 const TOKEN_VARS = ['GITHUB_TOKEN', 'GH_TOKEN', 'CLICKUP_TOKEN', 'AZURE_DEVOPS_PAT', 'GITLAB_TOKEN', 'BITBUCKET_TOKEN'];
 const UNKNOWN_ID = { github: '999999999', clickup: 'zzzzzzz', azure: '999999999', gitlab: '999999999', bitbucket: '999999999' };
 const LABEL = 'qa-harness-smoke';
 
-function parseArgs(argv) {
-  const opts = {};
-  for (let n = 0; n < argv.length; n += 1) {
-    const flag = argv[n];
-    const value = () => {
-      if (n + 1 >= argv.length) throw usage(`${flag} needs a value`);
-      n += 1;
-      return argv[n];
-    };
-    if (flag === '--source') opts.source = value();
-    else if (flag === '--config') opts.config = value();
-    else if (flag === '--base-url') opts.baseUrl = value();
-    else if (flag === '--timeout-ms') opts.timeoutMs = Number(value());
-    else if (flag === '--search-wait-ms') opts.searchWaitMs = Number(value());
-    else if (flag === '--skip-bad-token') opts.skipBadToken = true;
-    else if (flag === '--yes') opts.yes = true;
-    else throw usage(`unknown option ${flag}`);
-  }
-  return opts;
-}
+const FLAGS = {
+  ...CONNECT_FLAGS,
+  '--search-wait-ms': { key: 'searchWaitMs', parse: Number },
+  '--skip-bad-token': { key: 'skipBadToken', set: true },
+  '--yes': { key: 'yes', set: true },
+};
+const parseArgs = (argv) => parseFlags(argv, FLAGS);
 
 // Where it will write, from the config — so the person can see WHICH project before saying --yes. No secrets.
 function describeTarget(type, settings) {
@@ -63,7 +49,7 @@ async function main({
   argv = process.argv.slice(2), env = process.env, stdout = process.stdout, stderr = process.stderr, fetch = globalThis.fetch,
   sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = Date.now, random = Math.random,
 } = {}) {
-  const out = (obj) => stdout.write(`${JSON.stringify(obj, null, 2)}\n`);
+  const out = jsonPrinter(stdout);
   try {
     if (argv[0] === '-h' || argv[0] === '--help') {
       stderr.write('Usage: smoke.js [--source T] [--config P] [--base-url U] [--timeout-ms N] [--search-wait-ms N] [--skip-bad-token] [--yes]\n');
@@ -75,7 +61,7 @@ async function main({
     const file = findConfig(opts.config, env);
     let config = {};
     if (file) {
-      try { config = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { throw new TrackerError('CONFIG', `cannot read ${file}: ${e.message}`); }
+      config = readJson(file, { fail: (message) => new TrackerError('CONFIG', message) });
     }
     const source = opts.source || (config.ticketSource && config.ticketSource.type);
     const settings = (config.ticketSource && source && config.ticketSource[source]) || {};
@@ -248,4 +234,4 @@ if (require.main === module) {
   main().then((code) => { process.exitCode = code; });
 }
 
-module.exports = { main };
+module.exports = { main, FLAGS };

@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const Ajv = require('../node_modules/ajv');
-const { triageConfig, validate, DEFAULTS, MAX_RERUNS, FORMATS } = require('../../scripts/triage/lib/config');
+const { triageConfig, validate, DEFAULTS, MAX_RERUNS, FORMATS, LIMITS, isInt, isConfidence, checkTriageFlags } = require('../../scripts/triage/lib/config');
 const { FORMATS: NORMALIZER_FORMATS } = require('../../scripts/results/normalize');
 
 const dir = fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), 'qa-cfg-'));
@@ -136,11 +136,38 @@ describe('the schema and the loader agree', () => {
     assert.equal(t.reruns.maximum, MAX_RERUNS);
     assert.equal(t.confidenceThreshold.default, DEFAULTS.confidenceThreshold);
     for (const k of ['enabled', 'maxFiles', 'maxLines', 'branchPrefix']) assert.equal(t.selfHeal.properties[k].default, DEFAULTS.selfHeal[k], k);
-    assert.equal(t.selfHeal.properties.maxFiles.maximum, 20);
-    assert.equal(t.selfHeal.properties.maxLines.maximum, 200);
+  });
+
+  test('the bounds the loader, the command-line flags and the schema enforce are one set of numbers', () => {
+    const t = require('../../qa-config.schema.json').properties.triage.properties;
+    assert.deepEqual(LIMITS, { reruns: [0, MAX_RERUNS], maxFiles: [1, 20], maxLines: [1, 200] });
+    for (const [key, node] of [['reruns', t.reruns], ['maxFiles', t.selfHeal.properties.maxFiles], ['maxLines', t.selfHeal.properties.maxLines]]) {
+      assert.deepEqual([node.minimum, node.maximum], LIMITS[key], key);
+    }
+    assert.equal(t.confidenceThreshold.exclusiveMinimum, 0);
+    assert.equal(t.confidenceThreshold.maximum, 1);
   });
 
   test('no triage block at all is valid', () => {
     assert.ok(validateSchema(base), JSON.stringify(validateSchema.errors));
+  });
+});
+
+describe('the checks every triage script shares', () => {
+  test('isInt is a whole number inside the range, ends included', () => {
+    assert.deepEqual([isInt(0, 0, 5), isInt(5, 0, 5), isInt(6, 0, 5), isInt(-1, 0, 5), isInt(1.5, 0, 5), isInt('2', 0, 5), isInt(NaN, 0, 5)], [true, true, false, false, false, false, false]);
+  });
+  test('isConfidence is above 0 and at most 1', () => {
+    assert.deepEqual([isConfidence(1), isConfidence(0.8), isConfidence(0.0001), isConfidence(0), isConfidence(1.01), isConfidence(-1), isConfidence(NaN), isConfidence('0.5')], [true, true, true, false, false, false, false, false]);
+  });
+  const usageMessage = (opts) => { try { checkTriageFlags(opts); return null; } catch (e) { assert.equal(e.isUsage, true); return e.message; } };
+  test('checkTriageFlags accepts nothing set, a known preflight state and a threshold in range', () => {
+    assert.equal(usageMessage({}), null);
+    for (const preflight of ['ok', 'failed', 'unknown']) assert.equal(usageMessage({ preflight }), null, preflight);
+    assert.equal(usageMessage({ threshold: 1 }), null);
+  });
+  test('checkTriageFlags names the flag it refuses', () => {
+    assert.equal(usageMessage({ preflight: 'maybe' }), '--preflight must be ok, failed or unknown');
+    for (const threshold of [0, 1.5, -1, NaN]) assert.equal(usageMessage({ threshold }), '--threshold must be between 0 and 1', String(threshold));
   });
 });
