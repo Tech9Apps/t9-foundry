@@ -120,7 +120,11 @@ const LOCATOR = [
   /expected to find (?:element|content)/i, /no such element/i, /unable to locate element/i, /unable to find (?:an? )?(?:element|css|visible)/i,
   /\belement not found\b/i, /\bno element(?:s)? found\b/i, /\blocator not found\b/i, /NoSuchElement/i, /Capybara::ElementNotFound/i,
 ];
-const isLocatorError = (message) => { const m = stripAnsi(message || ''); return LOCATOR.some((re) => re.test(m)); };
+// Playwright prints "waiting for getByTestId('x')" in the call log of EVERY locator-based failure, including `toHaveText` on an element that was
+// found and simply had the wrong text ("locator resolved to <button data-testid=…>"). An element that resolved is not a stale selector: that failure
+// is about the value, which is evidence about the app. (Found on real Playwright 1.65 output; the hand-written fixtures never had both lines.)
+const ELEMENT_FOUND = /\blocator resolved to <[a-z]/i;
+const isLocatorError = (message) => { const m = stripAnsi(message || ''); return LOCATOR.some((re) => re.test(m)) && !ELEMENT_FOUND.test(m); };
 
 // The test-id a locator error is about: getByTestId('x'), [data-testid="x"], data-testid=x, [data-cy=x] …
 function extractTestId(message) {

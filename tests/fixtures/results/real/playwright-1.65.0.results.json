@@ -1,0 +1,1168 @@
+{
+  "config": {
+    "argv": [
+      "/usr/local/bin/node",
+      "/work/demo-app/node_modules/.bin/playwright",
+      "test",
+      "--reporter=list,json"
+    ],
+    "configFile": "/work/demo-app/playwright.config.js",
+    "rootDir": "/work/demo-app/tests/pw",
+    "failOnFlakyTests": false,
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "projects": [
+      {
+        "outputDir": "/work/demo-app/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "",
+        "name": "",
+        "testDir": "/work/demo-app/tests/pw",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 15000
+      }
+    ],
+    "filteredProjects": [
+      {
+        "grep": {},
+        "grepInvert": null,
+        "outputDir": "/work/demo-app/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "name": "",
+        "testDir": "/work/demo-app/tests/pw",
+        "snapshotDir": "/work/demo-app/tests/pw",
+        "testIgnore": [],
+        "testMatch": "**/*.@(spec|test).?(c|m)[jt]s?(x)",
+        "timeout": 15000,
+        "use": {
+          "baseURL": "http://127.0.0.1:4567",
+          "channel": "chrome",
+          "headless": true
+        },
+        "dependencies": [],
+        "ignoreSnapshots": false,
+        "__projectId": ""
+      }
+    ],
+    "quiet": false,
+    "reporter": [
+      [
+        "list"
+      ],
+      [
+        "json"
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "shard": null,
+    "tags": [],
+    "updateSnapshots": "default",
+    "updateSourceMethod": "patch",
+    "version": "1.65.0",
+    "workers": 1,
+    "webServer": null
+  },
+  "suites": [
+    {
+      "title": "api.spec.js",
+      "file": "api.spec.js",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "DEMO-9/TC-900: filler 0",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 15000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 25,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-06T16:45:27.837Z",
+                  "annotations": [],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "8747e39b871de0524be5-7da5f5d75fab806fd3f6",
+          "file": "api.spec.js",
+          "line": 2,
+          "column": 33
+        },
+        {
+          "title": "DEMO-9/TC-901: filler 1",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 15000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 4,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-06T16:45:27.877Z",
+                  "annotations": [],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "8747e39b871de0524be5-e6df7fc79a11dd93b1af",
+          "file": "api.spec.js",
+          "line": 2,
+          "column": 33
+        },
+        {
+          "title": "DEMO-9/TC-902: filler 2",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 15000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 4,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-06T16:45:27.885Z",
+                  "annotations": [],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "8747e39b871de0524be5-80744b285dcf5e2510a3",
+          "file": "api.spec.js",
+          "line": 2,
+          "column": 33
+        },
+        {
+          "title": "DEMO-9/TC-903: filler 3",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 15000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 3,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-06T16:45:27.892Z",
+                  "annotations": [],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "8747e39b871de0524be5-449593877f464f31059a",
+          "file": "api.spec.js",
+          "line": 2,
+          "column": 33
+        },
+        {
+          "title": "DEMO-9/TC-904: filler 4",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 15000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 2,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-06T16:45:27.899Z",
+                  "annotations": [],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "8747e39b871de0524be5-d730568cd8d82e73586a",
+          "file": "api.spec.js",
+          "line": 2,
+          "column": 33
+        },
+        {
+          "title": "DEMO-9/TC-905: filler 5",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 15000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 1,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-06T16:45:27.904Z",
+                  "annotations": [],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "8747e39b871de0524be5-589221e778f06111ed6b",
+          "file": "api.spec.js",
+          "line": 2,
+          "column": 33
+        },
+        {
+          "title": "DEMO-9/TC-906: filler 6",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 15000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 3,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-06T16:45:27.909Z",
+                  "annotations": [],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "8747e39b871de0524be5-174a4e7429b8f997c7c9",
+          "file": "api.spec.js",
+          "line": 2,
+          "column": 33
+        },
+        {
+          "title": "DEMO-9/TC-907: filler 7",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 15000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 2,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-06T16:45:27.915Z",
+                  "annotations": [],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "8747e39b871de0524be5-982bec4453c4a0c434d8",
+          "file": "api.spec.js",
+          "line": 2,
+          "column": 33
+        },
+        {
+          "title": "DEMO-9/TC-908: filler 8",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 15000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 2,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-06T16:45:27.920Z",
+                  "annotations": [],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "8747e39b871de0524be5-829fca64c66bff32187f",
+          "file": "api.spec.js",
+          "line": 2,
+          "column": 33
+        },
+        {
+          "title": "DEMO-9/TC-909: filler 9",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 15000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 2,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-06T16:45:27.925Z",
+                  "annotations": [],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "8747e39b871de0524be5-f7eeda804279bf6e6370",
+          "file": "api.spec.js",
+          "line": 2,
+          "column": 33
+        },
+        {
+          "title": "DEMO-9/TC-910: filler 10",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 15000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 1,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-06T16:45:27.930Z",
+                  "annotations": [],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "8747e39b871de0524be5-59f88eb8978cf9d3eff8",
+          "file": "api.spec.js",
+          "line": 2,
+          "column": 33
+        },
+        {
+          "title": "DEMO-9/TC-911: filler 11",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 15000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 1,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-06T16:45:27.933Z",
+                  "annotations": [],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "8747e39b871de0524be5-fea101aa6a20f3dcb3fd",
+          "file": "api.spec.js",
+          "line": 2,
+          "column": 33
+        },
+        {
+          "title": "DEMO-1/TC-001: health is ok",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 15000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 1,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-06T16:45:27.937Z",
+                  "annotations": [],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "8747e39b871de0524be5-49643333d9a5df23bece",
+          "file": "api.spec.js",
+          "line": 3,
+          "column": 1
+        },
+        {
+          "title": "DEMO-1/TC-002: the cart total is 11",
+          "ok": false,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 15000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "failed",
+                  "duration": 2,
+                  "error": {
+                    "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m11\u001b[39m\nReceived: \u001b[31m10\u001b[39m",
+                    "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m11\u001b[39m\nReceived: \u001b[31m10\u001b[39m\n    at /work/demo-app/tests/pw/api.spec.js:4:144",
+                    "location": {
+                      "file": "/work/demo-app/tests/pw/api.spec.js",
+                      "column": 144,
+                      "line": 4
+                    },
+                    "snippet": "  2 | for (let i = 0; i < 12; i += 1) test('DEMO-9/TC-9' + String(i).padStart(2, '0') + ': filler ' + i, async ({ request }) => { expect((await request.get('/health')).status()).toBe(200); });\n  3 | test('DEMO-1/TC-001: health is ok', async ({ request }) => { expect((await request.get('/health')).status()).toBe(200); });\n> 4 | test('DEMO-1/TC-002: the cart total is 11', async ({ request }) => { const r = await (await request.get('/api/total')).json(); expect(r.total).toBe(11); });\n    |                                                                                                                                                ^\n  5 | test('DEMO-1/TC-003: the reports service answers 200', async ({ request }) => { expect((await request.get('/api/unavailable')).status()).toBe(200); });\n  6 | test('DEMO-1/TC-004: the secure endpoint is reachable', async ({ request }) => { expect((await request.get('/api/secure')).status()).toBe(200); });\n  7 | test('DEMO-1/TC-005: the archive page exists', async ({ request }) => { expect((await request.get('/api/missing')).status()).toBe(200); });"
+                  },
+                  "errors": [
+                    {
+                      "location": {
+                        "file": "/work/demo-app/tests/pw/api.spec.js",
+                        "column": 144,
+                        "line": 4
+                      },
+                      "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m11\u001b[39m\nReceived: \u001b[31m10\u001b[39m\n\n  2 | for (let i = 0; i < 12; i += 1) test('DEMO-9/TC-9' + String(i).padStart(2, '0') + ': filler ' + i, async ({ request }) => { expect((await request.get('/health')).status()).toBe(200); });\n  3 | test('DEMO-1/TC-001: health is ok', async ({ request }) => { expect((await request.get('/health')).status()).toBe(200); });\n> 4 | test('DEMO-1/TC-002: the cart total is 11', async ({ request }) => { const r = await (await request.get('/api/total')).json(); expect(r.total).toBe(11); });\n    |                                                                                                                                                ^\n  5 | test('DEMO-1/TC-003: the reports service answers 200', async ({ request }) => { expect((await request.get('/api/unavailable')).status()).toBe(200); });\n  6 | test('DEMO-1/TC-004: the secure endpoint is reachable', async ({ request }) => { expect((await request.get('/api/secure')).status()).toBe(200); });\n  7 | test('DEMO-1/TC-005: the archive page exists', async ({ request }) => { expect((await request.get('/api/missing')).status()).toBe(200); });\n    at /work/demo-app/tests/pw/api.spec.js:4:144"
+                    }
+                  ],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-06T16:45:27.941Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "error-context",
+                      "contentType": "text/markdown",
+                      "path": "/work/demo-app/test-results/api-DEMO-1-TC-002-the-cart-total-is-11/error-context.md"
+                    }
+                  ],
+                  "errorLocation": {
+                    "file": "/work/demo-app/tests/pw/api.spec.js",
+                    "column": 144,
+                    "line": 4
+                  }
+                }
+              ],
+              "status": "unexpected"
+            }
+          ],
+          "id": "8747e39b871de0524be5-0045cd4c53932e311d40",
+          "file": "api.spec.js",
+          "line": 4,
+          "column": 1
+        },
+        {
+          "title": "DEMO-1/TC-003: the reports service answers 200",
+          "ok": false,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 15000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 1,
+                  "parallelIndex": 0,
+                  "status": "failed",
+                  "duration": 20,
+                  "error": {
+                    "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m200\u001b[39m\nReceived: \u001b[31m503\u001b[39m",
+                    "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m200\u001b[39m\nReceived: \u001b[31m503\u001b[39m\n    at /work/demo-app/tests/pw/api.spec.js:5:138",
+                    "location": {
+                      "file": "/work/demo-app/tests/pw/api.spec.js",
+                      "column": 138,
+                      "line": 5
+                    },
+                    "snippet": "  3 | test('DEMO-1/TC-001: health is ok', async ({ request }) => { expect((await request.get('/health')).status()).toBe(200); });\n  4 | test('DEMO-1/TC-002: the cart total is 11', async ({ request }) => { const r = await (await request.get('/api/total')).json(); expect(r.total).toBe(11); });\n> 5 | test('DEMO-1/TC-003: the reports service answers 200', async ({ request }) => { expect((await request.get('/api/unavailable')).status()).toBe(200); });\n    |                                                                                                                                          ^\n  6 | test('DEMO-1/TC-004: the secure endpoint is reachable', async ({ request }) => { expect((await request.get('/api/secure')).status()).toBe(200); });\n  7 | test('DEMO-1/TC-005: the archive page exists', async ({ request }) => { expect((await request.get('/api/missing')).status()).toBe(200); });\n  8 | test('DEMO-1/TC-006: the payment service is reachable', async ({ request }) => { expect((await request.get('http://127.0.0.1:9/pay')).status()).toBe(200); });"
+                  },
+                  "errors": [
+                    {
+                      "location": {
+                        "file": "/work/demo-app/tests/pw/api.spec.js",
+                        "column": 138,
+                        "line": 5
+                      },
+                      "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m200\u001b[39m\nReceived: \u001b[31m503\u001b[39m\n\n  3 | test('DEMO-1/TC-001: health is ok', async ({ request }) => { expect((await request.get('/health')).status()).toBe(200); });\n  4 | test('DEMO-1/TC-002: the cart total is 11', async ({ request }) => { const r = await (await request.get('/api/total')).json(); expect(r.total).toBe(11); });\n> 5 | test('DEMO-1/TC-003: the reports service answers 200', async ({ request }) => { expect((await request.get('/api/unavailable')).status()).toBe(200); });\n    |                                                                                                                                          ^\n  6 | test('DEMO-1/TC-004: the secure endpoint is reachable', async ({ request }) => { expect((await request.get('/api/secure')).status()).toBe(200); });\n  7 | test('DEMO-1/TC-005: the archive page exists', async ({ request }) => { expect((await request.get('/api/missing')).status()).toBe(200); });\n  8 | test('DEMO-1/TC-006: the payment service is reachable', async ({ request }) => { expect((await request.get('http://127.0.0.1:9/pay')).status()).toBe(200); });\n    at /work/demo-app/tests/pw/api.spec.js:5:138"
+                    }
+                  ],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-06T16:45:28.097Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "error-context",
+                      "contentType": "text/markdown",
+                      "path": "/work/demo-app/test-results/api-DEMO-1-TC-003-the-reports-service-answers-200/error-context.md"
+                    }
+                  ],
+                  "errorLocation": {
+                    "file": "/work/demo-app/tests/pw/api.spec.js",
+                    "column": 138,
+                    "line": 5
+                  }
+                }
+              ],
+              "status": "unexpected"
+            }
+          ],
+          "id": "8747e39b871de0524be5-1d62e40f380d3398a98e",
+          "file": "api.spec.js",
+          "line": 5,
+          "column": 1
+        },
+        {
+          "title": "DEMO-1/TC-004: the secure endpoint is reachable",
+          "ok": false,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 15000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 2,
+                  "parallelIndex": 0,
+                  "status": "failed",
+                  "duration": 19,
+                  "error": {
+                    "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m200\u001b[39m\nReceived: \u001b[31m401\u001b[39m",
+                    "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m200\u001b[39m\nReceived: \u001b[31m401\u001b[39m\n    at /work/demo-app/tests/pw/api.spec.js:6:134",
+                    "location": {
+                      "file": "/work/demo-app/tests/pw/api.spec.js",
+                      "column": 134,
+                      "line": 6
+                    },
+                    "snippet": "  4 | test('DEMO-1/TC-002: the cart total is 11', async ({ request }) => { const r = await (await request.get('/api/total')).json(); expect(r.total).toBe(11); });\n  5 | test('DEMO-1/TC-003: the reports service answers 200', async ({ request }) => { expect((await request.get('/api/unavailable')).status()).toBe(200); });\n> 6 | test('DEMO-1/TC-004: the secure endpoint is reachable', async ({ request }) => { expect((await request.get('/api/secure')).status()).toBe(200); });\n    |                                                                                                                                      ^\n  7 | test('DEMO-1/TC-005: the archive page exists', async ({ request }) => { expect((await request.get('/api/missing')).status()).toBe(200); });\n  8 | test('DEMO-1/TC-006: the payment service is reachable', async ({ request }) => { expect((await request.get('http://127.0.0.1:9/pay')).status()).toBe(200); });\n  9 | test('DEMO-1/TC-007: the helper formats a price', async () => { const fmt = undefined; expect(fmt(5)).toBe('$5.00'); });"
+                  },
+                  "errors": [
+                    {
+                      "location": {
+                        "file": "/work/demo-app/tests/pw/api.spec.js",
+                        "column": 134,
+                        "line": 6
+                      },
+                      "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m200\u001b[39m\nReceived: \u001b[31m401\u001b[39m\n\n  4 | test('DEMO-1/TC-002: the cart total is 11', async ({ request }) => { const r = await (await request.get('/api/total')).json(); expect(r.total).toBe(11); });\n  5 | test('DEMO-1/TC-003: the reports service answers 200', async ({ request }) => { expect((await request.get('/api/unavailable')).status()).toBe(200); });\n> 6 | test('DEMO-1/TC-004: the secure endpoint is reachable', async ({ request }) => { expect((await request.get('/api/secure')).status()).toBe(200); });\n    |                                                                                                                                      ^\n  7 | test('DEMO-1/TC-005: the archive page exists', async ({ request }) => { expect((await request.get('/api/missing')).status()).toBe(200); });\n  8 | test('DEMO-1/TC-006: the payment service is reachable', async ({ request }) => { expect((await request.get('http://127.0.0.1:9/pay')).status()).toBe(200); });\n  9 | test('DEMO-1/TC-007: the helper formats a price', async () => { const fmt = undefined; expect(fmt(5)).toBe('$5.00'); });\n    at /work/demo-app/tests/pw/api.spec.js:6:134"
+                    }
+                  ],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-06T16:45:28.279Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "error-context",
+                      "contentType": "text/markdown",
+                      "path": "/work/demo-app/test-results/api-DEMO-1-TC-004-the-secure-endpoint-is-reachable/error-context.md"
+                    }
+                  ],
+                  "errorLocation": {
+                    "file": "/work/demo-app/tests/pw/api.spec.js",
+                    "column": 134,
+                    "line": 6
+                  }
+                }
+              ],
+              "status": "unexpected"
+            }
+          ],
+          "id": "8747e39b871de0524be5-d78b6d3abff45621afca",
+          "file": "api.spec.js",
+          "line": 6,
+          "column": 1
+        },
+        {
+          "title": "DEMO-1/TC-005: the archive page exists",
+          "ok": false,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 15000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 3,
+                  "parallelIndex": 0,
+                  "status": "failed",
+                  "duration": 19,
+                  "error": {
+                    "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m200\u001b[39m\nReceived: \u001b[31m404\u001b[39m",
+                    "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m200\u001b[39m\nReceived: \u001b[31m404\u001b[39m\n    at /work/demo-app/tests/pw/api.spec.js:7:126",
+                    "location": {
+                      "file": "/work/demo-app/tests/pw/api.spec.js",
+                      "column": 126,
+                      "line": 7
+                    },
+                    "snippet": "   5 | test('DEMO-1/TC-003: the reports service answers 200', async ({ request }) => { expect((await request.get('/api/unavailable')).status()).toBe(200); });\n   6 | test('DEMO-1/TC-004: the secure endpoint is reachable', async ({ request }) => { expect((await request.get('/api/secure')).status()).toBe(200); });\n>  7 | test('DEMO-1/TC-005: the archive page exists', async ({ request }) => { expect((await request.get('/api/missing')).status()).toBe(200); });\n     |                                                                                                                              ^\n   8 | test('DEMO-1/TC-006: the payment service is reachable', async ({ request }) => { expect((await request.get('http://127.0.0.1:9/pay')).status()).toBe(200); });\n   9 | test('DEMO-1/TC-007: the helper formats a price', async () => { const fmt = undefined; expect(fmt(5)).toBe('$5.00'); });\n  10 | test('DEMO-1/TC-008: the slow report finishes', async ({ request }) => { expect((await request.get('/api/slow', { timeout: 1500 })).status()).toBe(200); });"
+                  },
+                  "errors": [
+                    {
+                      "location": {
+                        "file": "/work/demo-app/tests/pw/api.spec.js",
+                        "column": 126,
+                        "line": 7
+                      },
+                      "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m200\u001b[39m\nReceived: \u001b[31m404\u001b[39m\n\n   5 | test('DEMO-1/TC-003: the reports service answers 200', async ({ request }) => { expect((await request.get('/api/unavailable')).status()).toBe(200); });\n   6 | test('DEMO-1/TC-004: the secure endpoint is reachable', async ({ request }) => { expect((await request.get('/api/secure')).status()).toBe(200); });\n>  7 | test('DEMO-1/TC-005: the archive page exists', async ({ request }) => { expect((await request.get('/api/missing')).status()).toBe(200); });\n     |                                                                                                                              ^\n   8 | test('DEMO-1/TC-006: the payment service is reachable', async ({ request }) => { expect((await request.get('http://127.0.0.1:9/pay')).status()).toBe(200); });\n   9 | test('DEMO-1/TC-007: the helper formats a price', async () => { const fmt = undefined; expect(fmt(5)).toBe('$5.00'); });\n  10 | test('DEMO-1/TC-008: the slow report finishes', async ({ request }) => { expect((await request.get('/api/slow', { timeout: 1500 })).status()).toBe(200); });\n    at /work/demo-app/tests/pw/api.spec.js:7:126"
+                    }
+                  ],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-06T16:45:28.461Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "error-context",
+                      "contentType": "text/markdown",
+                      "path": "/work/demo-app/test-results/api-DEMO-1-TC-005-the-archive-page-exists/error-context.md"
+                    }
+                  ],
+                  "errorLocation": {
+                    "file": "/work/demo-app/tests/pw/api.spec.js",
+                    "column": 126,
+                    "line": 7
+                  }
+                }
+              ],
+              "status": "unexpected"
+            }
+          ],
+          "id": "8747e39b871de0524be5-0fc191aadcef8b14079d",
+          "file": "api.spec.js",
+          "line": 7,
+          "column": 1
+        },
+        {
+          "title": "DEMO-1/TC-006: the payment service is reachable",
+          "ok": false,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 15000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 4,
+                  "parallelIndex": 0,
+                  "status": "failed",
+                  "duration": 17,
+                  "error": {
+                    "message": "Error: apiRequestContext.get: connect ECONNREFUSED 127.0.0.1:9\nCall log:\n\u001b[2m  - → GET http://127.0.0.1:9/pay\u001b[22m\n\u001b[2m    - user-agent: Playwright/1.65.0 (arm64; macOS 27.0) node/22.17\u001b[22m\n\u001b[2m    - accept: */*\u001b[22m\n\u001b[2m    - accept-encoding: gzip,deflate,br\u001b[22m\n",
+                    "stack": "Error: apiRequestContext.get: connect ECONNREFUSED 127.0.0.1:9\nCall log:\n\u001b[2m  - → GET http://127.0.0.1:9/pay\u001b[22m\n\u001b[2m    - user-agent: Playwright/1.65.0 (arm64; macOS 27.0) node/22.17\u001b[22m\n\u001b[2m    - accept: */*\u001b[22m\n\u001b[2m    - accept-encoding: gzip,deflate,br\u001b[22m\n\n    at /work/demo-app/tests/pw/api.spec.js:8:104",
+                    "location": {
+                      "file": "/work/demo-app/tests/pw/api.spec.js",
+                      "column": 104,
+                      "line": 8
+                    },
+                    "snippet": "   6 | test('DEMO-1/TC-004: the secure endpoint is reachable', async ({ request }) => { expect((await request.get('/api/secure')).status()).toBe(200); });\n   7 | test('DEMO-1/TC-005: the archive page exists', async ({ request }) => { expect((await request.get('/api/missing')).status()).toBe(200); });\n>  8 | test('DEMO-1/TC-006: the payment service is reachable', async ({ request }) => { expect((await request.get('http://127.0.0.1:9/pay')).status()).toBe(200); });\n     |                                                                                                        ^\n   9 | test('DEMO-1/TC-007: the helper formats a price', async () => { const fmt = undefined; expect(fmt(5)).toBe('$5.00'); });\n  10 | test('DEMO-1/TC-008: the slow report finishes', async ({ request }) => { expect((await request.get('/api/slow', { timeout: 1500 })).status()).toBe(200); });\n  11 |"
+                  },
+                  "errors": [
+                    {
+                      "location": {
+                        "file": "/work/demo-app/tests/pw/api.spec.js",
+                        "column": 104,
+                        "line": 8
+                      },
+                      "message": "Error: apiRequestContext.get: connect ECONNREFUSED 127.0.0.1:9\nCall log:\n\u001b[2m  - → GET http://127.0.0.1:9/pay\u001b[22m\n\u001b[2m    - user-agent: Playwright/1.65.0 (arm64; macOS 27.0) node/22.17\u001b[22m\n\u001b[2m    - accept: */*\u001b[22m\n\u001b[2m    - accept-encoding: gzip,deflate,br\u001b[22m\n\n\n   6 | test('DEMO-1/TC-004: the secure endpoint is reachable', async ({ request }) => { expect((await request.get('/api/secure')).status()).toBe(200); });\n   7 | test('DEMO-1/TC-005: the archive page exists', async ({ request }) => { expect((await request.get('/api/missing')).status()).toBe(200); });\n>  8 | test('DEMO-1/TC-006: the payment service is reachable', async ({ request }) => { expect((await request.get('http://127.0.0.1:9/pay')).status()).toBe(200); });\n     |                                                                                                        ^\n   9 | test('DEMO-1/TC-007: the helper formats a price', async () => { const fmt = undefined; expect(fmt(5)).toBe('$5.00'); });\n  10 | test('DEMO-1/TC-008: the slow report finishes', async ({ request }) => { expect((await request.get('/api/slow', { timeout: 1500 })).status()).toBe(200); });\n  11 |\n    at /work/demo-app/tests/pw/api.spec.js:8:104"
+                    }
+                  ],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-06T16:45:28.643Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "error-context",
+                      "contentType": "text/markdown",
+                      "path": "/work/demo-app/test-results/api-DEMO-1-TC-006-the-payment-service-is-reachable/error-context.md"
+                    }
+                  ],
+                  "errorLocation": {
+                    "file": "/work/demo-app/tests/pw/api.spec.js",
+                    "column": 104,
+                    "line": 8
+                  }
+                }
+              ],
+              "status": "unexpected"
+            }
+          ],
+          "id": "8747e39b871de0524be5-1397e9f66bedb7205afc",
+          "file": "api.spec.js",
+          "line": 8,
+          "column": 1
+        },
+        {
+          "title": "DEMO-1/TC-007: the helper formats a price",
+          "ok": false,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 15000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 5,
+                  "parallelIndex": 0,
+                  "status": "failed",
+                  "duration": 0,
+                  "error": {
+                    "message": "TypeError: fmt is not a function",
+                    "stack": "TypeError: fmt is not a function\n    at /work/demo-app/tests/pw/api.spec.js:9:95",
+                    "location": {
+                      "file": "/work/demo-app/tests/pw/api.spec.js",
+                      "column": 95,
+                      "line": 9
+                    },
+                    "snippet": "   7 | test('DEMO-1/TC-005: the archive page exists', async ({ request }) => { expect((await request.get('/api/missing')).status()).toBe(200); });\n   8 | test('DEMO-1/TC-006: the payment service is reachable', async ({ request }) => { expect((await request.get('http://127.0.0.1:9/pay')).status()).toBe(200); });\n>  9 | test('DEMO-1/TC-007: the helper formats a price', async () => { const fmt = undefined; expect(fmt(5)).toBe('$5.00'); });\n     |                                                                                               ^\n  10 | test('DEMO-1/TC-008: the slow report finishes', async ({ request }) => { expect((await request.get('/api/slow', { timeout: 1500 })).status()).toBe(200); });\n  11 |"
+                  },
+                  "errors": [
+                    {
+                      "location": {
+                        "file": "/work/demo-app/tests/pw/api.spec.js",
+                        "column": 95,
+                        "line": 9
+                      },
+                      "message": "TypeError: fmt is not a function\n\n   7 | test('DEMO-1/TC-005: the archive page exists', async ({ request }) => { expect((await request.get('/api/missing')).status()).toBe(200); });\n   8 | test('DEMO-1/TC-006: the payment service is reachable', async ({ request }) => { expect((await request.get('http://127.0.0.1:9/pay')).status()).toBe(200); });\n>  9 | test('DEMO-1/TC-007: the helper formats a price', async () => { const fmt = undefined; expect(fmt(5)).toBe('$5.00'); });\n     |                                                                                               ^\n  10 | test('DEMO-1/TC-008: the slow report finishes', async ({ request }) => { expect((await request.get('/api/slow', { timeout: 1500 })).status()).toBe(200); });\n  11 |\n    at /work/demo-app/tests/pw/api.spec.js:9:95"
+                    }
+                  ],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-06T16:45:28.823Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "error-context",
+                      "contentType": "text/markdown",
+                      "path": "/work/demo-app/test-results/api-DEMO-1-TC-007-the-helper-formats-a-price/error-context.md"
+                    }
+                  ],
+                  "errorLocation": {
+                    "file": "/work/demo-app/tests/pw/api.spec.js",
+                    "column": 95,
+                    "line": 9
+                  }
+                }
+              ],
+              "status": "unexpected"
+            }
+          ],
+          "id": "8747e39b871de0524be5-6a18668c8bb0ce28043f",
+          "file": "api.spec.js",
+          "line": 9,
+          "column": 1
+        },
+        {
+          "title": "DEMO-1/TC-008: the slow report finishes",
+          "ok": false,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 15000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 6,
+                  "parallelIndex": 0,
+                  "status": "failed",
+                  "duration": 1521,
+                  "error": {
+                    "message": "TimeoutError: apiRequestContext.get: Timeout 1500ms exceeded.\nCall log:\n\u001b[2m  - → GET http://127.0.0.1:4567/api/slow\u001b[22m\n\u001b[2m    - user-agent: Playwright/1.65.0 (arm64; macOS 27.0) node/22.17\u001b[22m\n\u001b[2m    - accept: */*\u001b[22m\n\u001b[2m    - accept-encoding: gzip,deflate,br\u001b[22m\n",
+                    "stack": "TimeoutError: apiRequestContext.get: Timeout 1500ms exceeded.\nCall log:\n\u001b[2m  - → GET http://127.0.0.1:4567/api/slow\u001b[22m\n\u001b[2m    - user-agent: Playwright/1.65.0 (arm64; macOS 27.0) node/22.17\u001b[22m\n\u001b[2m    - accept: */*\u001b[22m\n\u001b[2m    - accept-encoding: gzip,deflate,br\u001b[22m\n\n    at /work/demo-app/tests/pw/api.spec.js:10:96",
+                    "location": {
+                      "file": "/work/demo-app/tests/pw/api.spec.js",
+                      "column": 96,
+                      "line": 10
+                    },
+                    "snippet": "   8 | test('DEMO-1/TC-006: the payment service is reachable', async ({ request }) => { expect((await request.get('http://127.0.0.1:9/pay')).status()).toBe(200); });\n   9 | test('DEMO-1/TC-007: the helper formats a price', async () => { const fmt = undefined; expect(fmt(5)).toBe('$5.00'); });\n> 10 | test('DEMO-1/TC-008: the slow report finishes', async ({ request }) => { expect((await request.get('/api/slow', { timeout: 1500 })).status()).toBe(200); });\n     |                                                                                                ^\n  11 |"
+                  },
+                  "errors": [
+                    {
+                      "location": {
+                        "file": "/work/demo-app/tests/pw/api.spec.js",
+                        "column": 96,
+                        "line": 10
+                      },
+                      "message": "TimeoutError: apiRequestContext.get: Timeout 1500ms exceeded.\nCall log:\n\u001b[2m  - → GET http://127.0.0.1:4567/api/slow\u001b[22m\n\u001b[2m    - user-agent: Playwright/1.65.0 (arm64; macOS 27.0) node/22.17\u001b[22m\n\u001b[2m    - accept: */*\u001b[22m\n\u001b[2m    - accept-encoding: gzip,deflate,br\u001b[22m\n\n\n   8 | test('DEMO-1/TC-006: the payment service is reachable', async ({ request }) => { expect((await request.get('http://127.0.0.1:9/pay')).status()).toBe(200); });\n   9 | test('DEMO-1/TC-007: the helper formats a price', async () => { const fmt = undefined; expect(fmt(5)).toBe('$5.00'); });\n> 10 | test('DEMO-1/TC-008: the slow report finishes', async ({ request }) => { expect((await request.get('/api/slow', { timeout: 1500 })).status()).toBe(200); });\n     |                                                                                                ^\n  11 |\n    at /work/demo-app/tests/pw/api.spec.js:10:96"
+                    }
+                  ],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-06T16:45:28.984Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "error-context",
+                      "contentType": "text/markdown",
+                      "path": "/work/demo-app/test-results/api-DEMO-1-TC-008-the-slow-report-finishes/error-context.md"
+                    }
+                  ],
+                  "errorLocation": {
+                    "file": "/work/demo-app/tests/pw/api.spec.js",
+                    "column": 96,
+                    "line": 10
+                  }
+                }
+              ],
+              "status": "unexpected"
+            }
+          ],
+          "id": "8747e39b871de0524be5-c567b4dfa54db683f2d0",
+          "file": "api.spec.js",
+          "line": 10,
+          "column": 1
+        }
+      ]
+    },
+    {
+      "title": "ui.spec.js",
+      "file": "ui.spec.js",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "DEMO-2/TC-001: the Apply button is on the cart panel",
+          "ok": false,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 15000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 7,
+                  "parallelIndex": 0,
+                  "status": "failed",
+                  "duration": 2541,
+                  "error": {
+                    "message": "TimeoutError: locator.click: Timeout 2000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByTestId('coupon-apply-btn')\u001b[22m\n",
+                    "stack": "TimeoutError: locator.click: Timeout 2000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByTestId('coupon-apply-btn')\u001b[22m\n\n    at /work/demo-app/tests/pw/ui.spec.js:2:153",
+                    "location": {
+                      "file": "/work/demo-app/tests/pw/ui.spec.js",
+                      "column": 153,
+                      "line": 2
+                    },
+                    "snippet": "  1 | const { test, expect } = require('@playwright/test');\n> 2 | test('DEMO-2/TC-001: the Apply button is on the cart panel', async ({ page }) => { await page.goto('/cart'); await page.getByTestId('coupon-apply-btn').click({ timeout: 2000 }); });\n    |                                                                                                                                                         ^\n  3 | test('DEMO-2/TC-002: the Apply button says \"Apply now\"', async ({ page }) => { await page.goto('/cart'); await expect(page.getByTestId('coupon-apply')).toHaveText('Apply now', { timeout: 2000 }); });\n  4 | test('DEMO-2/TC-003: the coupon box is on the cart panel', async ({ page }) => { await page.goto('/cart'); await expect(page.getByTestId('coupon-input')).toBeVisible(); });\n  5 |"
+                  },
+                  "errors": [
+                    {
+                      "location": {
+                        "file": "/work/demo-app/tests/pw/ui.spec.js",
+                        "column": 153,
+                        "line": 2
+                      },
+                      "message": "TimeoutError: locator.click: Timeout 2000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByTestId('coupon-apply-btn')\u001b[22m\n\n\n  1 | const { test, expect } = require('@playwright/test');\n> 2 | test('DEMO-2/TC-001: the Apply button is on the cart panel', async ({ page }) => { await page.goto('/cart'); await page.getByTestId('coupon-apply-btn').click({ timeout: 2000 }); });\n    |                                                                                                                                                         ^\n  3 | test('DEMO-2/TC-002: the Apply button says \"Apply now\"', async ({ page }) => { await page.goto('/cart'); await expect(page.getByTestId('coupon-apply')).toHaveText('Apply now', { timeout: 2000 }); });\n  4 | test('DEMO-2/TC-003: the coupon box is on the cart panel', async ({ page }) => { await page.goto('/cart'); await expect(page.getByTestId('coupon-input')).toBeVisible(); });\n  5 |\n    at /work/demo-app/tests/pw/ui.spec.js:2:153"
+                    }
+                  ],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-06T16:45:30.693Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "error-context",
+                      "contentType": "text/markdown",
+                      "path": "/work/demo-app/test-results/ui-DEMO-2-TC-001-the-Apply-button-is-on-the-cart-panel/error-context.md"
+                    }
+                  ],
+                  "errorLocation": {
+                    "file": "/work/demo-app/tests/pw/ui.spec.js",
+                    "column": 153,
+                    "line": 2
+                  }
+                }
+              ],
+              "status": "unexpected"
+            }
+          ],
+          "id": "6cacfa4b79c1be8f210f-e0f335c3267a0c2c8c90",
+          "file": "ui.spec.js",
+          "line": 2,
+          "column": 1
+        },
+        {
+          "title": "DEMO-2/TC-002: the Apply button says \"Apply now\"",
+          "ok": false,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 15000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 8,
+                  "parallelIndex": 0,
+                  "status": "failed",
+                  "duration": 2157,
+                  "error": {
+                    "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoHaveText\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator:  getByTestId('coupon-apply')\nExpected: \u001b[32m\"Apply\u001b[7m now\u001b[27m\"\u001b[39m\nReceived: \u001b[31m\"Apply\"\u001b[39m\nTimeout:  2000ms\n\nCall log:\n\u001b[2m  - Expect \"toHaveText\" getByTestId('coupon-apply') with timeout 2000ms\u001b[22m\n\u001b[2m  - waiting for getByTestId('coupon-apply')\u001b[22m\n\u001b[2m    21 × locator resolved to <button data-testid=\"coupon-apply\">Apply</button>\u001b[22m\n\u001b[2m       - unexpected value \"Apply\"\u001b[22m\n",
+                    "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoHaveText\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator:  getByTestId('coupon-apply')\nExpected: \u001b[32m\"Apply\u001b[7m now\u001b[27m\"\u001b[39m\nReceived: \u001b[31m\"Apply\"\u001b[39m\nTimeout:  2000ms\n\nCall log:\n\u001b[2m  - Expect \"toHaveText\" getByTestId('coupon-apply') with timeout 2000ms\u001b[22m\n\u001b[2m  - waiting for getByTestId('coupon-apply')\u001b[22m\n\u001b[2m    21 × locator resolved to <button data-testid=\"coupon-apply\">Apply</button>\u001b[22m\n\u001b[2m       - unexpected value \"Apply\"\u001b[22m\n\n    at /work/demo-app/tests/pw/ui.spec.js:3:153",
+                    "location": {
+                      "file": "/work/demo-app/tests/pw/ui.spec.js",
+                      "column": 153,
+                      "line": 3
+                    },
+                    "snippet": "  1 | const { test, expect } = require('@playwright/test');\n  2 | test('DEMO-2/TC-001: the Apply button is on the cart panel', async ({ page }) => { await page.goto('/cart'); await page.getByTestId('coupon-apply-btn').click({ timeout: 2000 }); });\n> 3 | test('DEMO-2/TC-002: the Apply button says \"Apply now\"', async ({ page }) => { await page.goto('/cart'); await expect(page.getByTestId('coupon-apply')).toHaveText('Apply now', { timeout: 2000 }); });\n    |                                                                                                                                                         ^\n  4 | test('DEMO-2/TC-003: the coupon box is on the cart panel', async ({ page }) => { await page.goto('/cart'); await expect(page.getByTestId('coupon-input')).toBeVisible(); });\n  5 |"
+                  },
+                  "errors": [
+                    {
+                      "location": {
+                        "file": "/work/demo-app/tests/pw/ui.spec.js",
+                        "column": 153,
+                        "line": 3
+                      },
+                      "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoHaveText\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator:  getByTestId('coupon-apply')\nExpected: \u001b[32m\"Apply\u001b[7m now\u001b[27m\"\u001b[39m\nReceived: \u001b[31m\"Apply\"\u001b[39m\nTimeout:  2000ms\n\nCall log:\n\u001b[2m  - Expect \"toHaveText\" getByTestId('coupon-apply') with timeout 2000ms\u001b[22m\n\u001b[2m  - waiting for getByTestId('coupon-apply')\u001b[22m\n\u001b[2m    21 × locator resolved to <button data-testid=\"coupon-apply\">Apply</button>\u001b[22m\n\u001b[2m       - unexpected value \"Apply\"\u001b[22m\n\n\n  1 | const { test, expect } = require('@playwright/test');\n  2 | test('DEMO-2/TC-001: the Apply button is on the cart panel', async ({ page }) => { await page.goto('/cart'); await page.getByTestId('coupon-apply-btn').click({ timeout: 2000 }); });\n> 3 | test('DEMO-2/TC-002: the Apply button says \"Apply now\"', async ({ page }) => { await page.goto('/cart'); await expect(page.getByTestId('coupon-apply')).toHaveText('Apply now', { timeout: 2000 }); });\n    |                                                                                                                                                         ^\n  4 | test('DEMO-2/TC-003: the coupon box is on the cart panel', async ({ page }) => { await page.goto('/cart'); await expect(page.getByTestId('coupon-input')).toBeVisible(); });\n  5 |\n    at /work/demo-app/tests/pw/ui.spec.js:3:153"
+                    }
+                  ],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-06T16:45:37.810Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "error-context",
+                      "contentType": "text/markdown",
+                      "path": "/work/demo-app/test-results/ui-DEMO-2-TC-002-the-Apply-button-says-Apply-now-/error-context.md"
+                    }
+                  ],
+                  "errorLocation": {
+                    "file": "/work/demo-app/tests/pw/ui.spec.js",
+                    "column": 153,
+                    "line": 3
+                  }
+                }
+              ],
+              "status": "unexpected"
+            }
+          ],
+          "id": "6cacfa4b79c1be8f210f-143b2292dafc1abd7b23",
+          "file": "ui.spec.js",
+          "line": 3,
+          "column": 1
+        },
+        {
+          "title": "DEMO-2/TC-003: the coupon box is on the cart panel",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 15000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 9,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 161,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-06T16:45:40.506Z",
+                  "annotations": [],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "6cacfa4b79c1be8f210f-4df4763a7ffadc40ad6b",
+          "file": "ui.spec.js",
+          "line": 4,
+          "column": 1
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-11-06T16:45:27.657Z",
+    "duration": 13274.876999999999,
+    "expected": 14,
+    "skipped": 0,
+    "unexpected": 9,
+    "flaky": 0
+  }
+}

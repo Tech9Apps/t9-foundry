@@ -45,6 +45,12 @@ node_tests() { cd "$REPO_ROOT" && env -u NODE_TEST_CONTEXT node --test --test-re
   [[ "$output" =~ "# fail 0" ]]
 }
 
+@test "triage on REAL Jest 30.5.2 and Playwright 1.65.0 reports: every failure of a demo app with known causes is classified correctly" {
+  run node_tests real-output.test.js
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "# fail 0" ]]
+}
+
 @test "the planner passes its tests on all five tracker mocks (dedupe, regressions, read-only, degraded modes)" {
   run node_tests plan.test.js
   [ "$status" -eq 0 ]

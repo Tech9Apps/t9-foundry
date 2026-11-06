@@ -168,7 +168,9 @@ too far. What changed, and why:
   (404/500). The last two become `undetermined` and say what to check, never a product bug.
 - **A runner format that has not been verified on real failures cannot act.** `product-bug` and `test-bug` (the two classes with a
   side effect) are held at `propose` and marked `cap: unverified-format`. Only TAP is trusted by default; `--trusted-formats`
-  widens it. This is the backstop for patterns nobody thought of yet: a wrong guess costs a human a look, not a bad ticket.
+  widens it. This is the backstop for patterns nobody thought of yet: a wrong guess costs a human a look, not a bad ticket. It is not hypothetical: the
+  first real Jest and Playwright runs (`tests/fixtures/results/real/`) found a Playwright action timeout classified as a product bug at 0.85, and a found
+  element with the wrong text read as a stale selector. Both are fixed; those formats stay capped because one app is thin evidence.
 - **Fingerprints include what was expected and received,** so two different defects with the same one-line summary no longer
   collide (the second used to be reported as "already filed").
 - **The orchestrator agent has no `Write` tool and no longer claims it "cannot edit files".** It has Bash, so the honest statement

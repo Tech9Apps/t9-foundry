@@ -31,7 +31,11 @@ function toTest({ spec, test, suite, file }) {
     t.status = 'failed';
     const err = (last && (last.error || (last.errors || [])[0])) || {};
     const message = stripAnsi(err.message || '') || 'failed';
-    t.error = { message: truncate(firstLine(message) || message, 1000), kind: last && last.status === 'timedOut' ? 'timeout' : 'failure' };
+    // A whole-test timeout is status "timedOut". An ACTION that times out inside a test that otherwise fails normally (`locator.click: Timeout 2000ms
+    // exceeded`, `apiRequestContext.get: Timeout 1500ms exceeded`) is reported as a TimeoutError with status "failed": it is still a timeout, and
+    // calling it a plain failure made triage read a request that never answered as an assertion about the app (checked against real Playwright 1.65 output).
+    const timedOut = (last && last.status === 'timedOut') || /\bTimeoutError\b|\bTimeout \d+ms exceeded\b/.test(message);
+    t.error = { message: truncate(firstLine(message) || message, 1000), kind: timedOut ? 'timeout' : 'failure' };
     const details = stripAnsi([err.message, err.stack].filter(Boolean).join('\n'));
     if (details && details !== t.error.message) t.error.details = truncate(details);
   } else if (test.status === 'flaky') {
