@@ -70,6 +70,15 @@ function parseArgs(argv) {
   return opts;
 }
 
+// What to tell the user about a heal that did not land. "Restored" is only ever said when the heal says it checked (`restored`): it used to be
+// appended to every revert, including one whose own result said it had not managed to put everything back.
+function healWarning(h) {
+  if (h.status === 'refused') return `self-heal refused: ${h.reason}`;
+  if (h.status !== 'reverted') return null;
+  if (h.restored === false) return `self-heal reverted: ${h.reason} (the repository was NOT fully restored: ${(h.problems || ['unknown']).join('; ')} — run git status before doing anything else)`;
+  return `self-heal reverted: ${h.reason} (the repository was restored)`;
+}
+
 const writeJson = (file, obj) => { fs.mkdirSync(path.dirname(path.resolve(file)), { recursive: true }); fs.writeFileSync(file, `${JSON.stringify(obj, null, 2)}\n`); };
 const needsTriage = (t) => t.status === 'failed' || t.flaky;
 
@@ -182,7 +191,8 @@ async function orchestrate(opts, { env = process.env, fetch = globalThis.fetch, 
     });
     writeJson(path.join(out, 'heal.json'), { ok: healResult.status === 'healed' || healResult.status === 'nothing-to-heal', data: healResult });
     files.heal = path.join(out, 'heal.json');
-    if (healResult.status === 'refused' || healResult.status === 'reverted') warnings.push(`self-heal ${healResult.status}: ${healResult.reason}${healResult.status === 'reverted' ? ' (the repository was restored)' : ''}`);
+    const hw = healWarning(healResult);
+    if (hw) warnings.push(hw);
   } else if (!healEnabled && eligible(report).length) {
     rerunNotes.push(`${eligible(report).length} stale selector(s) have an exact fix; self-heal is off (triage.selfHeal.enabled or --heal)`);
   }
@@ -224,4 +234,4 @@ async function main({ argv = process.argv.slice(2), env = process.env, stdout = 
 
 if (require.main === module) main().then((code) => { process.exitCode = code; });
 
-module.exports = { main, orchestrate, MAX_RERUNS };
+module.exports = { main, orchestrate, healWarning, MAX_RERUNS };

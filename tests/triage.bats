@@ -82,6 +82,12 @@ node_tests() { cd "$REPO_ROOT" && env -u NODE_TEST_CONTEXT node --test --test-re
   [[ "$output" =~ "# fail 0" ]]
 }
 
+@test "self-heal's second review: tags, spec containment, branch errors, what it could not see, the config as a floor, and a real SIGTERM that also stops the runner" {
+  run node_tests heal-review2.test.js
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "# fail 0" ]]
+}
+
 @test "the triage scripts depend on nothing but Node built-ins" {
   mods=$(grep -rhoE "require\('[^']+'\)" "$REPO_ROOT/scripts/triage" | sed -E "s/require\('([^']+)'\)/\1/" | grep -v '^\.' | sort -u)
   for m in $mods; do

@@ -30,11 +30,17 @@ function locatorPatterns(id) {
   ];
 }
 
+// A line that is only a comment (// … , # … , * … , /* … ) is not a locator, however much it looks like one: a commented-out
+// `getByTestId('old')` is left alone (and reported as still mentioning the old id). This is a LINE test, not a parser: a locator inside a string
+// literal, or after code on the same line, is still seen as code, and the validation re-run is what catches a rename that changed behaviour.
+const COMMENT_LINE = /^\s*(?:\/\/|#|\*|\/\*)/;
+
 // Replace the id in locator expressions only. Returns the new text and the lines that changed.
 function replaceInLocators(text, from, to) {
   const patterns = locatorPatterns(from);
   const changes = [];
   const lines = String(text).split('\n').map((line, i) => {
+    if (COMMENT_LINE.test(line)) return line;
     let next = line;
     for (const re of patterns) next = next.replace(re, (m, before, id, after) => `${before}${to}${after}`);
     if (next !== line) changes.push({ line: i + 1, before: line, after: next });
@@ -67,15 +73,20 @@ const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', 'coverage', 
 const MAX_BYTES = 1024 * 1024;
 
 // The test files that may be edited: under the allowed directories, test-code extensions only, no symlinks, nothing outside
-// the repository. `dirs` are relative to `cwd`; every one must resolve inside `root`.
+// the repository. `dirs` are relative to `cwd`; every one must resolve inside `root`, and none may BE the root (that would put application
+// code in scope: name the test directories). Files that would have been scanned but are not (a symlink, a file over the size cap) come back in
+// `skipped`, so the heal can say it did not look at them rather than leave them out of the report without a word.
 function collectFiles({ root, cwd, dirs, exts = DEFAULT_EXTS }) {
   const realRoot = fs.realpathSync(root);
-  const files = []; const refused = [];
+  const files = []; const refused = []; const skipped = [];
+  const note = (p, reason) => skipped.push({ file: path.relative(realRoot, p), reason });
   const walk = (dir) => {
     for (const e of fs.readdirSync(dir, { withFileTypes: true }).sort((x, y) => x.name.localeCompare(y.name))) {
       const p = path.join(dir, e.name);
-      if (e.isSymbolicLink()) continue; // never follow a link out of the allowed directory
-      if (e.isDirectory()) { if (!SKIP_DIRS.has(e.name)) walk(p); } else if (e.isFile() && exts.has(path.extname(e.name).toLowerCase()) && fs.statSync(p).size <= MAX_BYTES) files.push(p);
+      if (e.isSymbolicLink()) { if (exts.has(path.extname(e.name).toLowerCase())) note(p, 'a symlink'); continue; } // never follow a link out of the allowed directory
+      if (e.isDirectory()) { if (!SKIP_DIRS.has(e.name)) walk(p); } else if (e.isFile() && exts.has(path.extname(e.name).toLowerCase())) {
+        if (fs.statSync(p).size <= MAX_BYTES) files.push(p); else note(p, 'larger than 1 MB');
+      }
     }
   };
   for (const d of dirs) {
@@ -83,10 +94,11 @@ function collectFiles({ root, cwd, dirs, exts = DEFAULT_EXTS }) {
     let real;
     try { real = fs.realpathSync(abs); } catch { refused.push(`${d}: no such directory`); continue; }
     if (real !== realRoot && !real.startsWith(`${realRoot}${path.sep}`)) { refused.push(`${d}: resolves outside the repository`); continue; }
+    if (real === realRoot) { refused.push(`${d}: is the repository root, which would put application code in scope — name the test directories (triage.selfHeal.paths)`); continue; }
     if (!fs.statSync(real).isDirectory()) { refused.push(`${d}: not a directory`); continue; }
     walk(real);
   }
-  return { files: [...new Set(files)], refused };
+  return { files: [...new Set(files)], refused, skipped };
 }
 
 // Is this a spec file (something a runner is pointed at) rather than a shared helper such as a page object? Editing a helper can break

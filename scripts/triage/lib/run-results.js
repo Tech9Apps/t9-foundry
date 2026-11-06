@@ -2,7 +2,7 @@
 
 // The default way to run a suite for triage: the real results runner, in this process, output captured. Shared by the
 // orchestrator and by self-heal's validation re-run, so both run tests exactly the same way.
-const { main: runResultsMain } = require('../../results/run');
+const { main: runResultsMain, killActive } = require('../../results/run');
 
 async function defaultRunResults(argv, env) {
   let out = '';
@@ -12,4 +12,4 @@ async function defaultRunResults(argv, env) {
   return { code, doc };
 }
 
-module.exports = { defaultRunResults };
+module.exports = { defaultRunResults, killActive };

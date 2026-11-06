@@ -76,6 +76,13 @@ function fromConfig(opts, env) {
   }
 }
 
+// The runs in flight. A caller that is itself interrupted (self-heal reverting on SIGTERM) must stop them: a runner left going keeps writing into the
+// project after the caller has put everything back.
+const ACTIVE = new Set();
+function killActive(signal = 'SIGTERM') {
+  for (const child of ACTIVE) { try { child.kill(signal); } catch { /* already gone */ } }
+}
+
 function runChild({ spawn, command, args, env, cwd, timeoutMs, quiet }) {
   return new Promise((resolve) => {
     let child;
@@ -85,10 +92,11 @@ function runChild({ spawn, command, args, env, cwd, timeoutMs, quiet }) {
       resolve({ spawnError: err });
       return;
     }
+    ACTIVE.add(child);
     let timedOut = false;
     const timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, timeoutMs);
-    child.on('error', (err) => { clearTimeout(timer); resolve({ spawnError: err }); });
-    child.on('close', (code, signal) => { clearTimeout(timer); resolve({ code, signal, timedOut }); });
+    child.on('error', (err) => { clearTimeout(timer); ACTIVE.delete(child); resolve({ spawnError: err }); });
+    child.on('close', (code, signal) => { clearTimeout(timer); ACTIVE.delete(child); resolve({ code, signal, timedOut }); });
   });
 }
 
@@ -182,4 +190,4 @@ if (require.main === module) {
   main().then((code) => { process.exitCode = code; });
 }
 
-module.exports = { main };
+module.exports = { main, killActive };
