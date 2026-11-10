@@ -29,7 +29,7 @@ const path = require('path');
 const { run } = require('./adapters');
 const { connect } = require('./lib/connect');
 const { TrackerError } = require('./lib/errors');
-const { parseTestCases } = require('./lib/test-cases');
+const { parseTestCases, lintTestCases } = require('./lib/test-cases');
 
 // Failing every remaining case the same way helps nobody: stop and report.
 const SYSTEMIC = new Set(['UNAUTHENTICATED', 'FORBIDDEN', 'CONFIG', 'NOT_FOUND', 'RATE_LIMITED']);
@@ -87,7 +87,12 @@ async function main({ argv = process.argv.slice(2), env = process.env, stdout = 
     if (!fs.existsSync(casesFile)) {
       throw new TrackerError('VALIDATION', `no test cases at ${casesFile} — run /create-manual-test-cases ${opts.parent} first`);
     }
-    const all = parseTestCases(fs.readFileSync(casesFile, 'utf8'));
+    const md = fs.readFileSync(casesFile, 'utf8');
+    const unreadable = lintTestCases(md);
+    if (unreadable.length) {
+      throw new TrackerError('VALIDATION', `${casesFile} cannot be posted as it stands (nothing was created): ${unreadable.join('; ')}`);
+    }
+    const all = parseTestCases(md);
     if (!all.length) {
       throw new TrackerError('VALIDATION', `${casesFile} has no test cases (expected blocks that start "### TC-001: Title")`);
     }

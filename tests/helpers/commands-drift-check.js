@@ -168,5 +168,21 @@ for (const f of fs.readdirSync(path.join(ROOT, '.claude/commands')).filter((x) =
   if (onShell.length && !/`\^\[[^`\n]*\$`/.test(md)) bad(`${file}:${onShell[0].n}: puts $ARGUMENTS on a shell line but never states an anchored allow-list for it (a ^[…]…$ pattern in backticks)`);
 }
 
+// ── every idempotency key template in the prose must fill in to a value the key rules accept ─────────────────
+// (an ISO timestamp holds ":" and an unbounded id can pass 80 characters; the examples above fill "<…>" with a plain "x", so they never noticed)
+const { assertKey } = require(path.join(ROOT, 'scripts/tracker/lib/contract.js'));
+for (const file of [...Object.values(FILES), ...fs.readdirSync(path.join(ROOT, '.claude/commands')).filter((x) => x.endsWith('.md')).map((f) => '.claude/commands/' + f)]) {
+  const text = read(file);
+  // the longest slug the prose allows ("at most N characters"); the key rules are then tested with a slug of exactly that length
+  const slugMax = (text.match(/where `<slug>` is[^:\n]*?at most (\d+) characters/) || [])[1];
+  for (const m of text.matchAll(/"idempotencyKey":\s*"([^"]*)"/g)) {
+    const template = m[1];
+    if (/<slug>/.test(template) && !slugMax) { bad(`${file}: idempotencyKey "${template}" uses <slug> but the prose never says how long a slug may be ("at most N characters")`); continue; }
+    const filled = template.replace(/\$ARGUMENTS/g, 'DEMO-101').replace(/<YYYYMMDDTHHMMSSZ[^>]*>/g, '20260101T000000Z').replace(/<slug>/g, 'a'.repeat(Number(slugMax || 0)));
+    if (/[<>$]/.test(filled)) { bad(`${file}: idempotencyKey "${template}" holds a placeholder this check cannot fill in (write a time as <YYYYMMDDTHHMMSSZ…>)`); continue; }
+    try { assertKey(filled); } catch { bad(`${file}: idempotencyKey "${template}" fills in to "${filled}", which the key rules reject (1-80 characters of letters, digits, ".", "_" or "-")`); }
+  }
+}
+
 if (problems.length) { console.log(`${problems.length} problem(s):\n  - ${problems.join('\n  - ')}`); process.exit(1); }
 console.log('OK');

@@ -82,7 +82,7 @@ Use `mcp__claude_ai_Atlassian__createJiraIssue`:
 
 ### GitHub / ClickUp / Azure DevOps / GitLab / Bitbucket — via the tracker adapter CLI
 
-1. **Write the input to a file** with the Write tool — never inline a multi-line report into a shell command (quoting breaks, and a bug body is full of quotes and backticks). Use `{testCasesDir}/bugs/<slug>.input.json`, where `<slug>` is the lowercase, hyphenated title (≤ 50 characters):
+1. **Write the input to a file** with the Write tool — never inline a multi-line report into a shell command (quoting breaks, and a bug body is full of quotes and backticks). Use `{testCasesDir}/bugs/<slug>.input.json`, where `<slug>` is the title in lowercase letters, digits and hyphens only (punctuation dropped, spaces become hyphens), at most 50 characters:
    ```json
    {
      "title": "<bug title>",
