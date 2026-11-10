@@ -127,7 +127,9 @@ says "anything, then `partner.io/guide`". An invalid regex never exempts anythin
 
 **What counts as a URL.** curl, browsers and HTTP libraries accept far more than `https://host/path`, so the shell hooks (Layers 3 and 4) read
 every spelling, in a command or in file content. A URL ends at whitespace, a quote or shell punctuation (`; | & , { }`), so
-`curl https://host;echo` and `https://host/x|jq .` are the URL `https://host`:
+`curl https://host;echo` and `https://host/x|jq .` are the URL `https://host`. The exception is punctuation inside the host part itself: where it holds an `@`
+(curl takes the host after the LAST `@`, so `https://staging.x.com,@prod.com/` is `prod.com`), a `{…}` brace group (bash expands it) or a backtick, the whole
+token is judged as well, and a brace group or backtick is an unverifiable host. Pieces the shell joins across quotes (`"https://staging.x.com"@prod.com/`) are joined first:
 
 | Spelling | Examples | Judged by |
 |----------|----------|-----------|
@@ -151,7 +153,7 @@ combined with `enforce`.
 
 **What this cannot see.** The guard reads URLs; it does not read intent or the network. It does **not** cover: a redirect from an
 allowed host to a production one; DNS that points a staging name at production; a hostname assembled by a program at run time
-(in `enforce` a host written as a shell variable is blocked, but a program that builds its own URL is not seen); a target given
+(in `enforce` a host written as a shell variable, a brace group or a backtick is blocked, but a program that builds its own URL, such as a string concatenated in test code, is not seen); a target given
 without a URL (`ssh prod-db`; a bare hostname is matched against `prodUrlPatterns` only, see above); or a command that never mentions the target (a script reading its URL
 from a file). Layer 5 (the runtime guard) is the backstop for the test runner itself; for everything else, `prodUrlPatterns`
 and your network controls are the real protection.

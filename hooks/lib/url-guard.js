@@ -206,6 +206,22 @@ function findUrls(text) {
     add(raw, `${scheme.toLowerCase()}://${rest}`, 'full');
   }
 
+  // The cut above is right for punctuation AFTER the host, and wrong when the host part itself holds something that decides WHICH host it is:
+  //   an "@"      curl reads userinfo up to the LAST "@", so "https://staging.x.com,@prod.com/" is host prod.com
+  //   { ... }     bash expands a brace group: "https://{prod,x}.com/" is two URLs
+  //   a backtick  command substitution builds the host
+  // For those the whole token is judged as well (the host part is everything up to the first / ? #). A brace group or a backtick has no verifiable host.
+  for (const m of s.matchAll(/\b(https?):([/\\]*)([^\s'"<>)]+)/gi)) {
+    const [raw, scheme, slashes, rest] = m;
+    if (!/@|\{[^}]*\}|`/.test(rest.split(/[/?#]/)[0])) continue;
+    add(raw, `${scheme.toLowerCase()}://${rest}`, 'full');
+  }
+  // a URL the shell joins from quoted pieces: "https://staging.x.com"@prod.com/ is https://staging.x.com@prod.com/, host prod.com. (The host part is
+  // bounded to the longest a host can be: unbounded, this rescanned the rest of the input from every "http:" in it, which is quadratic.)
+  for (const m of s.matchAll(new RegExp(`\\b(https?):[/\\\\]*([^\\s'"\`<>)/?#]{0,253})['"]+@(${URLCHAR}*)`, 'gi'))) {
+    add(m[0], `${m[1].toLowerCase()}://${m[2]}@${m[3]}`, 'full');
+  }
+
   // any other scheme://host: production patterns only
   for (const m of s.matchAll(new RegExp(`\\b([a-z][a-z0-9+.-]{0,31})://(${TAIL}+)`, 'gi'))) {
     if (/^https?$/i.test(m[1])) continue;

@@ -725,7 +725,7 @@ guard_status() {
   run node -e '
     const { scan } = require(process.argv[1]);
     const cfg = { prodUrlPatterns: ["://myapp\\.example\\.com/"], mode: "warn" };
-    for (const filler of ["a-".repeat(150000), "a.".repeat(150000), "a+".repeat(150000), "a@".repeat(150000), "0123456789abcdef.".repeat(20000), "ab:/".repeat(80000), "http:".repeat(60000), "//a.".repeat(60000), "x=a.b".repeat(60000)]) {
+    for (const filler of ["a-".repeat(150000), "a.".repeat(150000), "a+".repeat(150000), "a@".repeat(150000), "0123456789abcdef.".repeat(20000), "ab:/".repeat(80000), "http:".repeat(60000), "//a.".repeat(60000), "x=a.b".repeat(60000), "https:@".repeat(40000), "http://a@".repeat(30000), "https:/a,".repeat(30000), "http:".repeat(80000)]) {
       const t0 = Date.now();
       const found = scan("echo " + filler + " ; curl https://myapp.example.com/x", cfg);
       const ms = Date.now() - t0;
@@ -746,4 +746,81 @@ guard_status() {
   [[ "$output" =~ "not valid JSON" ]]
   run env -u QA_AUTONOMOUS bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json 2>&1 | head -1"
   [[ "$output" =~ "BLOCKED" ]]
+}
+
+# ── Punctuation inside the host part: the cut must not hide which host it is ──
+# A URL ends at ; | & , { } so "curl https://host;echo" is "https://host". But when the host part itself holds an "@" (userinfo: curl reads the host
+# after the LAST "@"), a brace group (bash expands "{a,b}") or a backtick, the cut would read the wrong host, so the whole token is judged as well.
+
+@test "a production host after an @ is found even when punctuation comes before the @ (curl reads userinfo up to the last @)" {
+  for cmd in \
+    'curl https://staging.myapp.example.com,@myapp.example.com/' \
+    'curl "https://staging.myapp.example.com;@myapp.example.com/"' \
+    'curl "https://staging.myapp.example.com|@myapp.example.com/x"' \
+    'curl https://staging.myapp.example.com&@myapp.example.com/' \
+    'curl "https://staging.myapp.example.com{@myapp.example.com/"' \
+    'curl https://localhost,@myapp.example.com/' \
+    'curl https:/staging.myapp.example.com,@myapp.example.com/'; do
+    for env in QA_PROBE=warn QA_AUTONOMOUS=1; do
+      guard_status "$cmd" "prod-url-config.json" "$env"
+      [ "$status" -eq 2 ] || { echo "NOT BLOCKED ($env): $cmd"; echo "$output"; false; }
+    done
+  done
+}
+
+@test "enforce: an unknown host after an @ is blocked the same way (it passed as the staging host before the @)" {
+  for cmd in 'curl https://staging.myapp.example.com,@www.bank-of-example.net/' 'curl "https://localhost;@www.bank-of-example.net/"'; do
+    guard_status "$cmd" "enforce-config.json"
+    [ "$status" -eq 2 ] || { echo "NOT BLOCKED: $cmd"; echo "$output"; false; }
+    [[ "$output" =~ "bank-of-example.net" ]]
+  done
+}
+
+@test "a host the shell will build (a brace group or a backtick) is unverifiable: enforce blocks, warn warns, whatever the pattern" {
+  for cmd in \
+    'curl https://{myapp,x}.example.com/' \
+    'curl http://{www.other.example.net}' \
+    'curl https://{myapp}.example.com' \
+    'curl https://my{app,}.example.com/' \
+    'curl https://{a..c}.example.com/' \
+    'curl https://`echo myapp`.example.com/'; do
+    guard_status "$cmd" "enforce-config.json"
+    [ "$status" -eq 2 ] || { echo "NOT BLOCKED (enforce): $cmd"; echo "$output"; false; }
+    guard_status "$cmd" "prod-url-config.json" QA_PROBE=warn
+    [ "$status" -eq 0 ] && [[ "$output" =~ "WARNING" ]] || { echo "NOT WARNED (warn): $cmd"; echo "$output"; false; }
+  done
+}
+
+@test "a URL the shell joins from quoted pieces keeps its real host: \"https://staging...\"@myapp... is host myapp" {
+  for cmd in 'curl "https://staging.myapp.example.com"@myapp.example.com/' "curl 'https://localhost'@myapp.example.com/" "curl https://staging.myapp.example.com''@myapp.example.com/"; do
+    for env in QA_PROBE=warn QA_AUTONOMOUS=1; do
+      guard_status "$cmd" "prod-url-config.json" "$env"
+      [ "$status" -eq 2 ] || { echo "NOT BLOCKED ($env): $cmd"; echo "$output"; false; }
+    done
+  done
+}
+
+@test "enforce: the same punctuation after a URL with no @ or braces in its host is still just the end of the URL" {
+  for cmd in \
+    'curl https://staging.myapp.example.com/health;echo done' \
+    'export BASE_URL=https://staging.myapp.example.com; npx playwright test' \
+    "echo '{\"url\":\"https://staging.myapp.example.com/x\"}' | jq ." \
+    'curl "https://staging.myapp.example.com/a?x={1,2}&y=3"' \
+    'curl https://staging.myapp.example.com/{id}' \
+    'echo {https://staging.myapp.example.com}' \
+    'curl -s https://staging.myapp.example.com/x?email=a@b.com' \
+    'curl http://localhost:3000/x,http://localhost:3000/y'; do
+    guard_status "$cmd" "enforce-config.json"
+    [ "$status" -eq 0 ] || { echo "WRONGLY BLOCKED: $cmd"; echo "$output"; false; }
+  done
+}
+
+@test "'https:host' and 'https:user@host' are URLs, as a browser reads them: an unknown host after them is judged like any other (enforce blocks), and ordinary prose is not" {
+  guard_status 'curl https:bob@www.bank-of-example.net/x' "enforce-config.json"
+  [ "$status" -eq 2 ]
+  [[ "$output" =~ "bank-of-example.net" ]]
+  for cmd in 'echo "see https: for details"' 'echo "the https:scheme is optional here"' 'git commit -m "docs: https: links"'; do
+    guard_status "$cmd" "enforce-config.json"
+    [ "$status" -eq 0 ] || { echo "WRONGLY BLOCKED: $cmd"; echo "$output"; false; }
+  done
 }

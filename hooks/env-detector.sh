@@ -76,10 +76,11 @@ canonical() { local d; d=$(cd "$(dirname "$1")" 2>/dev/null && pwd) || return 1;
 IS_CONFIG_FILE=0
 if [ "$(basename "$FILE_PATH")" = "qa-config.json" ]; then
   TARGET=$(canonical "$FILE_PATH" || true)
-  for candidate in "$QA_CONFIG_PATH" "$PWD/qa-config.json" "${CLAUDE_PROJECT_DIR:-}/qa-config.json"; do
-    [ "$candidate" = "/qa-config.json" ] && continue # CLAUDE_PROJECT_DIR was not set
-    [ -n "$TARGET" ] && [ "$(canonical "$candidate" || true)" = "$TARGET" ] && IS_CONFIG_FILE=1
-  done
+  # exactly one file: the config that resolves; when there is none yet, where a new one would be found (the project dir, else here)
+  if [ -f "$QA_CONFIG_PATH" ]; then CONFIG_TARGET="$QA_CONFIG_PATH"
+  elif [ -n "${CLAUDE_PROJECT_DIR:-}" ]; then CONFIG_TARGET="$CLAUDE_PROJECT_DIR/qa-config.json"
+  else CONFIG_TARGET="$PWD/qa-config.json"; fi
+  [ -n "$TARGET" ] && [ "$(canonical "$CONFIG_TARGET" || true)" = "$TARGET" ] && IS_CONFIG_FILE=1
 fi
 if [ "$IS_CONFIG_FILE" -eq 1 ] && [ "$TOOL" = "Write" ] && command -v node >/dev/null 2>&1; then
   JUDGED=$(printf '%s' "$CONTENT" | node "$HOOK_DIR/lib/url-guard.js" --judge-config --mode "$(resolve_guard_mode "$QA_CONFIG_PATH")" 2>/dev/null || true)

@@ -405,3 +405,45 @@ GOOD_CONFIG='{"environments":{"testEnvironmentBaseUrl":"https://myapp.vercel.app
     [ "$status" -eq 0 ] || { echo "not accepted: $fp"; echo "$output"; false; }
   done
 }
+
+@test "file content: a production host after punctuation and an @, a brace host, and a quote-joined URL are all caught" {
+  for content in 'const base = "https://staging.myapp.example.com,@myapp.example.com/";' 'const base = "https://localhost;@myapp.example.com/api";' 'fetch("https://{myapp,x}.example.com/")' 'const u = "https://staging.myapp.example.com"@myapp.example.com;'; do
+    write_input "tests/api.spec.ts" "$content" "prod-url-config.json"
+    run bash -c "cd '$TEST_TMP' && bash '$DETECTOR' < input.json"
+    [ "$status" -eq 2 ] || [[ "$output" =~ "WARNING" ]] || { echo "NOT CAUGHT: $content"; echo "$output"; false; }
+  done
+  write_input "tests/api.spec.ts" 'const base = "https://staging.myapp.example.com,@myapp.example.com/";' "enforce-config.json"
+  run env QA_AUTONOMOUS=1 bash -c "cd '$TEST_TMP' && bash '$DETECTOR' < input.json"
+  [ "$status" -eq 2 ]
+}
+
+@test "the repair channel is the ONE config the guards read: not a qa-config.json in the working directory when the real one is elsewhere" {
+  mkdir -p "$TEST_TMP/app"
+  cp "$FIXTURES/prod-url-config.json" "$TEST_TMP/qa-config.json"
+  decoy='{"baseUrl":"https://myapp.example.com/api","environments":{"testEnvironmentBaseUrl":"https://staging.x.test"},"productionProtection":{"prodUrlPatterns":["://never\\\\.example/"]}}'
+  # the hook runs from app/ (a tool that cd'd into the app repo); the real config is the parent's, found by the usual search
+  jq -n --arg fp "$TEST_TMP/app/qa-config.json" --arg c "$decoy" '{"tool_name":"Write","tool_input":{"file_path":$fp,"content":$c}}' > "$TEST_TMP/input.json"
+  run bash -c "cd '$TEST_TMP/app' && bash '$DETECTOR' < '$TEST_TMP/input.json'"
+  [ "$status" -eq 2 ] || { echo "the decoy was let through"; echo "$output"; false; }
+  # ...and with CLAUDE_PROJECT_DIR naming the real one
+  run env CLAUDE_PROJECT_DIR="$TEST_TMP" bash -c "cd '$TEST_TMP/app' && bash '$DETECTOR' < '$TEST_TMP/input.json'"
+  [ "$status" -eq 2 ]
+  # the real one, by the path the search finds it at, is still the repair channel
+  jq -n --arg fp "../qa-config.json" --arg c "$GOOD_CONFIG" '{"tool_name":"Write","tool_input":{"file_path":$fp,"content":$c}}' > "$TEST_TMP/input.json"
+  run bash -c "cd '$TEST_TMP/app' && bash '$DETECTOR' < '$TEST_TMP/input.json'"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+@test "enforce, no config anywhere yet: writing the first qa-config.json is allowed where a new one would be found (the project dir, else the working directory), and only there" {
+  mkdir -p "$TEST_TMP/proj" "$TEST_TMP/elsewhere"
+  rm -f "$TEST_TMP/qa-config.json"
+  jq -n --arg fp "$TEST_TMP/proj/qa-config.json" --arg c "$GOOD_CONFIG" '{"tool_name":"Write","tool_input":{"file_path":$fp,"content":$c}}' > "$TEST_TMP/input.json"
+  run env QA_AUTONOMOUS=1 CLAUDE_PROJECT_DIR="$TEST_TMP/proj" bash -c "cd '$TEST_TMP/elsewhere' && bash '$DETECTOR' < '$TEST_TMP/input.json'"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  jq -n --arg fp "$TEST_TMP/elsewhere/qa-config.json" --arg c "$GOOD_CONFIG" '{"tool_name":"Write","tool_input":{"file_path":$fp,"content":$c}}' > "$TEST_TMP/input.json"
+  run env QA_AUTONOMOUS=1 CLAUDE_PROJECT_DIR="$TEST_TMP/proj" bash -c "cd '$TEST_TMP/elsewhere' && bash '$DETECTOR' < '$TEST_TMP/input.json'"
+  [ "$status" -eq 2 ]   # not the project dir: scanned like any file (valid JSON is not enough when the content holds a production URL)
+  jq -n --arg fp "qa-config.json" --arg c "$GOOD_CONFIG" '{"tool_name":"Write","tool_input":{"file_path":$fp,"content":$c}}' > "$TEST_TMP/input.json"
+  run env -u CLAUDE_PROJECT_DIR QA_AUTONOMOUS=1 bash -c "cd '$TEST_TMP/elsewhere' && bash '$DETECTOR' < '$TEST_TMP/input.json'"
+  [ "$status" -eq 0 ]   # no project dir named: the working directory
+}
