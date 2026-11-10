@@ -64,6 +64,7 @@
           "properties": {
             "workspace": { "type": "string" },
             "repo": { "type": "string" },
+            "username": { "type": "string", "description": "Bitbucket account username. App passwords authenticate as username:app_password, so this is required for API calls (issue creation/fetch). Not a secret." },
             "tokenEnvVar": { "type": "string", "default": "BITBUCKET_TOKEN" }
           }
         }
@@ -141,7 +142,18 @@
           "items": { "type": "string" },
           "default": ["production", "prod"]
         },
-        "blockOnSuspiciousUrls": { "type": "boolean", "default": true }
+        "blockOnSuspiciousUrls": { "type": "boolean", "default": true },
+        "mode": {
+          "type": "string",
+          "enum": ["warn", "enforce"],
+          "default": "warn",
+          "description": "warn: heuristic URL matches only print a warning (a human is watching). enforce: heuristic matches block, and every shell command is refused while prodUrlPatterns is empty, testEnvironmentBaseUrl is unset or qa-config.json is missing. In either mode every shell command is refused while testEnvironmentBaseUrl matches a production pattern. QA_AUTONOMOUS=1 forces enforce regardless of this value."
+        },
+        "allowedUrlPatterns": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Regex patterns for URLs that are known-safe and exempt from the unrecognized-host check (e.g. docs or CDN links). Matched against the URL without its query string and fragment, and a pattern has to START matching inside the scheme and host (^https://partner\\.io/ or ://partner\\.io/guide): text that only appears later, in the path of another host, does not allow the URL, and a pattern that is only a path (/guide) allows nothing. Do not start a pattern with .* . Never override prodUrlPatterns. Tracker/code-host/registry URLs (github.com, dev.azure.com, api.clickup.com, registry.npmjs.org, ...) and the host of environments.testEnvironmentBaseUrl are already exempt."
+        }
       }
     },
     "testFramework": {

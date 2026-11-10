@@ -1,6 +1,6 @@
 import { Options } from '@wdio/types';
 import { loadQAConfig } from './support/qa-config-loader';
-import { validateNotProduction } from './support/prod-guard';
+import { validateNotProduction, guardOptionsFromConfig } from './support/prod-guard';
 import { DataFactory } from './support/data-factory';
 
 const qa = loadQAConfig();
@@ -49,7 +49,7 @@ export const config: Options.Testrunner = {
   async onPrepare() {
     const prodPatterns: string[] =
       (qa.productionProtection as { prodUrlPatterns?: string[] })?.prodUrlPatterns ?? [];
-    validateNotProduction(baseURL, prodPatterns);
+    validateNotProduction(baseURL, prodPatterns, guardOptionsFromConfig(qa));
     console.log(`\n✓ QA Harness — test environment: ${baseURL}\n`);
   },
 

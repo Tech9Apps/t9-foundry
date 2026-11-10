@@ -1,0 +1,10 @@
+{
+  "project": { "name": "Enforce App" },
+  "ticketSource": { "type": "none" },
+  "codeRepository": { "type": "local", "localPath": "../enforce-app" },
+  "environments": { "testEnvironmentBaseUrl": "https://staging.myapp.example.com" },
+  "productionProtection": {
+    "prodUrlPatterns": [],
+    "mode": "enforce"
+  }
+}

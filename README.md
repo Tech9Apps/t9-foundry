@@ -4,7 +4,13 @@ An AI-powered QA workspace for Claude Code. You open this repo in Claude Code, p
 
 > **Two repos, not one.** This repo is the QA workspace. Your application lives in a separate repo. You run Claude Code *here*, and the harness reads and writes *there*.
 
-> **Want to see it in action first?** The [`examples/`](examples/) folder has a demo ticket and pre-generated outputs — no Jira or ticket system needed. Follow [`examples/README.md`](examples/README.md) to run the full workflow in ~15 minutes.
+> **Want to see it in action first?** There's a demo project built in — a tiny coffee-shop app with two planted bugs. No Jira, no accounts, no install:
+>
+> ```bash
+> bash demo/run-demo.sh      # 2-minute tour: ticket → test cases → run → bugs found → production guards → fix
+> ```
+>
+> Then open this repo in Claude Code and run `/demo` to drive the real commands against it yourself. Details: [`demo/README.md`](demo/README.md).
 
 ---
 
@@ -195,7 +201,7 @@ Most of these are `.claude/skills/`. Two (`/file-bug`, `/generate-regression-pac
 This harness uses **5 independent layers** to prevent tests from running against production:
 
 1. **CLAUDE.md behavioral rule** — Claude refuses to target production
-2. **Session startup hook** — validates your staging URL is not production on every session start
+2. **Session startup notice** — tells you at every session start if your staging URL is production or the config is unsafe (the Bash hook then refuses commands until it is fixed)
 3. **Bash hook** — scans every shell command for production env vars and URL patterns
 4. **File write hook** — scans every file being written for hardcoded production URLs
 5. **Framework runtime guard** — e2e framework templates abort at startup if `BASE_URL` matches a production pattern

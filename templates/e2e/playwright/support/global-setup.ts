@@ -1,6 +1,6 @@
 import { FullConfig } from '@playwright/test';
 import { loadQAConfig } from './qa-config-loader';
-import { validateNotProduction } from './prod-guard';
+import { validateNotProduction, guardOptionsFromConfig } from './prod-guard';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -16,7 +16,7 @@ export default async function globalSetup(config: FullConfig) {
 
   // Layer 5: Production guard — crashes before a single test runs
   const prodPatterns = getProdPatterns(qa);
-  validateNotProduction(baseURL, prodPatterns);
+  validateNotProduction(baseURL, prodPatterns, guardOptionsFromConfig(qa));
 
   // Ensure auth directory exists
   const authDir = path.join(process.cwd(), 'playwright/.auth');

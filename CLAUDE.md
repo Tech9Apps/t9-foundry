@@ -76,6 +76,7 @@ The hooks and framework templates enforce this at additional layers — your beh
 | `/save-project NAME` | Snapshot the current `qa-config.json` as a shared team profile in `projects/` |
 | `/generate-regression-pack MODULE` | Build/update a full regression suite (manual + Playwright) for a module — no ticket required |
 | `/file-bug FAILURE` | Reproduce a failure on staging, capture evidence, and file a bug in the configured tracker |
+| `/demo [TICKET]` | Guided tour against the embedded Brew & Co demo project (backs up and restores your `qa-config.json`) |
 
 ### Canonical Workflow
 ```
@@ -109,6 +110,10 @@ bats tests/session-init.bats
 bats tests/schema-validation.bats
 bats tests/wording-lint.bats
 bats tests/check-prereqs.bats
+bats tests/preflight.bats
+bats tests/layer5-guard.bats        # TS guards; needs Node >= 22.6 (type stripping)
+bats tests/layer5-guard-py-rb.bats  # pytest/selenium/rspec guards; needs python3 + ruby
+bats tests/demo.bats                # the embedded demo project must keep behaving as documented
 ```
 
 **Run a single test by name pattern:**
@@ -124,6 +129,13 @@ npm install --prefix tests/
 **Check tool prerequisites:**
 ```bash
 bash scripts/check-prereqs.sh
+```
+
+**The embedded demo** (`demo/`): `bash demo/run-demo.sh` is the 2-minute tour; `/demo` is the guided version. `demo/app` has two *planted* bugs — `cd demo/app && npm test` is expected to show 2 failures (`DEMO-101/TC-005`, `DEMO-102/TC-006`), and `tests/demo.bats` pins exactly that. Don't "fix" them in `src/`; the fixes live in `demo/fixes.patch`.
+
+**Preflight an autonomous run** (go/no-go on config, credentials, prod patterns, staging reachability):
+```bash
+QA_AUTONOMOUS=1 bash scripts/preflight.sh
 ```
 
 ---
@@ -148,11 +160,11 @@ This path is intentionally narrower than `.claude/skills/*.md`, which remains au
 
 | Hook | Event | Purpose |
 |------|-------|---------|
-| `session-init.sh` | SessionStart | Validates `qa-config.json` exists; blocks if `testEnvironmentBaseUrl` matches a prod pattern |
-| `prod-guard.sh` | PreToolUse Bash | Scans every shell command for production env vars and URLs |
+| `session-init.sh` | SessionStart | Tells the user when `qa-config.json` is missing, malformed or points at production. A notice only: Claude Code cannot block a session from a SessionStart hook |
+| `prod-guard.sh` | PreToolUse Bash | Scans every shell command for production env vars and URLs, and refuses every command while the config is unsafe (the checks session-init can only announce) |
 | `env-detector.sh` | PreToolUse Write\|Edit\|MultiEdit | Scans file content being written for production URLs and env var assignments |
 
-Hook contract: reads JSON from stdin. `exit 0` = allow. `exit 2` = block; stdout message is surfaced to Claude as the reason.
+Hook contract: reads JSON from stdin. `exit 0` = allow. `exit 2` = block on PreToolUse (the reason must be on **stderr**: that is what Claude Code shows Claude; `prod-guard.sh` and `env-detector.sh` send everything there). On SessionStart, `exit 2` blocks nothing: it shows stderr to the user as a notice and the session continues.
 
 **`templates/e2e/{framework}/`** — Scaffold files (playwright, cypress, selenium, webdriverio, pytest, rspec) copied into the user's app repo by `/setup-e2e-framework`. Each includes a Layer 5 production guard that runs before any test executes. TS templates (playwright, cypress, webdriverio) locate `qa-config.json` via `QA_HARNESS_DIR` (set in `.env.test`) since the harness and app repo are normally sibling directories, not nested.
 
@@ -170,7 +182,9 @@ Hook contract: reads JSON from stdin. `exit 0` = allow. `exit 2` = block; stdout
 
 ### 5-layer production safety
 
-Each layer independently prevents production execution: (1) CLAUDE.md behavioral rule, (2) `session-init.sh` startup validation, (3) `prod-guard.sh` bash command scan, (4) `env-detector.sh` file content scan, (5) framework global-setup runtime guard.
+Each guard has two modes: `warn` (default; heuristic matches only warn) and `enforce` (heuristic matches block; selected by `QA_AUTONOMOUS=1` or `productionProtection.mode`). See `docs/prod-safety.md#guard-modes-warn-and-enforce`. Shared bash helpers live in `hooks/lib/` (`qa-config-path.sh`, `guard-mode.sh`).
+
+Layers 3–5 independently prevent production execution: (3) `prod-guard.sh` bash command scan (which also refuses every command while the config is unsafe), (4) `env-detector.sh` file content scan, (5) framework global-setup runtime guard. Layers (1) CLAUDE.md behavioral rule and (2) `session-init.sh` startup notice inform and guide; neither can stop a run by itself.
 
 ### bash 3.2 compatibility (macOS default shell)
 

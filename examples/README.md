@@ -1,5 +1,7 @@
 # Try the Demo (~15 minutes, no Jira required)
 
+> **Looking for something you can run?** The [`demo/`](../demo/README.md) project is a real app with real bugs and a 2-minute tour (`bash demo/run-demo.sh`) plus a guided `/demo` command. This folder is a smaller, static sample of generated output for a login feature.
+
 This folder contains everything you need to see the full Tech9 QA Harness workflow — from ticket to test cases — without connecting to any ticket system.
 
 ---
