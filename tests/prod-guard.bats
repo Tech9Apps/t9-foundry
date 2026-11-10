@@ -621,3 +621,13 @@ guard_status() {
     [[ "$output" =~ "BLOCKED" ]]
   done
 }
+
+@test "an allowedUrlPatterns match inside the PATH of another host allows nothing (the reviewer's repro, with the repo's own enforce fixture)" {
+  guard_input "curl https://www.bank-of-example.net/go/https://partner.io/guide" "enforce-config.json"
+  run bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json"
+  [ "$status" -eq 2 ]
+  [[ "$output" =~ "bank-of-example.net" ]]
+  guard_input "curl https://partner.io/guide/setup" "enforce-config.json"
+  run bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json"
+  [ "$status" -eq 0 ]
+}

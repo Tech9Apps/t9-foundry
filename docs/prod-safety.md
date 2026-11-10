@@ -80,7 +80,7 @@ This is the final backstop. If a QA engineer manually sets `BASE_URL` to a produ
 
 Every layer that looks at URLs (3, 4 and 5) asks the same question about each one: **is it recognizably a test
 environment?** One reference implementation (`hooks/lib/url-guard.js`) answers it for the shell hooks; the runtime guards
-in the e2e templates (TypeScript ×3, Python ×2, Ruby) are ports of it, and a shared table of 106 cases
+in the e2e templates (TypeScript ×3, Python ×2, Ruby) are ports of it, and a shared table of 118 cases
 (`tests/fixtures/guard-cases.json`, including every bypass a review found) is run against **all** of them and against the
 real hooks, in both modes, so they cannot quietly disagree.
 
@@ -117,8 +117,11 @@ run. If that blocks something legitimate, add its host to `allowedUrlPatterns`.
 
 Write your patterns **anchored** (`://myapp\\.example\\.com/`, not `myapp\\.example\\.com`): a pattern is a regular expression, so an
 unanchored one matches every host that merely ends with it — staging subdomains included. `allowedUrlPatterns` are matched
-against the URL **without** its query string and fragment (text after `?` or `#` cannot satisfy them), and an invalid regex
-never exempts anything.
+against the URL **without** its query string and fragment (text after `?` or `#` cannot satisfy them), and a match has to **start
+inside the scheme and host**: `://partner\\.io/guide` allows `https://partner.io/guide/setup`, but not
+`https://evil.com/go/https://partner.io/guide` (the same text, but inside another host's path), and a pattern that is only a path
+(`/guide`) allows no host at all. Do not start an allow pattern with `.*`: it can begin matching at the start of any URL, so it
+says "anything, then `partner.io/guide`". An invalid regex never exempts anything.
 
 **What counts as a URL.** curl, browsers and HTTP libraries accept far more than `https://host/path`, so the shell hooks (Layers 3 and 4) read
 every spelling, in a command or in file content:
