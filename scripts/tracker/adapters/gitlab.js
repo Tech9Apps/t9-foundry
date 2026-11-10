@@ -98,6 +98,7 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
   }
 
   async function link({ childId, parentId }) {
+    issuePath(parentId); // both ends are issue numbers: refused here, before a request, instead of becoming target_issue_iid: null
     const targetProject = await resolveProjectId();
     try {
       await call('POST', `${issuePath(childId)}/links`, { target_project_id: targetProject, target_issue_iid: Number(parentId), link_type: 'relates_to' }, `link GitLab issue ${childId} to ${parentId}`);

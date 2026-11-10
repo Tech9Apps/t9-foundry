@@ -35,6 +35,11 @@ Same operations, same JSON in and out, same error shape — whichever tracker is
 Input shapes: [`schemas/tracker-inputs.schema.json`](../schemas/tracker-inputs.schema.json). Priorities are
 `High` / `Medium` / `Low`; each adapter maps them to its tracker's native scale.
 
+Those shapes are enforced, not just described: every input is checked against them (`VALIDATION`, before any request), and a test holds the code and
+the schema to the same answer for every case. In particular an id is letters, digits, `_` and `-` (at most 64) or a number, because it is placed in a URL;
+`limit` is a whole number from 1 to 100; `kind` is `any`, `bug` or `test`; `tcId` looks like `TC-001`. On GitHub a colon in a search query is dropped so
+the text cannot carry a qualifier such as `repo:other/private`.
+
 ## CLI
 
 ```bash
@@ -87,9 +92,9 @@ Every failure is normalized, so a caller never parses tracker-specific messages:
 |--------|---------|:-----------:|
 | `NOT_FOUND` | no such item (or not visible to this token) | no |
 | `UNAUTHENTICATED` / `FORBIDDEN` | bad credentials / not allowed | no |
-| `VALIDATION` | rejected as invalid — also bad input, caught **before any request** | no |
+| `VALIDATION` | rejected as invalid — also bad input, caught **before any request** — and **every 4xx the tracker answers with that has no other meaning here** (405, 410 "issues are disabled", 413, 451 …): repeating the same request cannot change it | no |
 | `CONFIG` | missing setting or env var — caught **before any request** | no |
-| `RATE_LIMITED` / `TIMEOUT` / `NETWORK` / `UPSTREAM_ERROR` | transient | **yes** |
+| `RATE_LIMITED` / `TIMEOUT` / `NETWORK` / `UPSTREAM_ERROR` | transient (429 and 425, 408, a dropped connection, a 5xx) | **yes** |
 
 ## Retries and idempotency
 

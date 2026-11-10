@@ -39,6 +39,12 @@ node_tests() { # <file> -> runs it, echoes the TAP summary lines
   [[ "$output" =~ "# fail 0" ]]
 }
 
+@test "inputs are checked against the schema (ids, limit, kind, tcId, steps) and HTTP failures are classified by whether repeating them can help" {
+  run node_tests inputs.test.js
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "# fail 0" ]]
+}
+
 @test "the tracker CLI passes its tests" {
   run node_tests cli.test.js
   [ "$status" -eq 0 ]

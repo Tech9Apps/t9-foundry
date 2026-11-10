@@ -34,21 +34,65 @@ function requireFields(input, fields, what) {
   if (missing.length) throw new TrackerError('VALIDATION', `${what} requires: ${missing.join(', ')}`);
 }
 
+// The shapes schemas/tracker-inputs.schema.json declares, enforced here (tests/tracker/inputs.test.js holds the two to the same answers). An id goes into a
+// URL path, `limit` into a query string: without these checks "10&page=9" and "../../list/999/task?x=" went straight through.
+const ID = /^[A-Za-z0-9_-]{1,64}$/;
+const TC_ID = /^TC-[A-Za-z0-9-]+$/;
+const KINDS = ['any', 'bug', 'test'];
+const bad = (field, what) => new TrackerError('VALIDATION', `${field} ${what}`);
+const isId = (v) => (typeof v === 'string' && ID.test(v)) || (Number.isSafeInteger(v) && ID.test(String(v)));
+const isText = (v) => typeof v === 'string';
+const defined = (v) => v !== undefined;
+
+function checkId(i, field) { if (!isId(i[field])) throw bad(field, 'must be a ticket id: letters, digits, "_" and "-" only (at most 64), or a number'); }
+function checkText(i, field, { required = true } = {}) {
+  if ((required || defined(i[field])) && !isText(i[field])) throw bad(field, 'must be text');
+}
+function checkPriority(i) { if (defined(i.priority) && !PRIORITIES.includes(i.priority)) throw bad('priority', `must be one of ${PRIORITIES.join(', ')}`); }
+
 function validate(op, input) {
   const i = input || {};
   switch (op) {
-    case 'fetch': requireFields(i, ['id'], 'fetch'); break;
-    case 'search': requireFields(i, ['query'], 'search'); break;
+    case 'fetch':
+      requireFields(i, ['id'], 'fetch');
+      checkId(i, 'id');
+      break;
+    case 'search':
+      requireFields(i, ['query'], 'search');
+      checkText(i, 'query');
+      if (defined(i.kind) && !KINDS.includes(i.kind)) throw bad('kind', `must be one of ${KINDS.join(', ')}`);
+      if (defined(i.limit) && !(Number.isInteger(i.limit) && i.limit >= 1 && i.limit <= 100)) throw bad('limit', 'must be a whole number from 1 to 100');
+      break;
     case 'create-test':
       requireFields(i, ['parentId', 'tcId', 'title'], 'create-test');
-      if (i.priority !== undefined && !PRIORITIES.includes(i.priority)) throw new TrackerError('VALIDATION', `priority must be one of ${PRIORITIES.join(', ')}`);
-      if (i.steps !== undefined && !Array.isArray(i.steps)) throw new TrackerError('VALIDATION', 'steps must be an array of { action, expected }');
+      checkId(i, 'parentId');
+      if (!isText(i.tcId) || !TC_ID.test(i.tcId)) throw bad('tcId', 'must look like TC-001 (TC- then letters, digits or hyphens)');
+      checkText(i, 'title');
+      checkText(i, 'description', { required: false });
+      checkPriority(i);
+      if (defined(i.steps)) {
+        if (!Array.isArray(i.steps)) throw bad('steps', 'must be an array of { action, expected }');
+        i.steps.forEach((s, n) => {
+          if (!s || typeof s !== 'object' || Array.isArray(s) || !isText(s.action) || (defined(s.expected) && !isText(s.expected))) throw bad(`steps[${n}]`, 'must be { action: text, expected?: text }');
+        });
+      }
       break;
-    case 'link': requireFields(i, ['childId', 'parentId'], 'link'); break;
-    case 'comment': requireFields(i, ['id', 'body'], 'comment'); break;
+    case 'link':
+      requireFields(i, ['childId', 'parentId'], 'link');
+      checkId(i, 'childId');
+      checkId(i, 'parentId');
+      break;
+    case 'comment':
+      requireFields(i, ['id', 'body'], 'comment');
+      checkId(i, 'id');
+      checkText(i, 'body');
+      break;
     case 'create-bug':
       requireFields(i, ['title', 'body'], 'create-bug');
-      if (i.priority !== undefined && !PRIORITIES.includes(i.priority)) throw new TrackerError('VALIDATION', `priority must be one of ${PRIORITIES.join(', ')}`);
+      checkText(i, 'title');
+      checkText(i, 'body');
+      checkPriority(i);
+      if (defined(i.labels) && !(Array.isArray(i.labels) && i.labels.every(isText))) throw bad('labels', 'must be an array of text');
       break;
     default:
       throw new TrackerError('VALIDATION', `unknown operation "${op}" (expected one of ${OPERATIONS.join(', ')})`);

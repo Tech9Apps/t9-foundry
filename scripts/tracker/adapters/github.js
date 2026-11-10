@@ -59,7 +59,9 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
   }
 
   async function search({ query, kind = 'any', limit = 10 }) {
-    const parts = [query, `repo:${repo}`, 'is:issue'];
+    // A colon in the text would let it carry a search qualifier ("repo:victim/private" widens the search to any repository the token can read), so the
+    // text is searched as words: the only qualifiers sent are the ones below.
+    const parts = [String(query).replace(/:/g, ' '), `repo:${repo}`, 'is:issue'];
     if (kind === 'bug') parts.push('label:bug');
     if (kind === 'test') parts.push(`label:${testLabel}`);
     const { json } = await call('GET', `/search/issues?q=${encodeURIComponent(parts.join(' '))}&per_page=${limit}`, undefined, 'search GitHub issues');
