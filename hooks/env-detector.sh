@@ -5,6 +5,10 @@
 
 set -euo pipefail
 
+# When a PreToolUse hook blocks (exit 2), Claude Code shows Claude the hook's STDERR as the reason. Everything this script prints is a reason or
+# a warning for someone to read, so it all goes to stderr; command substitutions below keep capturing their own output as before.
+exec 1>&2
+
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/qa-config-path.sh"
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/guard-mode.sh"
 

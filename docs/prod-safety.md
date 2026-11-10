@@ -12,17 +12,17 @@ The `CLAUDE.md` file contains an absolute behavioral prohibition that Claude rea
 
 ---
 
-## Layer 2: Session Startup Validation (`hooks/session-init.sh`)
+## Layer 2: Session Startup Notice (`hooks/session-init.sh`)
 
-When you open this workspace with `claude`, the `session-init.sh` hook runs before any skills or commands. It:
+When you open this workspace with `claude`, the `session-init.sh` hook runs before any skills or commands. It checks `qa-config.json` and **tells you** if:
 
-1. Checks that `qa-config.json` exists (warns if missing)
-2. Reads `environments.testEnvironmentBaseUrl` and validates it against every pattern in `productionProtection.prodUrlPatterns`
-3. **If the staging URL matches a production pattern: exits with code 2, blocking the session**
+1. the file is malformed, or missing while guard mode is `enforce`;
+2. in `enforce` mode, `productionProtection.prodUrlPatterns` is empty or `environments.testEnvironmentBaseUrl` is not set;
+3. `environments.testEnvironmentBaseUrl` matches a production pattern, in any mode and in any spelling (case, userinfo, port, trailing dot).
 
-This catches misconfiguration before anything else runs. A QA engineer cannot accidentally start working against production if their config is wrong.
+**This layer informs; it does not stop anything.** Claude Code does not block a session when a `SessionStart` hook fails: exit code 2 there shows you the hook's stderr as a notice and the session carries on. The condition is enforced by **Layer 3**: `prod-guard.sh` asks the same code (`hooks/lib/url-guard.js`) the same questions before every shell command and **refuses every command while any of them holds**. So a misconfigured workspace can open, but it cannot run a shell command.
 
-**To fix a Layer 2 block:** Edit `qa-config.json > environments.testEnvironmentBaseUrl` to point at your staging environment, then re-open the workspace.
+**To fix it:** edit `qa-config.json` (with the Write or Edit tool, or by hand) so that `environments.testEnvironmentBaseUrl` points at your staging environment and, in `enforce` mode, both it and `prodUrlPatterns` are set. The next command runs.
 
 ---
 
@@ -31,10 +31,12 @@ This catches misconfiguration before anything else runs. A QA engineer cannot ac
 Every shell command Claude runs passes through this hook before execution. It scans for:
 
 - Production environment variables: `NODE_ENV=production`, `RAILS_ENV=production`, `APP_ENV=prod`, `--env=production`, etc.
-- URLs matching any pattern in `productionProtection.prodUrlPatterns`
+- URLs matching any pattern in `productionProtection.prodUrlPatterns`, in every spelling a command can use (see "What counts as a URL" below)
 - URLs that are not recognizably a test environment — judged by the shared host decision described under "Guard Modes" below; this always runs as an additional layer (unless `blockOnSuspiciousUrls` is `false`), not only when `prodUrlPatterns` is empty. A configured pattern list only covers what has been typed in.
 
 **If a match is found:** the env-var and configured-pattern checks exit with code 2 (blocking). An unrecognized host only warns in `warn` mode (a human is watching) and blocks in `enforce` mode.
+
+**It also refuses every command while the configuration is unsafe** (the checks Layer 2 can only announce): no `qa-config.json`, no `prodUrlPatterns` or no staging URL in `enforce` mode, or a staging URL that is itself a production URL in any mode. And without `jq` it cannot read a command at all, so `enforce` mode blocks and `warn` mode warns. Every reason is printed to stderr, which is what Claude Code shows Claude when a hook blocks.
 
 This catches a mistyped command or a mis-configured test runner that names a production URL, even if Layers 1 and 2 somehow failed. It reads URLs, not intent — see "What this cannot see" under Guard Modes for what it does not cover.
 
@@ -103,8 +105,10 @@ The decision, in order, for each URL:
 
 | Mode | Unrecognized host | Unverifiable host | Empty `prodUrlPatterns` | Missing config | Malformed `qa-config.json` | `node` missing (hooks) | When |
 |------|-------------------|-------------------|-------------------------|----------------|------------------------------|------------------------|------|
-| `warn` (default) | warns | warns | warns at session start | setup guidance | **warns** that no production pattern is being applied (session start blocks) | warns | a human is at the keyboard |
-| `enforce` | **blocks** | **blocks** | **blocks the session** | **blocks the session** | **blocks** | **blocks** | unattended runs — a warning nobody reads is not a guard |
+| `warn` (default) | warns | warns | warns at session start | setup guidance | **warns** that no production pattern is being applied | warns | a human is at the keyboard |
+| `enforce` | **blocks** | **blocks** | **blocks every command** (Layer 3; session start only notifies) | **blocks every command** (same) | **blocks** | **blocks** | unattended runs — a warning nobody reads is not a guard |
+
+In `enforce` mode an unset `testEnvironmentBaseUrl` blocks every command too, and in **both** modes a staging URL that matches a production pattern does.
 
 Enforce is selected by **`QA_AUTONOMOUS=1`** (set by autonomous entry points; overrides the config) or by
 `productionProtection.mode: "enforce"` in `qa-config.json`. Configured `prodUrlPatterns` and production env-var checks
@@ -116,6 +120,23 @@ unanchored one matches every host that merely ends with it — staging subdomain
 against the URL **without** its query string and fragment (text after `?` or `#` cannot satisfy them), and an invalid regex
 never exempts anything.
 
+**What counts as a URL.** curl, browsers and HTTP libraries accept far more than `https://host/path`, so the shell hooks (Layers 3 and 4) read
+every spelling, in a command or in file content:
+
+| Spelling | Examples | Judged by |
+|----------|----------|-----------|
+| `http(s)` with the slashes wrong | `https:/host`, `http:///host`, `HTTPS:/host`, `https:host` | the full decision above, exactly like `https://host` |
+| protocol-relative | `//host/path`, `--url=//host` | the full decision (a host that looks like one: `ls //tmp/x` is not read as a URL) |
+| a backslash after the scheme | `https:\\host` | the full decision: unverifiable (the guard does not guess), so `enforce` blocks |
+| another scheme | `ftp://host`, `sftp://user@host`, `postgresql://host` | **`prodUrlPatterns` only** |
+| a bare host | `curl myapp.example.com/x`, `user@host`, `BASE=host/x npm test` | **`prodUrlPatterns` only** |
+
+The last two are checked against your production patterns only, because they cannot be judged by the "is it a test environment?" rules
+without blocking ordinary commands: a bare token cannot be told from a file name (`out.json`, `app.config.js`), and `git clone
+ssh://…` is routine. The consequence is worth knowing: **in `enforce` mode an unknown host written without a scheme is not blocked
+unless a production pattern matches it.** Keep `prodUrlPatterns` complete, and write them against the host (`://myapp\\.example\\.com/`
+matches every spelling above, because the reader tries the normalized `https://host…` form of each).
+
 Layer 4 never blocks documentation files (`.md`, `.txt`, `.rst`) on an unrecognized host — they legitimately link out — it only
 warns. URLs are judged **one at a time**: a staging URL elsewhere in the same command does not excuse a production-looking one.
 
@@ -125,7 +146,7 @@ combined with `enforce`.
 **What this cannot see.** The guard reads URLs; it does not read intent or the network. It does **not** cover: a redirect from an
 allowed host to a production one; DNS that points a staging name at production; a hostname assembled by a program at run time
 (in `enforce` a host written as a shell variable is blocked, but a program that builds its own URL is not seen); a target given
-without a URL (`ssh prod-db`, a bare hostname argument); or a command that never mentions the target (a script reading its URL
+without a URL (`ssh prod-db`; a bare hostname is matched against `prodUrlPatterns` only, see above); or a command that never mentions the target (a script reading its URL
 from a file). Layer 5 (the runtime guard) is the backstop for the test runner itself; for everything else, `prodUrlPatterns`
 and your network controls are the real protection.
 
@@ -172,7 +193,7 @@ Rules:
 | Layer triggered | Root cause | Fix |
 |----------------|-----------|-----|
 | Layer 1 | Prompt mentioned production as test target | Rephrase — target staging instead |
-| Layer 2 | `testEnvironmentBaseUrl` is a prod URL | Fix qa-config.json, restart session |
+| Layer 2 | `testEnvironmentBaseUrl` is a prod URL, or (enforce) patterns / staging URL missing | Fix qa-config.json; until then Layer 3 refuses every shell command |
 | Layer 3 | Command contains prod URL or env var | Fix the command or test runner config |
 | Layer 4 | File being written contains prod URL | Remove the hardcoded URL, use env var |
 | Layer 5 | `BASE_URL` env var set to prod | `unset BASE_URL`, set it to staging URL |

@@ -121,6 +121,17 @@ function candidates(url, u) {
 
 const compile = (p, flags) => { try { return new RegExp(p, flags); } catch { return null; } };
 
+// A configured production pattern matching any normalized form of the URL (and any extra spelling given), or null.
+function prodPatternHit(url, cfg, extraForms = []) {
+  const u = parseUrl(url);
+  const forms = [...(u && u.verifiable ? candidates(url, u) : [String(url)]), ...extraForms];
+  for (const pattern of cfg.prodUrlPatterns || []) {
+    const re = pattern ? compile(pattern, 'i') : null; // case-insensitive: hosts are
+    if (re && forms.some((f) => re.test(f))) return { decision: 'block', reason: 'PROD_PATTERN', detail: pattern };
+  }
+  return null;
+}
+
 // ── the decision ───────────────────────────────────────────────────────────────────────────────
 function decide(url, cfg = {}) {
   const enforce = cfg.mode === 'enforce';
@@ -128,11 +139,8 @@ function decide(url, cfg = {}) {
   const u = parseUrl(url);
 
   // 1. configured production patterns win over everything, in both modes, even for a URL we could not otherwise parse
-  const forms = u && u.verifiable ? candidates(url, u) : [String(url)];
-  for (const pattern of cfg.prodUrlPatterns || []) {
-    const re = pattern ? compile(pattern, 'i') : null; // case-insensitive: hosts are
-    if (re && forms.some((f) => re.test(f))) return { decision: 'block', reason: 'PROD_PATTERN', detail: pattern };
-  }
+  const hit = prodPatternHit(url, cfg);
+  if (hit) return hit;
 
   // 2. the heuristic can be switched off, explicitly: enforce mode never overrides that opt-out (patterns above still apply)
   if (cfg.blockOnSuspiciousUrls === false) return { decision: 'allow', reason: 'HEURISTIC_DISABLED' };
@@ -161,15 +169,64 @@ function decide(url, cfg = {}) {
 // ── finding URLs in text ───────────────────────────────────────────────────────────────────────
 const extractUrls = (text) => [...new Set((String(text).match(/https?:\/\/[^\s'"`<>)]+/gi) || []))];
 
+// Everything in the text that curl, a browser or a library would read as a URL, however it is spelled. Each is judged one of two ways:
+//   'full'     decide(): production patterns, then the "is this recognizably a test environment?" rules. For anything that is plainly an
+//              http(s) URL: "https://host", "https:/host", "http:///host", "https:host", "//host", and a spelling with a backslash (which
+//              decide() refuses to guess at: unverifiable).
+//   'patterns' production patterns only. For a scheme that is not http(s) ("ftp://host", "sftp://user@host", "postgresql://host") and for
+//              a bare "host/path" or "user@host": a bare token cannot be told from a file name ("out.json", "app.config.js"), so judging it
+//              as an unrecognized host would block ordinary commands. A production host that is configured is still caught.
+const TAIL = '[^\\s\'"`<>)]';
+const HOSTISH = /^(?:[^/?#@]*@)?(?:\[|localhost\b|[^/?#]*\.|[^/?#]*:\d)/i; // has a dot, a port, brackets, or is localhost: not a bare word
+function findUrls(text) {
+  const s = String(text);
+  const found = new Map(); // raw spelling -> { raw, url, mode }
+  const add = (raw, url, mode) => { const had = found.get(raw); if (!had || (had.mode === 'patterns' && mode === 'full')) found.set(raw, { raw, url, mode }); };
+
+  // ("http:///host" starts like the normal spelling but has three slashes: it is read below, with the other odd ones)
+  for (const raw of extractUrls(s)) if (!/^https?:\/\/\//i.test(raw)) add(raw, raw, 'full');
+
+  // http(s) with the slashes wrong: "https:/host", "https:///host", "https:host", "https:\\host"
+  for (const m of s.matchAll(new RegExp(`\\b(https?):([/\\\\]*)(${TAIL}*)`, 'gi'))) {
+    const [raw, scheme, slashes, rest] = m;
+    if (!rest) continue;
+    if (slashes.includes('\\')) { add(raw, raw, 'full'); continue; } // decide() will call it unverifiable
+    if (slashes === '' && !(/^[A-Za-z0-9[%_-]/.test(rest) && HOSTISH.test(rest))) continue; // "https: for details" is prose
+    add(raw, `${scheme.toLowerCase()}://${rest}`, 'full');
+  }
+
+  // any other scheme://host: production patterns only
+  for (const m of s.matchAll(new RegExp(`\\b([a-z][a-z0-9+.-]*)://(${TAIL}+)`, 'gi'))) {
+    if (/^https?$/i.test(m[1])) continue;
+    add(m[0], `https://${m[2]}`, 'patterns');
+  }
+
+  // protocol-relative "//host/path" (as in "--url=//host", fetch("//host/api")): the host must look like one, so "ls //tmp/x" is left alone
+  for (const m of s.matchAll(new RegExp(`(^|[\\s'"\`=(,;|&<>])(//[A-Za-z0-9[%_-]${TAIL}*)`, 'g'))) {
+    if (HOSTISH.test(m[2].slice(2))) add(m[2], `https:${m[2]}`, 'full');
+  }
+
+  // a bare "host/path" or "user@host": production patterns only (see above)
+  for (const m of s.matchAll(new RegExp(`(?:^|[\\s'"\`=(,;|&<>])((?:[A-Za-z0-9._-]+@)?(?:[A-Za-z0-9-]+\\.)+[A-Za-z]{2,}\\.?(?::\\d{1,5})?(?:[/?#]${TAIL}*)?)(?=$|[\\s'"\`)<>,;|&])`, 'g'))) {
+    add(m[1], `https://${m[1]}`, 'patterns');
+  }
+  return [...found.values()];
+}
+
 function scan(text, cfg) {
-  return extractUrls(text).map((url) => ({ url, ...decide(url, cfg) })).filter((f) => f.decision !== 'allow');
+  const findings = [];
+  for (const f of findUrls(text)) {
+    const d = f.mode === 'full' ? decide(f.url, cfg) : (prodPatternHit(f.url, cfg, [f.raw]) || { decision: 'allow' });
+    if (d.decision !== 'allow') findings.push({ url: f.raw, ...d });
+  }
+  return findings;
 }
 
 // ── config, and the CLI the shell hooks call ───────────────────────────────────────────────────
 function loadConfig(file) {
-  if (!file || !fs.existsSync(file)) return { cfg: {}, error: null };
+  if (!file || !fs.existsSync(file)) return { cfg: {}, error: null, found: false };
   let doc;
-  try { doc = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { return { cfg: {}, error: `${file} is not valid JSON: ${e.message}` }; }
+  try { doc = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { return { cfg: {}, error: `${file} is not valid JSON: ${e.message}`, found: true }; }
   const pp = (doc && doc.productionProtection) || {};
   return {
     cfg: {
@@ -179,15 +236,36 @@ function loadConfig(file) {
       testEnvironmentBaseUrl: doc && doc.environments && doc.environments.testEnvironmentBaseUrl,
     },
     error: null,
+    found: true,
   };
+}
+
+// What is wrong with the configuration itself, as [{ code, message }]. A run whose configuration is unsafe must not go on: the per-command hook
+// (prod-guard.sh) refuses every command while this is non-empty, and the session-start hook tells the user.
+//   NO_CONFIG, NO_PROD_PATTERNS, NO_TEST_ENV_URL   enforce mode only: with nothing configured, nothing proves a target is safe
+//   TEST_ENV_IS_PROD                               any mode: the configured test environment IS a production URL, in any spelling
+function configProblems(cfg, mode, { found = true } = {}) {
+  const problems = [];
+  if (!found) {
+    if (mode === 'enforce') problems.push({ code: 'NO_CONFIG', message: 'qa-config.json was not found, and guard mode is enforce (QA_AUTONOMOUS=1 or productionProtection.mode): an unattended run needs a configured workspace' });
+    return problems;
+  }
+  const patterns = (cfg.prodUrlPatterns || []).filter(Boolean);
+  if (mode === 'enforce' && !patterns.length) problems.push({ code: 'NO_PROD_PATTERNS', message: 'productionProtection.prodUrlPatterns is empty, and guard mode is enforce: an unattended run must have production URL patterns configured' });
+  if (mode === 'enforce' && !cfg.testEnvironmentBaseUrl) problems.push({ code: 'NO_TEST_ENV_URL', message: 'environments.testEnvironmentBaseUrl is not set, and guard mode is enforce: set your staging URL' });
+  if (cfg.testEnvironmentBaseUrl) {
+    const hit = prodPatternHit(cfg.testEnvironmentBaseUrl, cfg);
+    if (hit) problems.push({ code: 'TEST_ENV_IS_PROD', message: `environments.testEnvironmentBaseUrl (${cfg.testEnvironmentBaseUrl}) matches the production pattern ${hit.detail}: qa-config.json points the tests at PRODUCTION`, detail: hit.detail });
+  }
+  return problems;
 }
 
 function main(argv = process.argv.slice(2)) {
   const opt = (name) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : undefined; };
   const mode = opt('--mode') === 'enforce' ? 'enforce' : 'warn';
-  const { cfg, error } = loadConfig(opt('--config'));
+  const { cfg, error, found } = loadConfig(opt('--config'));
   const text = fs.readFileSync(0, 'utf8');
-  process.stdout.write(`${JSON.stringify({ configError: error, mode, findings: scan(text, { ...cfg, mode }) })}\n`);
+  process.stdout.write(`${JSON.stringify({ configError: error, mode, configProblems: error ? [] : configProblems(cfg, mode, { found }), findings: scan(text, { ...cfg, mode }) })}\n`);
   return 0;
 }
 
@@ -195,4 +273,4 @@ if (require.main === module) {
   try { process.exitCode = main(); } catch (e) { process.stderr.write(`url-guard: ${e.message}\n`); process.exitCode = 1; }
 }
 
-module.exports = { decide, scan, extractUrls, parseUrl, toIPv4, loadConfig, NONPROD_TOKENS, PROD_TOKENS };
+module.exports = { decide, scan, extractUrls, findUrls, configProblems, prodPatternHit, parseUrl, toIPv4, loadConfig, NONPROD_TOKENS, PROD_TOKENS };

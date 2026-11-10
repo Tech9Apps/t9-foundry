@@ -293,3 +293,31 @@ run_detector() { run env -u QA_AUTONOMOUS bash -c "cd '$TEST_TMP' && bash '$DETE
   [ "$status" -eq 0 ]
   [[ "$output" =~ "not valid JSON" ]]
 }
+
+# ── Every spelling of a URL in file content (same reader as the Bash guard) ──
+
+@test "a file that sends a browser or request to a production URL spelled with odd slashes, no scheme or another scheme is blocked" {
+  for content in 'await page.goto("https:/myapp.example.com/");' 'fetch("//myapp.example.com/api")' 'const base = "ftp://myapp.example.com/x";' 'const u = "myapp.example.com/api";'; do
+    write_input "tests/api.spec.ts" "$content" "prod-url-config.json"
+    run bash -c "cd '$TEST_TMP' && bash '$DETECTOR' < input.json"
+    [ "$status" -eq 2 ] || { echo "NOT BLOCKED: $content"; echo "$output"; false; }
+  done
+}
+
+@test "enforce: odd spellings in file content to an unrecognized host block, to the staging URL pass" {
+  write_input "tests/api.spec.ts" 'await page.goto("https:/www.bank-of-example.net/");' "enforce-config.json"
+  run bash -c "cd '$TEST_TMP' && bash '$DETECTOR' < input.json"
+  [ "$status" -eq 2 ]
+  write_input "tests/api.spec.ts" 'await page.goto("https:/staging.myapp.example.com/");' "enforce-config.json"
+  run bash -c "cd '$TEST_TMP' && bash '$DETECTOR' < input.json"
+  [ "$status" -eq 0 ]
+}
+
+@test "every reason a blocking hook gives is on stderr, none on stdout (stderr is what Claude Code shows Claude when a hook blocks)" {
+  write_input "tests/api.spec.ts" 'const base = "https://myapp.example.com/api";' "enforce-config.json"
+  run bash -c "cd '$TEST_TMP' && bash '$DETECTOR' < input.json 2>/dev/null"
+  [ "$status" -eq 2 ]
+  [ -z "$output" ] || { echo "stdout was not empty"; echo "$output"; false; }
+  run bash -c "cd '$TEST_TMP' && bash '$DETECTOR' < input.json 2>&1 >/dev/null"
+  [[ "$output" =~ "BLOCKED" ]]
+}

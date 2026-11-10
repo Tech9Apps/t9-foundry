@@ -16,7 +16,11 @@ resolve_guard_mode() {
   fi
   local mode="warn"
   if [ -n "${1:-}" ] && [ -f "$1" ]; then
-    mode=$(jq -r '.productionProtection.mode // "warn"' "$1" 2>/dev/null || echo "warn")
+    if command -v jq >/dev/null 2>&1; then
+      mode=$(jq -r '.productionProtection.mode // "warn"' "$1" 2>/dev/null || echo "warn")
+    elif grep -Eq '"mode"[[:space:]]*:[[:space:]]*"enforce"' "$1" 2>/dev/null; then
+      mode="enforce" # no jq to read it properly: err toward the stricter mode
+    fi
   fi
   if [ "$mode" = "enforce" ]; then
     echo "enforce"
