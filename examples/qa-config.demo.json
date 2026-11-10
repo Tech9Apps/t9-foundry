@@ -14,8 +14,8 @@
   },
   "productionProtection": {
     "prodUrlPatterns": [
-      "yourapp\\.com$",
-      "app\\.yourapp\\.com"
+      "://yourapp\\.com(/|:|$)",
+      "://app\\.yourapp\\.com(/|:|$)"
     ]
   },
   "testFramework": {

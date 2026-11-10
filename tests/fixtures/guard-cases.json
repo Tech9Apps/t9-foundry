@@ -18,6 +18,46 @@
     "myapp\\.com$"
    ],
    "blockOnSuspiciousUrls": false
+  },
+  "allow-path-only": {
+   "prodUrlPatterns": [
+    "myapp\\.com$"
+   ],
+   "allowedUrlPatterns": [
+    "/guide"
+   ]
+  },
+  "allow-hostpath": {
+   "prodUrlPatterns": [
+    "myapp\\.com$"
+   ],
+   "allowedUrlPatterns": [
+    "partner\\.io/guide"
+   ]
+  },
+  "allow-anchored": {
+   "prodUrlPatterns": [
+    "myapp\\.com$"
+   ],
+   "allowedUrlPatterns": [
+    "^https://partner\\.io/"
+   ]
+  },
+  "allow-dotstar": {
+   "prodUrlPatterns": [
+    "myapp\\.com$"
+   ],
+   "allowedUrlPatterns": [
+    ".*partner\\.io/guide"
+   ]
+  },
+  "allow-port": {
+   "prodUrlPatterns": [
+    "myapp\\.com$"
+   ],
+   "allowedUrlPatterns": [
+    "://partner\\.io:8443/"
+   ]
   }
  },
  "cases": [
@@ -1086,6 +1126,137 @@
    },
    "reason": "PROD_PATTERN",
    "note": "a configured pattern still blocks"
+  },
+  {
+   "group": "allowed-patterns",
+   "url": "https://www.bank-of-example.net/go/https://partner.io/guide",
+   "config": "prod",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNRECOGNIZED_HOST",
+   "note": "the allowed text is inside the PATH of another host: an allow pattern has to match starting at the host"
+  },
+  {
+   "group": "allowed-patterns",
+   "url": "https://evil.com/x://partner.io/guide",
+   "config": "prod",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNRECOGNIZED_HOST",
+   "note": "...with the scheme separator in the path"
+  },
+  {
+   "group": "allowed-patterns",
+   "url": "https://evil.com:8443/https://partner.io/guide",
+   "config": "prod",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNRECOGNIZED_HOST",
+   "note": "...and a port on the real host"
+  },
+  {
+   "group": "allowed-patterns",
+   "url": "https://partner.io/guide/deeper/page",
+   "config": "prod",
+   "expect": {
+    "enforce": "allow",
+    "warn": "allow"
+   },
+   "reason": "ALLOWED_PATTERN",
+   "note": "a pattern that names a path still allows what is under it"
+  },
+  {
+   "group": "allowed-patterns",
+   "url": "https://partner.io/guide",
+   "config": "allow-path-only",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNRECOGNIZED_HOST",
+   "note": "a pattern that is only a path allows no host"
+  },
+  {
+   "group": "allowed-patterns",
+   "url": "https://partner.io/guide",
+   "config": "allow-hostpath",
+   "expect": {
+    "enforce": "allow",
+    "warn": "allow"
+   },
+   "reason": "ALLOWED_PATTERN",
+   "note": "a pattern needs no scheme, only to start at the host"
+  },
+  {
+   "group": "allowed-patterns",
+   "url": "https://evil.com/partner.io/guide",
+   "config": "allow-hostpath",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNRECOGNIZED_HOST",
+   "note": "the same text, inside another host path"
+  },
+  {
+   "group": "allowed-patterns",
+   "url": "https://partner.io/anything",
+   "config": "allow-anchored",
+   "expect": {
+    "enforce": "allow",
+    "warn": "allow"
+   },
+   "reason": "ALLOWED_PATTERN"
+  },
+  {
+   "group": "allowed-patterns",
+   "url": "https://evil.com/?u=https://partner.io/x",
+   "config": "allow-anchored",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNRECOGNIZED_HOST",
+   "note": "an anchored pattern cannot be satisfied from the query string"
+  },
+  {
+   "group": "allowed-patterns",
+   "url": "https://evil.com/x/partner.io/guide",
+   "config": "allow-dotstar",
+   "expect": {
+    "enforce": "allow",
+    "warn": "allow"
+   },
+   "reason": "ALLOWED_PATTERN",
+   "note": "documented limit: a pattern that starts with .* can begin matching at the start of the URL, so it says \"anything, then partner.io/guide\"; do not write allow patterns that way"
+  },
+  {
+   "group": "allowed-patterns",
+   "url": "https://partner.io:8443/x",
+   "config": "allow-port",
+   "expect": {
+    "enforce": "allow",
+    "warn": "allow"
+   },
+   "reason": "ALLOWED_PATTERN",
+   "note": "a pattern may name the port: it is part of scheme://host:port"
+  },
+  {
+   "group": "allowed-patterns",
+   "url": "https://partner.io:9000/x",
+   "config": "allow-port",
+   "expect": {
+    "enforce": "block",
+    "warn": "warn"
+   },
+   "reason": "UNRECOGNIZED_HOST",
+   "note": "another port is not the one the pattern names"
   }
  ]
 }

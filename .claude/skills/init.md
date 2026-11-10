@@ -272,7 +272,7 @@ Execute the `connect-repo.md` configuration logic directly — the repo location
   - GitLab: `codeRepository.gitlab.projectId` (numeric ID or namespace/path) and `codeRepository.gitlab.host` (default: `https://gitlab.com`)
   - Bitbucket: `codeRepository.bitbucket.workspace` and `codeRepository.bitbucket.repo`
 - Ask for the staging environment URL (`testEnvironmentBaseUrl`)
-- Ask for production URL patterns to block (`prodUrlPatterns`) — suggest reasonable defaults based on the staging URL (e.g., if staging is `staging.myapp.com`, suggest `myapp.com$` and `app.myapp.com`)
+- Ask for production URL patterns to block (`prodUrlPatterns`) — suggest reasonable defaults based on the staging URL, written ANCHORED to the scheme and host (e.g., if staging is `staging.myapp.com`, suggest `://myapp\.com(/|:|$)` and `://app\.myapp\.com(/|:|$)`). Never suggest an unanchored `myapp.com$`: it also matches `staging.myapp.com`, and a config whose staging URL matches a production pattern stops every shell command
 - Validate the staging URL does not match any of the prod patterns before writing to config (same check as `session-init.sh`). If it matches, stop and ask the engineer to correct it.
 
 Write all fields to `qa-config.json`.

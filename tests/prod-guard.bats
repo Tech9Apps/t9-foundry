@@ -268,8 +268,12 @@ guard_input() {
 # ── Review findings: the heuristic reads the HOST, and every spelling of a configured pattern is caught ─────────────────
 
 # Config helper for the cases below: enforce mode plus the given prodUrlPatterns (JSON array, default none).
+# A fully configured enforce-mode workspace (enforce refuses a config with no patterns or no staging URL, see the last section), whose one
+# production pattern matches nothing these tests use. Pass a JSON array to use other patterns.
 enforce_config() {
-  jq -n --argjson p "${1:-[]}" '{productionProtection:{mode:"enforce",prodUrlPatterns:$p}}' > "$TEST_TMP/qa-config.json"
+  local patterns='["://prod\\.never-used\\.invalid/"]'
+  [ -n "${1:-}" ] && patterns="$1"
+  jq -n --argjson p "$patterns" '{environments:{testEnvironmentBaseUrl:"https://staging.never-used.invalid"},productionProtection:{mode:"enforce",prodUrlPatterns:$p}}' > "$TEST_TMP/qa-config.json"
 }
 run_guard() { run env -u QA_AUTONOMOUS bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json"; }
 
@@ -375,12 +379,13 @@ run_guard() { run env -u QA_AUTONOMOUS bash -c "cd '$TEST_TMP' && bash '$GUARD' 
 }
 
 @test "allowedUrlPatterns cannot be satisfied by text in the query string or fragment of some other URL" {
-  jq -n '{productionProtection:{mode:"enforce",allowedUrlPatterns:["://partner\\.io/guide"]}}' > "$TEST_TMP/qa-config.json"
+  jq -n '{environments:{testEnvironmentBaseUrl:"https://staging.never-used.invalid"},productionProtection:{mode:"enforce",prodUrlPatterns:["://prod\\.never-used\\.invalid/"],allowedUrlPatterns:["://partner\\.io/guide"]}}' > "$TEST_TMP/qa-config.json"
   for cmd in 'curl https://evil.com/?x=://partner.io/guide' 'curl https://evil.com/x#://partner.io/guide'; do
     guard_input "$cmd"
     run_guard
     echo "$cmd -> $status: $output"
     [ "$status" -eq 2 ]
+    [[ "$output" =~ "UNRECOGNIZED_HOST" ]]   # blocked because evil.com is unrecognized, not because the config was incomplete
   done
   guard_input 'curl https://partner.io/guide'
   run_guard
@@ -388,7 +393,7 @@ run_guard() { run env -u QA_AUTONOMOUS bash -c "cd '$TEST_TMP' && bash '$GUARD' 
 }
 
 @test "the test environment's own host is allowed in enforce mode, and only that exact host" {
-  jq -n '{environments:{testEnvironmentBaseUrl:"https://check9.tech9app.com"},productionProtection:{mode:"enforce"}}' > "$TEST_TMP/qa-config.json"
+  jq -n '{environments:{testEnvironmentBaseUrl:"https://check9.tech9app.com"},productionProtection:{mode:"enforce",prodUrlPatterns:["://prod\\.never-used\\.invalid/"]}}' > "$TEST_TMP/qa-config.json"
   guard_input 'curl https://check9.tech9app.com/api/health'
   run_guard
   [ "$status" -eq 0 ]
@@ -430,4 +435,408 @@ run_guard() { run env -u QA_AUTONOMOUS bash -c "cd '$TEST_TMP' && bash '$GUARD' 
   run_guard
   [ "$status" -eq 2 ]
   [[ "$output" =~ "www.acme.com" ]]
+}
+
+# ── Every spelling of a URL that a command can use ───────────────────────────
+# curl and browsers accept far more than "https://host/path": "https:/host", "http:///host", a bare "host/path", "user@host", "//host".
+# The guard used to read only "https?://" and let the rest through unchecked, in every mode.
+
+# guard_status <command> <config fixture> [env assignment...] → the hook's exit code, output in $output
+guard_status() {
+  local cmd="$1" config="$2"; shift 2
+  guard_input "$cmd" "$config"
+  run env "$@" bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json"
+}
+
+@test "a production URL is blocked in every spelling curl or a browser accepts, in warn mode and in enforce mode" {
+  for cmd in \
+    'curl https://myapp.example.com/x' \
+    'curl https:/myapp.example.com/x' \
+    'curl HTTPS:/myapp.example.com/x' \
+    'curl http:///myapp.example.com/x' \
+    'curl https:myapp.example.com/x' \
+    'curl //myapp.example.com/x' \
+    'curl --url=//myapp.example.com/x' \
+    'curl myapp.example.com/x' \
+    'curl myapp.example.com' \
+    'curl -I MyApp.Example.Com:443' \
+    'curl MYAPP.EXAMPLE.COM/x' \
+    'curl user@myapp.example.com/x' \
+    'wget -qO- myapp.example.com/x' \
+    'BASE=myapp.example.com/x npm test' \
+    'curl ftp://myapp.example.com/x' \
+    'curl sftp://user@myapp.example.com/x'; do
+    for env in QA_PROBE=warn QA_AUTONOMOUS=1; do
+      guard_status "$cmd" "prod-url-config.json" "$env"
+      [ "$status" -eq 2 ] || { echo "NOT BLOCKED ($env): $cmd"; echo "$output"; false; }
+      [[ "$output" =~ "BLOCKED" ]]
+    done
+  done
+}
+
+@test "enforce: an odd spelling of a URL to a host that is not recognizably a test environment blocks, exactly like the normal spelling" {
+  for cmd in 'curl https:/www.bank-of-example.net/transfer' 'curl http:///www.bank-of-example.net/transfer' 'curl //www.bank-of-example.net/transfer' 'curl https:www.bank-of-example.net/transfer'; do
+    guard_status "$cmd" "enforce-config.json"
+    [ "$status" -eq 2 ] || { echo "NOT BLOCKED: $cmd"; echo "$output"; false; }
+    [[ "$output" =~ "bank-of-example.net" ]]
+  done
+  guard_status 'curl https:/www.bank-of-example.net/transfer' "empty-patterns-config.json" QA_AUTONOMOUS=1
+  [ "$status" -eq 2 ]
+}
+
+@test "warn: an odd spelling of an unrecognized host only warns, like the normal spelling" {
+  guard_status 'curl https:/otherapp.io/dashboard' "prod-url-config.json"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "WARNING" ]]
+  [[ "$output" =~ "otherapp.io" ]]
+}
+
+@test "enforce: odd spellings of the staging URL, a code host and an allowed pattern still pass" {
+  for cmd in 'curl https:/staging.myapp.example.com/health' 'curl //staging.myapp.example.com/health' 'curl staging.myapp.example.com/health' \
+             'curl https:/github.com/Tech9Apps/t9-foundry' 'curl https:/partner.io/guide/setup'; do
+    guard_status "$cmd" "enforce-config.json"
+    [ "$status" -eq 0 ] || { echo "BLOCKED: $cmd"; echo "$output"; false; }
+  done
+}
+
+@test "ordinary commands that merely contain dots, slashes or at-signs are not mistaken for URLs" {
+  for cmd in 'node app.config.js' 'cat package.json README.md' 'ls //tmp/x' 'ls /usr//local/bin' 'npm install left-pad@1.3.0' 'git log --since=2.weeks' \
+             'curl -o out.json https://staging.myapp.example.com/x' 'echo "see https: for details"' 'echo "the https:scheme is optional here"' 'git commit -m "fix foo.bar/baz handling"' 'scp build.tar.gz deploy@staging.myapp.example.com:/srv'; do
+    for env in QA_PROBE=warn QA_AUTONOMOUS=1; do
+      guard_status "$cmd" "enforce-config.json" "$env"
+      [ "$status" -eq 0 ] || { echo "WRONGLY BLOCKED ($env): $cmd"; echo "$output"; false; }
+    done
+  done
+}
+
+@test "a spelling with a backslash is still not guessed at: unverifiable, so enforce blocks and warn warns" {
+  guard_status 'curl https:\\myapp.example.com\x' "enforce-config.json"
+  [ "$status" -eq 2 ]
+  guard_status 'curl https:\\otherapp.io\x' "prod-url-config.json"   # a host no production pattern names: still only a warning in warn mode
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "WARNING" ]]
+}
+
+# ── An unsafe configuration stops every command ──────────────────────────────
+# Claude Code cannot block a session from a SessionStart hook (exit 2 there only shows the user a notice and the session goes on), so
+# the checks that must stop an unattended run are made here, before each command, where exit 2 does block.
+
+@test "enforce: with no qa-config.json at all, every command is blocked" {
+  guard_input "echo hello"
+  run env QA_AUTONOMOUS=1 bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json"
+  [ "$status" -eq 2 ]
+  [[ "$output" =~ "BLOCKED" ]]
+  [[ "$output" =~ "qa-config.json" ]]
+}
+
+@test "enforce: with no production URL patterns configured, every command is blocked" {
+  for fixture in empty-patterns-config.json enforce-empty-patterns-config.json; do
+    guard_input "echo hello" "$fixture"
+    run env QA_AUTONOMOUS=1 bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json"
+    [ "$status" -eq 2 ] || { echo "NOT BLOCKED: $fixture"; echo "$output"; false; }
+    [[ "$output" =~ "prodUrlPatterns" ]]
+  done
+  guard_input "echo hello" "enforce-empty-patterns-config.json"   # enforce set by the config itself, no environment variable
+  run bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json"
+  [ "$status" -eq 2 ]
+}
+
+@test "enforce: with no staging URL configured, every command is blocked" {
+  guard_input "echo hello" "enforce-no-test-url-config.json"
+  run bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json"
+  [ "$status" -eq 2 ]
+  [[ "$output" =~ "testEnvironmentBaseUrl" ]]
+}
+
+@test "in any mode, a staging URL that is itself a production URL blocks every command, and says which pattern and URL" {
+  guard_input "echo hello" "prod-staging-url-config.json"
+  for mode in warn enforce; do
+    if [ "$mode" = enforce ]; then run env QA_AUTONOMOUS=1 bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json"; else run env -u QA_AUTONOMOUS bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json"; fi
+    [ "$status" -eq 2 ] || { echo "NOT BLOCKED ($mode)"; echo "$output"; false; }
+    [[ "$output" =~ "testEnvironmentBaseUrl" ]]
+    [[ "$output" =~ "https://myapp.example.com" ]]
+    [[ "$output" =~ 'myapp\.example\.com' ]]
+  done
+}
+
+@test "a staging URL that is production in another spelling (case, userinfo, port, trailing dot) is caught like any production URL" {
+  for url in 'https://MYAPP.EXAMPLE.COM/' 'https://deploy@myapp.example.com:443/' 'https://myapp.example.com./'; do
+    jq --arg u "$url" '.environments.testEnvironmentBaseUrl = $u' "$FIXTURES/prod-url-config.json" > "$TEST_TMP/qa-config.json"
+    guard_input "echo hello"
+    run bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json"
+    [ "$status" -eq 2 ] || { echo "NOT BLOCKED: $url"; echo "$output"; false; }
+  done
+}
+
+@test "a correctly configured workspace is not held up: commands pass in warn and in enforce mode" {
+  guard_input "echo hello" "enforce-config.json"
+  run env QA_AUTONOMOUS=1 bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json"
+  [ "$status" -eq 0 ]
+  guard_input "echo hello" "prod-url-config.json"
+  run env -u QA_AUTONOMOUS bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json"
+  [ "$status" -eq 0 ]
+}
+
+@test "warn mode: no config, no patterns or no staging URL only warns elsewhere (session start), it never stops a command here" {
+  for fixture in empty-patterns-config.json missing-env-url.json; do
+    guard_input "echo hello" "$fixture"
+    run env -u QA_AUTONOMOUS bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json"
+    [ "$status" -eq 0 ] || { echo "BLOCKED: $fixture"; echo "$output"; false; }
+  done
+}
+
+@test "the reasons are written for Claude to read: they go to stderr, where a blocking hook's message reaches it" {
+  guard_input "echo hello" "prod-staging-url-config.json"
+  run bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json 2>&1 >/dev/null"
+  [ "$status" -eq 2 ]
+  [[ "$output" =~ "testEnvironmentBaseUrl" ]]
+}
+
+@test "without jq an unattended run is blocked (the guard could not read the command at all), an attended one is warned" {
+  mkdir -p "$TEST_TMP/bin"
+  for t in bash cat dirname grep node sed tr head cut sort uniq printf; do p=$(command -v "$t" || true); [ -n "$p" ] && ln -sf "$p" "$TEST_TMP/bin/$t"; done
+  [ ! -e "$TEST_TMP/bin/jq" ]
+  cp "$FIXTURES/enforce-config.json" "$TEST_TMP/qa-config.json"
+  jq -n --arg c 'curl https://www.bank-of-example.net/x' '{"tool_input":{"command":$c}}' > "$TEST_TMP/input.json"
+  run env -i HOME="$HOME" PATH="$TEST_TMP/bin" QA_AUTONOMOUS=1 "$TEST_TMP/bin/bash" -c "cd '$TEST_TMP' && bash '$GUARD' < input.json"
+  [ "$status" -eq 2 ]
+  [[ "$output" =~ "jq" ]]
+  # enforce set only by the config file (no environment variable): without jq it still has to be recognized
+  run env -i HOME="$HOME" PATH="$TEST_TMP/bin" "$TEST_TMP/bin/bash" -c "cd '$TEST_TMP' && bash '$GUARD' < input.json"
+  [ "$status" -eq 2 ]
+  # an attended (warn mode) run is told, and goes on
+  cp "$FIXTURES/prod-url-config.json" "$TEST_TMP/qa-config.json"
+  run env -i HOME="$HOME" PATH="$TEST_TMP/bin" "$TEST_TMP/bin/bash" -c "cd '$TEST_TMP' && bash '$GUARD' < input.json"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "jq" ]]
+}
+
+@test "every reason a blocking hook gives is on stderr, none on stdout (stderr is what Claude Code shows Claude when a hook blocks)" {
+  for cmd in 'NODE_ENV=production npm test' 'curl https://myapp.example.com/x' 'curl https://www.bank-of-example.net/x'; do
+    guard_input "$cmd" "enforce-config.json"
+    run bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json 2>/dev/null"
+    [ "$status" -eq 2 ]
+    [ -z "$output" ] || { echo "stdout was not empty for: $cmd"; echo "$output"; false; }
+    run bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json 2>&1 >/dev/null"
+    [[ "$output" =~ "BLOCKED" ]]
+  done
+}
+
+@test "an allowedUrlPatterns match inside the PATH of another host allows nothing (the reviewer's repro, with the repo's own enforce fixture)" {
+  guard_input "curl https://www.bank-of-example.net/go/https://partner.io/guide" "enforce-config.json"
+  run bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json"
+  [ "$status" -eq 2 ]
+  [[ "$output" =~ "bank-of-example.net" ]]
+  guard_input "curl https://partner.io/guide/setup" "enforce-config.json"
+  run bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json"
+  [ "$status" -eq 0 ]
+}
+
+# ── The configs a new user is told to copy must themselves be safe ───────────
+# README tells people to `cp qa-config.example.json qa-config.json`. Its production pattern "myapp\.com$" also matched its own staging URL
+# (staging.myapp.com), so the config-safety check above would have refused every shell command on a user's first run.
+
+@test "every shipped example config passes the config-safety check in warn and in enforce mode, and its staging URL really is allowed" {
+  for f in qa-config.example.json projects/example.json demo/qa-config.demo.json examples/qa-config.demo.json; do
+    for mode in warn enforce; do
+      run bash -c "node '$REPO_ROOT/hooks/lib/url-guard.js' --config '$REPO_ROOT/$f' --mode $mode </dev/null | jq -c '[.configProblems[].code]'"
+      [ "$output" = "[]" ] || { echo "$f ($mode): $output"; false; }
+    done
+    guard_input "echo hello"
+    cp "$REPO_ROOT/$f" "$TEST_TMP/qa-config.json"
+    run env QA_AUTONOMOUS=1 bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json"
+    [ "$status" -eq 0 ] || { echo "$f: a command is refused in enforce mode"; echo "$output"; false; }
+  done
+}
+
+@test "the production patterns the examples and the /init skill teach are anchored, so they cannot match a staging host that merely ends the same way" {
+  # unanchored "myapp\.com$" matches https://staging.myapp.com; the anchored form "://myapp\.com(/|:|$)" does not
+  for f in qa-config.example.json projects/example.json examples/qa-config.demo.json; do
+    run jq -r '.productionProtection.prodUrlPatterns[]' "$REPO_ROOT/$f"
+    for pattern in $output; do
+      [[ "$pattern" == *"://"* || "$pattern" == "^"* ]] || { echo "$f: unanchored pattern: $pattern"; false; }
+    done
+  done
+  run grep -n 'suggest `myapp.com\$`' "$REPO_ROOT/.claude/skills/init.md"
+  [ "$status" -ne 0 ]
+}
+
+# ── Where a URL ends, and what a backslash means ─────────────────────────────
+
+@test "a production URL is found whatever shell punctuation follows it: ; | & , } and an escaped quote (warn and enforce)" {
+  for cmd in \
+    'curl -s https://myapp.example.com;echo done' \
+    'curl -s https://myapp.example.com/x|jq .' \
+    'curl -s https://myapp.example.com/x && echo ok' \
+    'curl -s https://myapp.example.com/x&& echo ok' \
+    'curl -s https://myapp.example.com,https://staging.myapp.example.com' \
+    'echo {https://myapp.example.com}' \
+    'bash -c "curl \"https://myapp.example.com\""' \
+    "bash -c 'curl \\'https://myapp.example.com\\''"; do
+    for env in QA_PROBE=warn QA_AUTONOMOUS=1; do
+      guard_status "$cmd" "prod-url-config.json" "$env"
+      [ "$status" -eq 2 ] || { echo "NOT BLOCKED ($env): $cmd"; echo "$output"; false; }
+    done
+  done
+}
+
+@test "enforce: ordinary unattended-run syntax with the staging or localhost URL is not blocked just because punctuation follows the URL" {
+  for cmd in \
+    'export BASE_URL=https://staging.myapp.example.com; npx playwright test' \
+    'BASE_URL=http://localhost:3000; npx playwright test' \
+    'wait-on http://localhost:3000&& npm test' \
+    'curl -s http://localhost:3000|jq .' \
+    'curl -s "http://localhost:3000/health",' \
+    'npx wait-on http://localhost:3000 && BASE_URL=http://localhost:3000 npx playwright test'; do
+    guard_status "$cmd" "enforce-config.json"
+    [ "$status" -eq 0 ] || { echo "WRONGLY BLOCKED: $cmd"; echo "$output"; false; }
+  done
+}
+
+@test "a URL is still unverifiable when the unverifiable part is inside the host (a variable), punctuation or not" {
+  guard_status 'curl https://${HOST}/x; echo' "enforce-config.json"
+  [ "$status" -eq 2 ]
+  guard_status 'curl https://$HOST/x;echo' "enforce-config.json"
+  [ "$status" -eq 2 ]
+}
+
+@test "a backslash cannot hide a production host: a browser reads it as a slash, curl reads 'x\\@host' as host 'host'" {
+  for cmd in \
+    'curl -s https://staging.myapp.example.com\@myapp.example.com/' \
+    'curl -s https://myapp.example.com\path' \
+    'curl -s https:\\myapp.example.com\x' \
+    'curl -s https://x@staging.myapp.example.com\@myapp.example.com/'; do
+    for env in QA_PROBE=warn QA_AUTONOMOUS=1; do
+      guard_status "$cmd" "prod-url-config.json" "$env"
+      [ "$status" -eq 2 ] || { echo "NOT BLOCKED ($env): $cmd"; echo "$output"; false; }
+    done
+  done
+}
+
+@test "a backslash spelling of a host no pattern names is still unverifiable: warn warns, enforce blocks" {
+  guard_status 'curl https:\\otherapp.io\x' "prod-url-config.json"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "WARNING" ]]
+  guard_status 'curl https:\\otherapp.io\x' "enforce-config.json"
+  [ "$status" -eq 2 ]
+}
+
+@test "one long token cannot stall the guard (the bare-host reader once took quadratic time: 100 KB took seconds, past the hook's timeout)" {
+  run node -e '
+    const { scan } = require(process.argv[1]);
+    const cfg = { prodUrlPatterns: ["://myapp\\.example\\.com/"], mode: "warn" };
+    for (const filler of ["a-".repeat(150000), "a.".repeat(150000), "a+".repeat(150000), "a@".repeat(150000), "0123456789abcdef.".repeat(20000), "ab:/".repeat(80000), "http:".repeat(60000), "//a.".repeat(60000), "x=a.b".repeat(60000), "https:@".repeat(40000), "http://a@".repeat(30000), "https:/a,".repeat(30000), "http:".repeat(80000)]) {
+      const t0 = Date.now();
+      const found = scan("echo " + filler + " ; curl https://myapp.example.com/x", cfg);
+      const ms = Date.now() - t0;
+      if (ms > 1500) { console.log("SLOW " + ms + "ms for " + filler.slice(0, 8)); process.exit(1); }
+      if (!found.some((f) => f.reason === "PROD_PATTERN")) { console.log("MISSED the production URL after " + filler.slice(0, 8)); process.exit(1); }
+    }
+    console.log("OK");
+  ' "$REPO_ROOT/hooks/lib/url-guard.js"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$output" = "OK" ]
+}
+
+@test "a malformed config that says mode enforce is treated as enforce, with or without jq reading it (it resolved to warn and let a production URL through)" {
+  printf '{ "productionProtection": { "mode": "enforce", "prodUrlPatterns": ["://myapp\\\\.example\\\\.com/"], }, }' > "$TEST_TMP/qa-config.json"
+  jq -n '{tool_input:{command:"curl https://myapp.example.com/x"}}' > "$TEST_TMP/input.json"
+  run env -u QA_AUTONOMOUS bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json"
+  [ "$status" -eq 2 ]
+  [[ "$output" =~ "not valid JSON" ]]
+  run env -u QA_AUTONOMOUS bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json 2>&1 | head -1"
+  [[ "$output" =~ "BLOCKED" ]]
+}
+
+# ── Punctuation inside the host part: the cut must not hide which host it is ──
+# A URL ends at ; | & , { } so "curl https://host;echo" is "https://host". But when the host part itself holds an "@" (userinfo: curl reads the host
+# after the LAST "@"), a brace group (bash expands "{a,b}") or a backtick, the cut would read the wrong host, so the whole token is judged as well.
+
+@test "a production host after an @ is found even when punctuation comes before the @ (curl reads userinfo up to the last @)" {
+  for cmd in \
+    'curl https://staging.myapp.example.com,@myapp.example.com/' \
+    'curl "https://staging.myapp.example.com;@myapp.example.com/"' \
+    'curl "https://staging.myapp.example.com|@myapp.example.com/x"' \
+    'curl https://staging.myapp.example.com&@myapp.example.com/' \
+    'curl "https://staging.myapp.example.com{@myapp.example.com/"' \
+    'curl https://localhost,@myapp.example.com/' \
+    'curl https:/staging.myapp.example.com,@myapp.example.com/'; do
+    for env in QA_PROBE=warn QA_AUTONOMOUS=1; do
+      guard_status "$cmd" "prod-url-config.json" "$env"
+      [ "$status" -eq 2 ] || { echo "NOT BLOCKED ($env): $cmd"; echo "$output"; false; }
+    done
+  done
+}
+
+@test "enforce: an unknown host after an @ is blocked the same way (it passed as the staging host before the @)" {
+  for cmd in 'curl https://staging.myapp.example.com,@www.bank-of-example.net/' 'curl "https://localhost;@www.bank-of-example.net/"'; do
+    guard_status "$cmd" "enforce-config.json"
+    [ "$status" -eq 2 ] || { echo "NOT BLOCKED: $cmd"; echo "$output"; false; }
+    [[ "$output" =~ "bank-of-example.net" ]]
+  done
+}
+
+@test "a host the shell will build (a brace group or a backtick) is unverifiable: enforce blocks, warn warns, whatever the pattern" {
+  for cmd in \
+    'curl https://{myapp,x}.example.com/' \
+    'curl http://{www.other.example.net}' \
+    'curl https://{myapp}.example.com' \
+    'curl https://my{app,}.example.com/' \
+    'curl https://{a..c}.example.com/' \
+    'curl https://`echo myapp`.example.com/'; do
+    guard_status "$cmd" "enforce-config.json"
+    [ "$status" -eq 2 ] || { echo "NOT BLOCKED (enforce): $cmd"; echo "$output"; false; }
+    guard_status "$cmd" "prod-url-config.json" QA_PROBE=warn
+    [ "$status" -eq 0 ] && [[ "$output" =~ "WARNING" ]] || { echo "NOT WARNED (warn): $cmd"; echo "$output"; false; }
+  done
+}
+
+@test "a URL the shell joins from quoted pieces keeps its real host: \"https://staging...\"@myapp... is host myapp" {
+  for cmd in 'curl "https://staging.myapp.example.com"@myapp.example.com/' "curl 'https://localhost'@myapp.example.com/" "curl https://staging.myapp.example.com''@myapp.example.com/"; do
+    for env in QA_PROBE=warn QA_AUTONOMOUS=1; do
+      guard_status "$cmd" "prod-url-config.json" "$env"
+      [ "$status" -eq 2 ] || { echo "NOT BLOCKED ($env): $cmd"; echo "$output"; false; }
+    done
+  done
+}
+
+@test "enforce: the same punctuation after a URL with no @ or braces in its host is still just the end of the URL" {
+  for cmd in \
+    'curl https://staging.myapp.example.com/health;echo done' \
+    'export BASE_URL=https://staging.myapp.example.com; npx playwright test' \
+    "echo '{\"url\":\"https://staging.myapp.example.com/x\"}' | jq ." \
+    'curl "https://staging.myapp.example.com/a?x={1,2}&y=3"' \
+    'curl https://staging.myapp.example.com/{id}' \
+    'echo {https://staging.myapp.example.com}' \
+    'curl -s https://staging.myapp.example.com/x?email=a@b.com' \
+    'curl http://localhost:3000/x,http://localhost:3000/y'; do
+    guard_status "$cmd" "enforce-config.json"
+    [ "$status" -eq 0 ] || { echo "WRONGLY BLOCKED: $cmd"; echo "$output"; false; }
+  done
+}
+
+@test "'https:host' and 'https:user@host' are URLs, as a browser reads them: an unknown host after them is judged like any other (enforce blocks), and ordinary prose is not" {
+  guard_status 'curl https:bob@www.bank-of-example.net/x' "enforce-config.json"
+  [ "$status" -eq 2 ]
+  [[ "$output" =~ "bank-of-example.net" ]]
+  for cmd in 'echo "see https: for details"' 'echo "the https:scheme is optional here"' 'git commit -m "docs: https: links"'; do
+    guard_status "$cmd" "enforce-config.json"
+    [ "$status" -eq 0 ] || { echo "WRONGLY BLOCKED: $cmd"; echo "$output"; false; }
+  done
+}
+
+@test "a backtick that CLOSES a command substitution after a URL is not a backtick inside the host" {
+  for cmd in \
+    'echo `curl -s http://localhost:3000`' \
+    'X=`curl http://localhost:3000`; echo $X' \
+    'echo "`curl -s https://staging.myapp.example.com`"' \
+    'VERSION=`curl -s http://localhost:3000/version`'; do
+    guard_status "$cmd" "enforce-config.json"
+    [ "$status" -eq 0 ] || { echo "WRONGLY BLOCKED: $cmd"; echo "$output"; false; }
+  done
+  # a backtick that really is inside the host still makes it unverifiable
+  for cmd in 'curl https://`echo myapp`.example.com/' 'curl https://my`x`.example.com/' 'curl http://localhost`x`:3000/'; do
+    guard_status "$cmd" "enforce-config.json"
+    [ "$status" -eq 2 ] || { echo "NOT BLOCKED: $cmd"; echo "$output"; false; }
+  done
 }

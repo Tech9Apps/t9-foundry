@@ -5,19 +5,34 @@
 
 set -euo pipefail
 
+# When a PreToolUse hook blocks (exit 2), Claude Code shows Claude the hook's STDERR as the reason. Everything this script prints is a reason or
+# a warning for someone to read, so it all goes to stderr; command substitutions below keep capturing their own output as before.
+exec 1>&2
+
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/qa-config-path.sh"
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/guard-mode.sh"
 
 INPUT=$(cat)
+
+# Resolve qa-config.json independent of cwd (see lib/qa-config-path.sh)
+QA_CONFIG_PATH=$(resolve_qa_config || echo "qa-config.json")
+
+# Everything below reads the command out of the hook input with jq. Without it the guard sees nothing, so an unattended run must not go on.
+if ! command -v jq >/dev/null 2>&1; then
+  if [ "$(resolve_guard_mode "$QA_CONFIG_PATH")" = "enforce" ]; then
+    echo "BLOCKED: jq is not installed, so this command cannot be read or checked." >&2
+    echo "Guard mode is 'enforce' (QA_AUTONOMOUS=1 or productionProtection.mode), so the guard fails closed. Install jq (brew install jq)." >&2
+    exit 2
+  fi
+  echo "WARNING: jq is not installed, so the production guard cannot read this command: it is NOT being checked. Install jq (brew install jq)." >&2
+  exit 0
+fi
 
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null || true)
 
 if [ -z "$COMMAND" ]; then
   exit 0
 fi
-
-# Resolve qa-config.json independent of cwd (see lib/qa-config-path.sh)
-QA_CONFIG_PATH=$(resolve_qa_config || echo "qa-config.json")
 
 # A config that exists but is not valid JSON would silently drop every production pattern. Unattended, that must not pass.
 # (The URL checks below report it too; this catches it before anything else runs.)
@@ -28,6 +43,29 @@ if [ -f "$QA_CONFIG_PATH" ] && ! jq -e . "$QA_CONFIG_PATH" >/dev/null 2>&1; then
     exit 2
   fi
   echo "WARNING: $QA_CONFIG_PATH is not valid JSON — production URL patterns are NOT being applied. Fix qa-config.json."
+fi
+
+# One run of the shared reader (hooks/lib/url-guard.js) per command: it reports problems with the configuration itself, handled just below,
+# and the URLs in the command and what to do about each, handled at the end.
+GUARD_MODE=$(resolve_guard_mode "$QA_CONFIG_PATH")
+HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+NODE_BIN=$(command -v node || true)
+RESULT=""
+if [ -n "$NODE_BIN" ]; then
+  RESULT=$(printf '%s' "$COMMAND" | "$NODE_BIN" "$HOOK_DIR/lib/url-guard.js" --config "$QA_CONFIG_PATH" --mode "$GUARD_MODE" 2>/dev/null || true)
+fi
+
+# An unsafe configuration stops every command. Claude Code cannot block a SESSION from a SessionStart hook (exit 2 there only shows the user a
+# notice and the session carries on), so session-init.sh can only tell the user; the refusal that actually stops a run is made here, where exit 2
+# does block, and it is made on the same facts: no config / no production patterns / no staging URL (enforce mode), or a staging URL that is
+# itself a production URL (any mode). The reasons go to stderr, which is what Claude reads from a blocking hook.
+CONFIG_PROBLEMS=$(echo "$RESULT" | jq -r '.configProblems[]?.message // empty' 2>/dev/null || true)
+if [ -n "$CONFIG_PROBLEMS" ]; then
+  {
+    while IFS= read -r problem; do echo "BLOCKED: $problem"; done <<< "$CONFIG_PROBLEMS"
+    echo "No shell command runs until qa-config.json is fixed. Edit it with the Write or Edit tool, or ask the user to; then retry."
+  } >&2
+  exit 2
 fi
 
 # Load production URL patterns from qa-config.json if available
@@ -88,9 +126,6 @@ fi
 # URL checks: configured production patterns (matched against every normalized spelling of each URL: case, userinfo, port, trailing dot,
 # query/fragment, numeric IPs) and the "is this recognizably NOT production?" heuristic. One implementation, hooks/lib/url-guard.js,
 # shared with the runtime guards' test table (tests/fixtures/guard-cases.json).
-GUARD_MODE=$(resolve_guard_mode "$QA_CONFIG_PATH")
-HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
 fail_closed_or_warn() { # <message> — enforce mode blocks; otherwise it is only a warning
   if [ "$GUARD_MODE" = "enforce" ]; then
     echo "BLOCKED: $1"
@@ -100,11 +135,9 @@ fail_closed_or_warn() { # <message> — enforce mode blocks; otherwise it is onl
   echo "WARNING: $1"
 }
 
-NODE_BIN=$(command -v node || true)
 if [ -z "$NODE_BIN" ]; then
   fail_closed_or_warn "node is not installed, so URLs in this command cannot be checked (only the configured regexes above were applied)."
 else
-  RESULT=$(printf '%s' "$COMMAND" | "$NODE_BIN" "$HOOK_DIR/lib/url-guard.js" --config "$QA_CONFIG_PATH" --mode "$GUARD_MODE" 2>/dev/null || true)
   if ! echo "$RESULT" | jq -e . >/dev/null 2>&1; then
     fail_closed_or_warn "the URL check failed to run, so URLs in this command cannot be verified."
   else
