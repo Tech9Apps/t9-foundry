@@ -317,6 +317,24 @@ test('a file that is not a test report at all is still ignored, but the result S
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test('a JSON file in a directory that is CUT OFF (a runner killed mid-write) fails the run: it is a damaged report, not "some other file"', () => {
+  const dir = reportDir();
+  fs.writeFileSync(path.join(dir, 'results-0.xml'), GOOD_XML);
+  const whole = JSON.stringify({ testResults: [{ name: 'a.test.js', assertionResults: [{ title: 'DEMO-1/TC-002: x', status: 'failed', fullName: 'DEMO-1/TC-002: x' }] }] });
+  fs.writeFileSync(path.join(dir, 'jest.json'), whole.slice(0, Math.floor(whole.length / 2)));
+  for (const opts of [{}, { format: 'jest-json' }]) {
+    assert.throws(() => normalizePath(dir, opts), (e) => e.code === 'UNPARSEABLE' && /jest\.json/.test(e.message) && /JSON/.test(e.message), JSON.stringify(opts));
+  }
+  // JSON that parses but is not a report (a package.json) is still just ignored, with a warning
+  fs.writeFileSync(path.join(dir, 'jest.json'), whole);
+  fs.writeFileSync(path.join(dir, 'package.json'), '{"name":"x"}');
+  const warnings = [];
+  normalizePath(dir, { warnings });
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /package\.json/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test('the CLI prints those warnings, and exits 1 for a directory with an unreadable report', () => {
   const dir = reportDir();
   fs.writeFileSync(path.join(dir, 'results-0.xml'), GOOD_XML);

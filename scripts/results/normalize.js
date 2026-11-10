@@ -32,7 +32,7 @@ function detect(text) {
   if (/^TAP version \d+/m.test(t.slice(0, 200)) || /^(not )?ok \d+/m.test(t)) return 'tap';
   if (t.startsWith('{')) {
     let doc;
-    try { doc = JSON.parse(t); } catch { throw fail('UNRECOGNIZED', 'looks like JSON but does not parse'); }
+    try { doc = JSON.parse(t); } catch { throw fail('UNPARSEABLE', 'looks like JSON but does not parse (cut off or damaged?)'); }
     if (Array.isArray(doc.suites) && (doc.config || doc.stats)) return 'playwright-json';
     if (Array.isArray(doc.testResults)) return 'jest-json';
   }

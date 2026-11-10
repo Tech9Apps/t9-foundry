@@ -106,7 +106,9 @@ runner (12); the ones that survived the first round each exposed a missing test,
   yourself), but through `run.js` there is nothing in the report or the exit code to notice.
 - **A directory of reports** (WebdriverIO, Cypress) is read file by file. A file that is not a test report at all (a
   `package.json`) is left out and listed under `warnings`; a file that is a report but cannot be parsed, or is empty,
-  fails the run with that file's name rather than being dropped.
+  fails the run with that file's name rather than being dropped. That includes a `.json` that does not parse at all (a runner killed
+  mid-write leaves one): it is a damaged report, not "some other file". The cost is that a config with comments (JSONC) sitting in the
+  report directory now fails the run too, loudly, which is the safe way round; keep other files out of the report directory.
 - JUnit from `node --test` drops the newline inside the `message` attribute, so messages read run-together
   ("…rejected200 !== 400"); the full text is in `error.details`.
 - Tests that fail to *load* (a syntax error, a bad import) are reported by Jest JSON as a failed file and appear as one
