@@ -150,6 +150,12 @@ the Basic process has none), token scopes and permissions, real rate-limit and p
 the real search index and error bodies match the mock. When a real run disagrees with a mock, fix the adapter **and**
 the mock so the contract suite catches it next time.
 
+Known limits that follow from that, found in review and left as they are:
+
+- **Bitbucket credentials.** The adapter authenticates with `username:app_password` (Basic). Atlassian has been retiring Bitbucket app passwords in favour of API tokens; whether the retirement has reached your workspace, and whether a token works in the same Basic slot, can only be seen against a real workspace. If authentication fails with a credential that works elsewhere, that is the first thing to check.
+- **`docs/settings.proposed.json` is a proposal, not something to apply on its own.** It allows `node scripts/tracker/cli.js fetch *` and `search *` without a prompt, and nothing in it asks before the same CLI is run with a different `--base-url`. The host allowlist above now stops a token reaching a host you did not allow, but apply the proposal together with the ask rules that come with the closed-loop work, not before.
+- **`python` and `python3`.** The proposal allows `--version` for both because the prerequisite check accepts either; the runner scripts themselves are Node.
+
 To move a row to "yes": run the smoke test below against a scratch repo/project/list, put the report in the PR, and
 update this table in the same PR.
 
