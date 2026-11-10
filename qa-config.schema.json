@@ -52,7 +52,7 @@
             "repo": { "type": "string", "description": "owner/repo format" },
             "testLabelName": { "type": "string", "default": "test-case" },
             "tokenEnvVar": { "type": "string", "default": "GITHUB_TOKEN", "description": "Env var holding a GitHub token for the REST adapter (GH_TOKEN is also accepted)" },
-            "apiBaseUrl": { "type": "string", "description": "Override the API base URL (GitHub Enterprise Server, or a mock for tests)" }
+            "apiBaseUrl": { "type": "string", "description": "Override the API base URL (GitHub Enterprise Server, or a mock for tests). A host other than api.github.com must also be allowed in your shell: QA_TRACKER_ALLOW_HOSTS" }
           }
         },
         "gitlab": {

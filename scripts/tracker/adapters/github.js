@@ -15,9 +15,10 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
     throw new TrackerError('CONFIG', 'ticketSource.github.repo must be "owner/repo"');
   }
   const tokenVar = settings.tokenEnvVar || 'GITHUB_TOKEN';
-  const token = env[tokenVar] || env.GITHUB_TOKEN || env.GH_TOKEN;
-  if (!token) throw new TrackerError('CONFIG', `${tokenVar} (or GH_TOKEN) is not set`);
-  const base = checkBaseUrl(baseUrl || settings.apiBaseUrl || 'https://api.github.com', 'the GitHub API base URL');
+  // A variable the config names is the only one read: falling back to GITHUB_TOKEN / GH_TOKEN would send a credential other than the one chosen.
+  const token = settings.tokenEnvVar ? env[tokenVar] : env.GITHUB_TOKEN || env.GH_TOKEN;
+  if (!token) throw new TrackerError('CONFIG', settings.tokenEnvVar ? `${tokenVar} is not set` : `${tokenVar} (or GH_TOKEN) is not set`);
+  const base = checkBaseUrl(baseUrl || settings.apiBaseUrl || 'https://api.github.com', 'the GitHub API base URL', { hosts: ['api.github.com'], env });
   const testLabel = settings.testLabelName || 'test-case';
 
   const call = (method, path, body, what) => request({

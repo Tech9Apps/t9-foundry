@@ -17,7 +17,7 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
   const token = env[tokenVar];
   if (!token) throw new TrackerError('CONFIG', `${tokenVar} is not set`);
   // `baseUrl` overrides the whole API root (mocks); otherwise <host>/api/v4
-  const api = checkBaseUrl(baseUrl || `${(settings.host || 'https://gitlab.com').replace(/\/$/, '')}/api/v4`, 'the GitLab API URL');
+  const api = checkBaseUrl(baseUrl || `${(settings.host || 'https://gitlab.com').replace(/\/$/, '')}/api/v4`, 'the GitLab API URL', { hosts: ['gitlab.com'], env });
   const testLabel = settings.testLabelName || 'test-case';
   const project = `/projects/${encodeURIComponent(projectId)}`;
 

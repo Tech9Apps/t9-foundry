@@ -23,7 +23,7 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
   const tokenVar = settings.tokenEnvVar || 'BITBUCKET_TOKEN';
   const secret = env[tokenVar];
   if (!secret) throw new TrackerError('CONFIG', `${tokenVar} is not set`);
-  const api = checkBaseUrl(baseUrl || 'https://api.bitbucket.org/2.0', 'the Bitbucket API base URL');
+  const api = checkBaseUrl(baseUrl || 'https://api.bitbucket.org/2.0', 'the Bitbucket API base URL', { hosts: ['api.bitbucket.org'], env });
   const issues = `/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(repo)}/issues`;
   const auth = `Basic ${Buffer.from(`${username}:${secret}`).toString('base64')}`;
 

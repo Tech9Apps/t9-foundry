@@ -60,7 +60,14 @@ request back cannot leak one.
 
 **Where a token may be sent.** The base URL (from `--base-url`, `$QA_TRACKER_BASE_URL` or the config) is checked before
 the first request: `https` only, with plain `http` allowed solely for loopback (`localhost`, `127.x.x.x`, `[::1]`,
-`*.localhost`, i.e. local mocks); no embedded `user:pass@`, no query string or fragment. **Redirects are never followed**
+`*.localhost`, i.e. local mocks); no embedded `user:pass@`, no query string or fragment. The host must also be one the token belongs to: the tracker's own
+(`api.github.com`, `gitlab.com`, `dev.azure.com`, `api.clickup.com`, `api.bitbucket.org`), a reserved test host (`*.test`, loopback —
+what the mocks use), or one **you** allow in your own shell — `export QA_TRACKER_ALLOW_HOSTS=ghe.corp.example.com,*.git.corp.example.com`
+(exact names, or `*.suffix` with at least two labels). That is the only place it can be set: `qa-config.json` (including a committed
+profile) and a model-supplied `--base-url` can name a host, but cannot add one to the list, so a config cannot aim `Authorization: Bearer <token>`
+at a server of its choosing. GitHub Enterprise, self-hosted GitLab and Azure DevOps Server therefore need that one line. A `tokenEnvVar` the
+config names is the only variable read (GitHub no longer falls back to `GITHUB_TOKEN` / `GH_TOKEN` when it is unset: it stops with `CONFIG`).
+**Redirects are never followed**
 — a `3xx` is a `CONFIG` error naming where it pointed — so the credentials in a request cannot be forwarded elsewhere. stdin is only read
 with `--stdin`, so an inherited pipe can never hang an unattended run.
 

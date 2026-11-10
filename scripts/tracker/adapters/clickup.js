@@ -16,7 +16,7 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
   const tokenVar = settings.tokenEnvVar || 'CLICKUP_TOKEN';
   const token = env[tokenVar];
   if (!token) throw new TrackerError('CONFIG', `${tokenVar} is not set`);
-  const base = checkBaseUrl(baseUrl || settings.apiBaseUrl || 'https://api.clickup.com/api/v2', 'the ClickUp API base URL');
+  const base = checkBaseUrl(baseUrl || settings.apiBaseUrl || 'https://api.clickup.com/api/v2', 'the ClickUp API base URL', { hosts: ['api.clickup.com'], env });
 
   const call = (method, path, body, what) => request({
     fetch, method, url: `${base}${path}`, body, timeoutMs, retryDelayMs, what,
