@@ -1,0 +1,76 @@
+TAP version 13
+# Subtest: suite with broken after
+    # Subtest: child passes
+    ok 1 - child passes
+      ---
+      duration_ms: 0.172333
+      type: 'test'
+      ...
+    1..1
+not ok 1 - suite with broken after
+  ---
+  duration_ms: 0.550208
+  type: 'suite'
+  location: '/work/hook.test.js:2:1'
+  failureType: 'hookFailed'
+  error: 'boom in the after hook'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    SuiteContext.<anonymous> (/work/hook.test.js:4:23)
+    TestHook.runInAsyncScope (node:async_hooks:214:14)
+    TestHook.run (node:internal/test_runner/test:1047:25)
+    TestHook.run (node:internal/test_runner/test:1354:18)
+    TestHook.run (node:internal/util:561:20)
+    Suite.runHook (node:internal/test_runner/test:965:20)
+    node:internal/test_runner/test:1420:38
+    node:internal/util:561:20
+    Suite.run (node:internal/test_runner/test:1443:13)
+    async startSubtestAfterBootstrap (node:internal/test_runner/harness:296:3)
+  ...
+# Subtest: suite with a failing child
+    # Subtest: this one fails
+    not ok 1 - this one fails
+      ---
+      duration_ms: 0.080333
+      type: 'test'
+      location: '/work/hook.test.js:7:3'
+      failureType: 'testCodeFailure'
+      error: 'child failure'
+      code: 'ERR_TEST_FAILURE'
+      stack: |-
+        TestContext.<anonymous> (/work/hook.test.js:7:38)
+        Test.runInAsyncScope (node:async_hooks:214:14)
+        Test.run (node:internal/test_runner/test:1047:25)
+        Test.start (node:internal/test_runner/test:944:17)
+        node:internal/test_runner/test:1440:71
+        node:internal/per_context/primordials:483:82
+        new Promise (<anonymous>)
+        new SafePromise (node:internal/per_context/primordials:451:29)
+        node:internal/per_context/primordials:483:9
+        Array.map (<anonymous>)
+      ...
+    # Subtest: this one passes
+    ok 2 - this one passes
+      ---
+      duration_ms: 0.03075
+      type: 'test'
+      ...
+    1..2
+not ok 2 - suite with a failing child
+  ---
+  duration_ms: 0.159417
+  type: 'suite'
+  location: '/work/hook.test.js:6:1'
+  failureType: 'subtestsFailed'
+  error: '1 subtest failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+1..2
+# tests 3
+# suites 2
+# pass 2
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 30.25025

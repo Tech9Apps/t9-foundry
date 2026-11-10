@@ -169,8 +169,9 @@ async function main({ argv = process.argv.slice(2), env = process.env, stdout = 
     }
 
     let data;
+    const warnings = [];
     try {
-      data = normalizePath(p.results, { format: p.format, framework });
+      data = normalizePath(p.results, { format: p.format, framework, warnings });
     } catch (err) {
       return noReport(`${framework} exited ${run.code === null ? `on ${run.signal}` : run.code} but wrote no usable report at ${p.results} (${err.message}). ${p.notes.join(' ')}`.trim(), { exitCode: run.code });
     }
@@ -182,7 +183,6 @@ async function main({ argv = process.argv.slice(2), env = process.env, stdout = 
       return noReport(`every one of the ${data.totals.total} test(s) was skipped, so nothing was verified — that is not a pass (pass --allow-all-skipped if it is intended)`, { exitCode: run.code });
     }
 
-    const warnings = [];
     const failed = data.totals.failed > 0;
     if (run.code !== 0 && !failed) warnings.push(`the runner exited ${run.code} but its report shows no failures — it may have crashed after writing a partial report`);
     if (run.code === 0 && failed) warnings.push('the runner exited 0 but its report shows failures');

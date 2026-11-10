@@ -5,7 +5,8 @@ const { stripAnsi, truncate, firstLine, isTimeout, finish } = require('./shared'
 // TAP 13 as written by `node --test --test-reporter=tap` (and most other TAP producers): "ok N - name" /
 // "not ok N - name", optionally followed by an indented YAML diagnostic block between "---" and "...".
 // Nested subtests are written children-first, so a point that directly follows deeper-indented points is
-// a parent: it is dropped and its children are kept, with its name as their suite.
+// a parent: its children are kept, with its name as their suite, and the parent itself is dropped UNLESS it is
+// "not ok" for its own reason (an after-hook threw, a suite-level error): then it is a failed test of its own.
 const POINT = /^(\s*)(not ok|ok)\s+\d+\s*(?:-\s*)?(.*)$/;
 
 function parseYamlBlock(lines) {
@@ -62,9 +63,13 @@ function parse(src, opts) {
     while (stack.length && stack[stack.length - 1].indent > p.indent) kids.unshift(stack.pop());
     for (const k of kids) { if (!k.suite) k.suite = p.name; }
     p.isParent = kids.length > 0;
+    // A parent is "not ok" for one of two reasons. A child failed: that failure is already a failed test (node says "1 subtest failed"), so
+    // the parent is not counted again. Or nothing under it failed (node: failureType 'hookFailed'): the failure is its own, and dropping
+    // it would report a suite whose hook threw as a pass.
+    p.ownFailure = p.isParent && !p.ok && !kids.some((k) => !k.ok);
     stack.push(p);
   }
-  for (const p of points) { if (!p.isParent) leaves.push(p); }
+  for (const p of points) { if (!p.isParent || p.ownFailure) leaves.push(p); }
   const all = leaves;
 
   const tests = all.map((p) => {
