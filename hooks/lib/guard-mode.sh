@@ -16,10 +16,10 @@ resolve_guard_mode() {
   fi
   local mode="warn"
   if [ -n "${1:-}" ] && [ -f "$1" ]; then
-    if command -v jq >/dev/null 2>&1; then
-      mode=$(jq -r '.productionProtection.mode // "warn"' "$1" 2>/dev/null || echo "warn")
-    elif grep -Eq '"mode"[[:space:]]*:[[:space:]]*"enforce"' "$1" 2>/dev/null; then
-      mode="enforce" # no jq to read it properly: err toward the stricter mode
+    if ! { command -v jq >/dev/null 2>&1 && mode=$(jq -r '.productionProtection.mode // "warn"' "$1" 2>/dev/null); }; then
+      # no jq, or the file is not valid JSON (jq cannot read it): a config that says it is enforce must not fall back to warn because of a stray comma
+      mode="warn"
+      if grep -Eq '"mode"[[:space:]]*:[[:space:]]*"enforce"' "$1" 2>/dev/null; then mode="enforce"; fi
     fi
   fi
   if [ "$mode" = "enforce" ]; then

@@ -321,3 +321,87 @@ run_detector() { run env -u QA_AUTONOMOUS bash -c "cd '$TEST_TMP' && bash '$DETE
   run bash -c "cd '$TEST_TMP' && bash '$DETECTOR' < input.json 2>&1 >/dev/null"
   [[ "$output" =~ "BLOCKED" ]]
 }
+
+# ── Repairing qa-config.json must stay possible ──────────────────────────────
+# While the configuration is unsafe, prod-guard.sh refuses every shell command, so the Write and Edit tools are the way to fix it. A write to
+# qa-config.json is judged on the config it would CREATE (not against the broken one it replaces), and every other file is scanned as before.
+
+repair_config_write() { # <enforce|warn> <current config fixture> <new config json>
+  cp "$FIXTURES/$2" "$TEST_TMP/qa-config.json"
+  jq -n --arg fp "$TEST_TMP/qa-config.json" --arg c "$3" '{"tool_name":"Write","tool_input":{"file_path":$fp,"content":$c}}' > "$TEST_TMP/input.json"
+  if [ "$1" = enforce ]; then run env QA_AUTONOMOUS=1 bash -c "cd '$TEST_TMP' && bash '$DETECTOR' < input.json"; else run bash -c "cd '$TEST_TMP' && bash '$DETECTOR' < input.json"; fi
+}
+GOOD_CONFIG='{"environments":{"testEnvironmentBaseUrl":"https://myapp.vercel.app"},"productionProtection":{"prodUrlPatterns":["://myapp\\.com(/|:|$)"]}}'
+
+@test "enforce: a malformed qa-config.json can be repaired by writing a valid one (it was blocked: 'not valid JSON')" {
+  repair_config_write enforce malformed-config.json "$GOOD_CONFIG"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+@test "a staging URL with no test-environment label (a vercel.app URL) can be written to qa-config.json in enforce mode" {
+  repair_config_write enforce enforce-no-test-url-config.json "$GOOD_CONFIG"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+@test "a corrected config can replace one whose broad pattern matches the corrected staging URL (it was blocked by the old pattern)" {
+  repair_config_write warn prod-staging-url-config.json "$GOOD_CONFIG"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+@test "a write that would create an UNSAFE config is refused, with the reasons: a staging URL that is production, no patterns or no staging URL in enforce, invalid JSON" {
+  repair_config_write warn valid-config.json '{"environments":{"testEnvironmentBaseUrl":"https://myapp.com"},"productionProtection":{"prodUrlPatterns":["://myapp\\.com(/|:|$)"]}}'
+  [ "$status" -eq 2 ]; [[ "$output" =~ "testEnvironmentBaseUrl" ]]; [[ "$output" =~ "PRODUCTION" ]]
+  repair_config_write enforce valid-config.json '{"environments":{"testEnvironmentBaseUrl":"https://staging.myapp.com"},"productionProtection":{"prodUrlPatterns":[]}}'
+  [ "$status" -eq 2 ]; [[ "$output" =~ "prodUrlPatterns" ]]
+  repair_config_write enforce valid-config.json '{"productionProtection":{"prodUrlPatterns":["://myapp\\.com/"]}}'
+  [ "$status" -eq 2 ]; [[ "$output" =~ "testEnvironmentBaseUrl" ]]
+  repair_config_write warn valid-config.json '{ not json'
+  [ "$status" -eq 2 ]; [[ "$output" =~ "not valid JSON" ]]
+  repair_config_write warn valid-config.json '{"environments":{"testEnvironmentBaseUrl":"https://staging.myapp.com"},"productionProtection":{"mode":"enforce","prodUrlPatterns":[]}}'
+  [ "$status" -eq 2 ]   # the new content turns enforce on itself: judged as enforce
+}
+
+@test "an Edit of qa-config.json is no longer stopped because the config it edits is malformed" {
+  cp "$FIXTURES/malformed-config.json" "$TEST_TMP/qa-config.json"
+  jq -n --arg fp "$TEST_TMP/qa-config.json" '{"tool_name":"Edit","tool_input":{"file_path":$fp,"new_string":"\"prodUrlPatterns\": [\"://myapp\\\\.com(/|:|$)\"]"}}' > "$TEST_TMP/input.json"
+  run env QA_AUTONOMOUS=1 bash -c "cd '$TEST_TMP' && bash '$DETECTOR' < input.json"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+@test "every other file is still scanned in the same broken-config state: only a file named qa-config.json is the repair channel" {
+  cp "$FIXTURES/malformed-config.json" "$TEST_TMP/qa-config.json"
+  for path in tests/api.spec.ts docs/qa-config.json.bak tests/my-qa-config.jsonx tests/qa-config.json sub/dir/qa-config.json; do
+    jq -n --arg fp "$path" '{"tool_name":"Write","tool_input":{"file_path":$fp,"content":"const base = \"https://www.bank-of-example.net/\";"}}' > "$TEST_TMP/input.json"
+    run env QA_AUTONOMOUS=1 bash -c "cd '$TEST_TMP' && bash '$DETECTOR' < input.json"
+    [ "$status" -eq 2 ] || { echo "NOT BLOCKED: $path"; echo "$output"; false; }
+  done
+  write_input "tests/api.spec.ts" 'const base = "https://www.bank-of-example.net/";' "enforce-config.json"   # and with a good config, as before
+  run bash -c "cd '$TEST_TMP' && bash '$DETECTOR' < input.json"
+  [ "$status" -eq 2 ]
+}
+
+@test "without jq the file guard cannot read what is being written: an unattended run is blocked, an attended one is warned" {
+  mkdir -p "$TEST_TMP/bin"
+  for t in bash cat dirname grep node sed tr head cut sort uniq printf; do p=$(command -v "$t" || true); [ -n "$p" ] && ln -sf "$p" "$TEST_TMP/bin/$t"; done
+  cp "$FIXTURES/enforce-config.json" "$TEST_TMP/qa-config.json"
+  jq -n '{"tool_name":"Write","tool_input":{"file_path":"tests/a.spec.ts","content":"const u = \"https://myapp.example.com/api\";"}}' > "$TEST_TMP/input.json"
+  run env -i HOME="$HOME" PATH="$TEST_TMP/bin" QA_AUTONOMOUS=1 "$TEST_TMP/bin/bash" -c "cd '$TEST_TMP' && bash '$DETECTOR' < input.json"
+  [ "$status" -eq 2 ]; [[ "$output" =~ "jq" ]]
+  cp "$FIXTURES/prod-url-config.json" "$TEST_TMP/qa-config.json"
+  run env -i HOME="$HOME" PATH="$TEST_TMP/bin" "$TEST_TMP/bin/bash" -c "cd '$TEST_TMP' && bash '$DETECTOR' < input.json"
+  [ "$status" -eq 0 ]; [[ "$output" =~ "jq" ]]
+}
+
+@test "the repair channel is the config the guards read, not any file with that name: a decoy qa-config.json elsewhere is scanned like any file" {
+  mkdir -p "$TEST_TMP/tests"
+  jq -n '{"tool_name":"Write","tool_input":{"file_path":"tests/qa-config.json","content":"{\"url\": \"https://myapp.example.com/api\"}"}}' > "$TEST_TMP/input.json"
+  cp "$FIXTURES/prod-url-config.json" "$TEST_TMP/qa-config.json"
+  run bash -c "cd '$TEST_TMP' && bash '$DETECTOR' < input.json"
+  [ "$status" -eq 2 ]
+  # ...while the real one (here, in the working directory, by relative and by absolute path) is the channel
+  for fp in qa-config.json "$TEST_TMP/qa-config.json" "./qa-config.json"; do
+    jq -n --arg fp "$fp" --arg c "$GOOD_CONFIG" '{"tool_name":"Write","tool_input":{"file_path":$fp,"content":$c}}' > "$TEST_TMP/input.json"
+    run bash -c "cd '$TEST_TMP' && bash '$DETECTOR' < input.json"
+    [ "$status" -eq 0 ] || { echo "not accepted: $fp"; echo "$output"; false; }
+  done
+}

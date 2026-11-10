@@ -173,7 +173,11 @@ function decide(url, cfg = {}) {
 }
 
 // ── finding URLs in text ───────────────────────────────────────────────────────────────────────
-const extractUrls = (text) => [...new Set((String(text).match(/https?:\/\/[^\s'"`<>)]+/gi) || []))];
+// One character of a URL as it appears in a command or a file. A URL ends at whitespace, a quote, and shell punctuation ( ; | & , { } ), so
+// "curl https://host;echo" and "https://host/x|jq" are the URL "https://host", not an unverifiable host "host;echo". A backslash belongs to the URL
+// (decide() calls a backslash in the host unverifiable) unless it only escapes a quote: bash -c "curl \"https://host\"".
+const URLCHAR = '(?:[^\\s\'"`<>);|&,{}\\\\]|\\\\(?![\'"]))';
+const extractUrls = (text) => [...new Set((String(text).match(new RegExp(`https?://${URLCHAR}+`, 'gi')) || []))];
 
 // Everything in the text that curl, a browser or a library would read as a URL, however it is spelled. Each is judged one of two ways:
 //   'full'     decide(): production patterns, then the "is this recognizably a test environment?" rules. For anything that is plainly an
@@ -182,8 +186,9 @@ const extractUrls = (text) => [...new Set((String(text).match(/https?:\/\/[^\s'"
 //   'patterns' production patterns only. For a scheme that is not http(s) ("ftp://host", "sftp://user@host", "postgresql://host") and for
 //              a bare "host/path" or "user@host": a bare token cannot be told from a file name ("out.json", "app.config.js"), so judging it
 //              as an unrecognized host would block ordinary commands. A production host that is configured is still caught.
-const TAIL = '[^\\s\'"`<>)]';
+const TAIL = URLCHAR;
 const HOSTISH = /^(?:[^/?#@]*@)?(?:\[|localhost\b|[^/?#]*\.|[^/?#]*:\d)/i; // has a dot, a port, brackets, or is localhost: not a bare word
+const BARE_HOST = new RegExp(`^((?:[A-Za-z0-9._-]+@)?(?:[A-Za-z0-9-]+\\.)+[A-Za-z]{2,}\\.?(?::\\d{1,5})?(?:[/?#]${TAIL}*)?)$`);
 function findUrls(text) {
   const s = String(text);
   const found = new Map(); // raw spelling -> { raw, url, mode }
@@ -202,7 +207,7 @@ function findUrls(text) {
   }
 
   // any other scheme://host: production patterns only
-  for (const m of s.matchAll(new RegExp(`\\b([a-z][a-z0-9+.-]*)://(${TAIL}+)`, 'gi'))) {
+  for (const m of s.matchAll(new RegExp(`\\b([a-z][a-z0-9+.-]{0,31})://(${TAIL}+)`, 'gi'))) {
     if (/^https?$/i.test(m[1])) continue;
     add(m[0], `https://${m[2]}`, 'patterns');
   }
@@ -212,17 +217,38 @@ function findUrls(text) {
     if (HOSTISH.test(m[2].slice(2))) add(m[2], `https:${m[2]}`, 'full');
   }
 
-  // a bare "host/path" or "user@host": production patterns only (see above)
-  for (const m of s.matchAll(new RegExp(`(?:^|[\\s'"\`=(,;|&<>])((?:[A-Za-z0-9._-]+@)?(?:[A-Za-z0-9-]+\\.)+[A-Za-z]{2,}\\.?(?::\\d{1,5})?(?:[/?#]${TAIL}*)?)(?=$|[\\s'"\`)<>,;|&])`, 'g'))) {
-    add(m[1], `https://${m[1]}`, 'patterns');
+  // a bare "host/path" or "user@host": production patterns only (see above). Read token by token, each token matched against an ANCHORED pattern:
+  // searching for the pattern at every position of one very long run of "a-a-a-" took quadratic time (100 KB took seconds, longer than the hook is given).
+  for (const token of s.split(/[\s'"`=(),;|&<>{}]+/)) {
+    const m = BARE_HOST.exec(token);
+    if (m) add(m[1], `https://${m[1]}`, 'patterns');
   }
   return [...found.values()];
+}
+
+// A backslash can hide the host from decide() (it refuses to guess), but not from curl or a browser, and they read it differently: a browser takes
+// "\\" for "/" ("https://host\\path" is host "host"), curl takes userinfo to run to the LAST "@" ("https://good.com\\@bad.com/" is host "bad.com").
+// So a production pattern is tried against both readings. This is done here, for the hooks, not in decide(): that is what the runtime guards port.
+function backslashReadings(url) {
+  const m = /^(https?):[/\\]*([\s\S]*)$/i.exec(String(url));
+  if (!m || !String(url).includes('\\')) return [];
+  const scheme = m[1].toLowerCase();
+  const rest = m[2];
+  const readings = [`${scheme}://${rest.replace(/\\/g, '/')}`];
+  const end = rest.search(/[/?#]/);
+  const authority = end < 0 ? rest : rest.slice(0, end);
+  const at = authority.lastIndexOf('@');
+  if (at >= 0) readings.push(`${scheme}://${authority.slice(at + 1)}${end < 0 ? '' : rest.slice(end)}`);
+  return readings;
 }
 
 function scan(text, cfg) {
   const findings = [];
   for (const f of findUrls(text)) {
-    const d = f.mode === 'full' ? decide(f.url, cfg) : (prodPatternHit(f.url, cfg, [f.raw]) || { decision: 'allow' });
+    let d = f.mode === 'full' ? decide(f.url, cfg) : (prodPatternHit(f.url, cfg, [f.raw]) || { decision: 'allow' });
+    if (f.mode === 'full' && d.reason !== 'PROD_PATTERN') {
+      for (const reading of backslashReadings(f.url)) { const hit = prodPatternHit(reading, cfg); if (hit) { d = hit; break; } }
+    }
     if (d.decision !== 'allow') findings.push({ url: f.raw, ...d });
   }
   return findings;
@@ -233,17 +259,27 @@ function loadConfig(file) {
   if (!file || !fs.existsSync(file)) return { cfg: {}, error: null, found: false };
   let doc;
   try { doc = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { return { cfg: {}, error: `${file} is not valid JSON: ${e.message}`, found: true }; }
+  return { cfg: configFromDoc(doc), error: null, found: true };
+}
+
+// The guard's view of a parsed qa-config.json.
+function configFromDoc(doc) {
   const pp = (doc && doc.productionProtection) || {};
   return {
-    cfg: {
-      prodUrlPatterns: Array.isArray(pp.prodUrlPatterns) ? pp.prodUrlPatterns : [],
-      allowedUrlPatterns: Array.isArray(pp.allowedUrlPatterns) ? pp.allowedUrlPatterns : [],
-      blockOnSuspiciousUrls: pp.blockOnSuspiciousUrls,
-      testEnvironmentBaseUrl: doc && doc.environments && doc.environments.testEnvironmentBaseUrl,
-    },
-    error: null,
-    found: true,
+    prodUrlPatterns: Array.isArray(pp.prodUrlPatterns) ? pp.prodUrlPatterns : [],
+    allowedUrlPatterns: Array.isArray(pp.allowedUrlPatterns) ? pp.allowedUrlPatterns : [],
+    blockOnSuspiciousUrls: pp.blockOnSuspiciousUrls,
+    testEnvironmentBaseUrl: doc && doc.environments && doc.environments.testEnvironmentBaseUrl,
   };
+}
+
+// For a qa-config.json that is about to be WRITTEN (env-detector.sh): is the text valid JSON, and would the config it makes be safe? It is judged as
+// enforce if the current mode is enforce or the new text turns enforce on itself. Returns { valid, error?, mode, configProblems }.
+function judgeConfigText(text, currentMode) {
+  let doc;
+  try { doc = JSON.parse(text); } catch (e) { return { valid: false, error: e.message, mode: currentMode, configProblems: [] }; }
+  const mode = currentMode === 'enforce' || (doc && doc.productionProtection && doc.productionProtection.mode === 'enforce') ? 'enforce' : 'warn';
+  return { valid: true, mode, configProblems: configProblems(configFromDoc(doc), mode, { found: true }) };
 }
 
 // What is wrong with the configuration itself, as [{ code, message }]. A run whose configuration is unsafe must not go on: the per-command hook
@@ -269,6 +305,10 @@ function configProblems(cfg, mode, { found = true } = {}) {
 function main(argv = process.argv.slice(2)) {
   const opt = (name) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : undefined; };
   const mode = opt('--mode') === 'enforce' ? 'enforce' : 'warn';
+  if (argv.includes('--judge-config')) {
+    process.stdout.write(`${JSON.stringify(judgeConfigText(fs.readFileSync(0, 'utf8'), mode))}\n`);
+    return 0;
+  }
   const { cfg, error, found } = loadConfig(opt('--config'));
   const text = fs.readFileSync(0, 'utf8');
   process.stdout.write(`${JSON.stringify({ configError: error, mode, configProblems: error ? [] : configProblems(cfg, mode, { found }), findings: scan(text, { ...cfg, mode }) })}\n`);
@@ -279,4 +319,4 @@ if (require.main === module) {
   try { process.exitCode = main(); } catch (e) { process.stderr.write(`url-guard: ${e.message}\n`); process.exitCode = 1; }
 }
 
-module.exports = { decide, scan, extractUrls, findUrls, configProblems, prodPatternHit, parseUrl, toIPv4, loadConfig, NONPROD_TOKENS, PROD_TOKENS };
+module.exports = { decide, scan, extractUrls, findUrls, configProblems, judgeConfigText, prodPatternHit, parseUrl, toIPv4, loadConfig, NONPROD_TOKENS, PROD_TOKENS };

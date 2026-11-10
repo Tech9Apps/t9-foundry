@@ -18,9 +18,12 @@ need_node_22_6() {
   fi
 }
 
-# <file> <pattern> <what>: the file must match the extended regex, or the test fails naming the file
+# the file's code, without lines that are only a comment (// or #): a call that has been commented out is not a call
+code() { grep -Ev '^[[:space:]]*(//|#)' "$1"; }
+
+# <file> <pattern> <what>: the file's code must match the extended regex, or the test fails naming the file
 must_match() {
-  grep -Eq -- "$2" "$1" || { echo "${1#"$REPO_ROOT"/}: $3"; return 1; }
+  code "$1" | grep -Eq -- "$2" || { echo "${1#"$REPO_ROOT"/}: $3"; return 1; }
 }
 
 @test "playwright, cypress and webdriverio each import guardOptionsFromConfig and pass guardOptionsFromConfig(qa) to validateNotProduction" {
@@ -34,11 +37,11 @@ must_match() {
 }
 
 @test "each of those calls is made where it runs before any test (config load, global setup, onPrepare), not in a function nobody calls" {
-  grep -Eq "^export default async function globalSetup" "$E2E/playwright/support/global-setup.ts"
-  grep -Eq "^[[:space:]]*globalSetup:[[:space:]]*require\.resolve\('\./support/global-setup'\)" "$E2E/playwright/playwright.config.ts"
+  must_match "$E2E/playwright/support/global-setup.ts" "^export default async function globalSetup" "global setup is no longer the default export"
+  must_match "$E2E/playwright/playwright.config.ts" "^[[:space:]]*globalSetup:[[:space:]]*require\.resolve\('\./support/global-setup'\)" "no longer registers ./support/global-setup as globalSetup"
   # cypress: at the top level of the config module, so it runs when the config loads
-  [ "$(grep -n 'validateNotProduction(baseUrl' "$E2E/cypress/cypress.config.ts" | cut -d: -f2- | grep -c '^validateNotProduction')" -eq 1 ]
-  grep -Eq "onPrepare\(\)" "$E2E/webdriverio/wdio.conf.ts"
+  must_match "$E2E/cypress/cypress.config.ts" "^validateNotProduction\(baseUrl" "no longer calls validateNotProduction at the top level of the config"
+  must_match "$E2E/webdriverio/wdio.conf.ts" "async onPrepare\(\)" "no longer has an onPrepare hook"
 }
 
 @test "guardOptionsFromConfig turns qa-config.json into the guard's options, and validateNotProduction enforces only when given them (all three TypeScript copies)" {
@@ -56,7 +59,7 @@ must_match() {
     f="$E2E/$fw/conftest.py"
     must_match "$f" "^from support\.prod_guard import validate_not_production" "no longer imports validate_not_production"
     must_match "$f" "^def pytest_sessionstart\(" "no longer has a pytest_sessionstart hook"
-    awk '/^def pytest_sessionstart\(/ {in_hook=1; next} /^(def |@pytest)/ {in_hook=0} in_hook && /validate_not_production\(base_url\)/ {found=1} END {exit !found}' "$f" \
+    code "$f" | awk '/^def pytest_sessionstart\(/ {in_hook=1; next} /^(def |@pytest)/ {in_hook=0} in_hook && /validate_not_production\(base_url\)/ {found=1} END {exit !found}' \
       || { echo "$fw/conftest.py: pytest_sessionstart does not call validate_not_production(base_url)"; false; }
     must_match "$E2E/$fw/support/prod_guard.py" "qa-config\.json" "the guard no longer looks for qa-config.json itself (the entry point passes it no options)"
   done

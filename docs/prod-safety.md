@@ -38,6 +38,8 @@ Every shell command Claude runs passes through this hook before execution. It sc
 
 **It also refuses every command while the configuration is unsafe** (the checks Layer 2 can only announce): no `qa-config.json`, no `prodUrlPatterns` or no staging URL in `enforce` mode, or a staging URL that is itself a production URL in any mode. And without `jq` it cannot read a command at all, so `enforce` mode blocks and `warn` mode warns. Every reason is printed to stderr, which is what Claude Code shows Claude when a hook blocks.
 
+Because that leaves the Write and Edit tools as the way to repair `qa-config.json`, **Layer 4 treats a write to the config the guards read as the repair channel**: a full write is judged on the config it would create (valid JSON, and none of the problems above) instead of against the broken one it replaces, and an edit is not stopped because the current file is malformed. A file that is merely *named* `qa-config.json` somewhere else is scanned like any other.
+
 This catches a mistyped command or a mis-configured test runner that names a production URL, even if Layers 1 and 2 somehow failed. It reads URLs, not intent — see "What this cannot see" under Guard Modes for what it does not cover.
 
 ---
@@ -124,13 +126,14 @@ inside the scheme and host**: `://partner\\.io/guide` allows `https://partner.io
 says "anything, then `partner.io/guide`". An invalid regex never exempts anything.
 
 **What counts as a URL.** curl, browsers and HTTP libraries accept far more than `https://host/path`, so the shell hooks (Layers 3 and 4) read
-every spelling, in a command or in file content:
+every spelling, in a command or in file content. A URL ends at whitespace, a quote or shell punctuation (`; | & , { }`), so
+`curl https://host;echo` and `https://host/x|jq .` are the URL `https://host`:
 
 | Spelling | Examples | Judged by |
 |----------|----------|-----------|
 | `http(s)` with the slashes wrong | `https:/host`, `http:///host`, `HTTPS:/host`, `https:host` | the full decision above, exactly like `https://host` |
 | protocol-relative | `//host/path`, `--url=//host` | the full decision (a host that looks like one: `ls //tmp/x` is not read as a URL) |
-| a backslash after the scheme | `https:\\host` | the full decision: unverifiable (the guard does not guess), so `enforce` blocks |
+| a backslash in the host or after the scheme | `https:\\host`, `https://host\path`, `https://good.com\@host` | the full decision: unverifiable (the guard does not guess), so `enforce` blocks. A production pattern is also tried against both readings of the backslash (a browser takes `\` for `/`; curl takes userinfo to run to the last `@`), so a production host cannot hide behind either. The hooks do this; Layer 5 judges `BASE_URL` as one string and does not |
 | another scheme | `ftp://host`, `sftp://user@host`, `postgresql://host` | **`prodUrlPatterns` only** |
 | a bare host | `curl myapp.example.com/x`, `user@host`, `BASE=host/x npm test` | **`prodUrlPatterns` only** |
 
@@ -175,19 +178,20 @@ Add your production URLs to `qa-config.json > productionProtection.prodUrlPatter
 {
   "productionProtection": {
     "prodUrlPatterns": [
-      "myapp\\.com$",
-      "app\\.myapp\\.com",
-      "production\\.myapp\\.com",
-      "prod-api\\.myapp\\.com"
+      "://myapp\\.com(/|:|$)",
+      "://app\\.myapp\\.com(/|:|$)",
+      "://production\\.myapp\\.com(/|:|$)",
+      "://prod-api\\.myapp\\.com(/|:|$)"
     ]
   }
 }
 ```
 
 Rules:
-- Use `$` to anchor to the end if your staging URL shares a subdomain structure
+- **Anchor the start**: begin with `://`, as above. A pattern such as `myapp\\.com$` also matches `https://staging.myapp.com`, and a config whose staging URL matches a production pattern makes the per-command guard refuse **every** shell command (Layer 3 checks this before each one, in either mode). `$` anchors the END only; it does not help.
 - Escape dots: `\\.` not `.`
-- Test your patterns before committing: `echo "https://app.myapp.com" | grep -E "app\.myapp\.com"`
+- Check the config before relying on it: `echo '' | node hooks/lib/url-guard.js --config qa-config.json --mode enforce` lists any `configProblems`, and `scripts/preflight.sh` checks the same
+- Test a pattern against a URL: `echo "https://app.myapp.com" | grep -E "://app\.myapp\.com(/|:|$)"`
 
 ---
 

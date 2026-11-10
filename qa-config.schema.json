@@ -147,7 +147,7 @@
           "type": "string",
           "enum": ["warn", "enforce"],
           "default": "warn",
-          "description": "warn: heuristic URL matches only print a warning (a human is watching). enforce: heuristic matches block, and every shell command is refused while prodUrlPatterns is empty, testEnvironmentBaseUrl is unset or qa-config.json is missing. QA_AUTONOMOUS=1 forces enforce regardless of this value."
+          "description": "warn: heuristic URL matches only print a warning (a human is watching). enforce: heuristic matches block, and every shell command is refused while prodUrlPatterns is empty, testEnvironmentBaseUrl is unset or qa-config.json is missing. In either mode every shell command is refused while testEnvironmentBaseUrl matches a production pattern. QA_AUTONOMOUS=1 forces enforce regardless of this value."
         },
         "allowedUrlPatterns": {
           "type": "array",

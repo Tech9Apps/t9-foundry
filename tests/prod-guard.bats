@@ -512,7 +512,7 @@ guard_status() {
 @test "a spelling with a backslash is still not guessed at: unverifiable, so enforce blocks and warn warns" {
   guard_status 'curl https:\\myapp.example.com\x' "enforce-config.json"
   [ "$status" -eq 2 ]
-  guard_status 'curl https:\\myapp.example.com\x' "prod-url-config.json"
+  guard_status 'curl https:\\otherapp.io\x' "prod-url-config.json"   # a host no production pattern names: still only a warning in warn mode
   [ "$status" -eq 0 ]
   [[ "$output" =~ "WARNING" ]]
 }
@@ -630,4 +630,120 @@ guard_status() {
   guard_input "curl https://partner.io/guide/setup" "enforce-config.json"
   run bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json"
   [ "$status" -eq 0 ]
+}
+
+# ── The configs a new user is told to copy must themselves be safe ───────────
+# README tells people to `cp qa-config.example.json qa-config.json`. Its production pattern "myapp\.com$" also matched its own staging URL
+# (staging.myapp.com), so the config-safety check above would have refused every shell command on a user's first run.
+
+@test "every shipped example config passes the config-safety check in warn and in enforce mode, and its staging URL really is allowed" {
+  for f in qa-config.example.json projects/example.json demo/qa-config.demo.json examples/qa-config.demo.json; do
+    for mode in warn enforce; do
+      run bash -c "node '$REPO_ROOT/hooks/lib/url-guard.js' --config '$REPO_ROOT/$f' --mode $mode </dev/null | jq -c '[.configProblems[].code]'"
+      [ "$output" = "[]" ] || { echo "$f ($mode): $output"; false; }
+    done
+    guard_input "echo hello"
+    cp "$REPO_ROOT/$f" "$TEST_TMP/qa-config.json"
+    run env QA_AUTONOMOUS=1 bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json"
+    [ "$status" -eq 0 ] || { echo "$f: a command is refused in enforce mode"; echo "$output"; false; }
+  done
+}
+
+@test "the production patterns the examples and the /init skill teach are anchored, so they cannot match a staging host that merely ends the same way" {
+  # unanchored "myapp\.com$" matches https://staging.myapp.com; the anchored form "://myapp\.com(/|:|$)" does not
+  for f in qa-config.example.json projects/example.json examples/qa-config.demo.json; do
+    run jq -r '.productionProtection.prodUrlPatterns[]' "$REPO_ROOT/$f"
+    for pattern in $output; do
+      [[ "$pattern" == *"://"* || "$pattern" == "^"* ]] || { echo "$f: unanchored pattern: $pattern"; false; }
+    done
+  done
+  run grep -n 'suggest `myapp.com\$`' "$REPO_ROOT/.claude/skills/init.md"
+  [ "$status" -ne 0 ]
+}
+
+# ── Where a URL ends, and what a backslash means ─────────────────────────────
+
+@test "a production URL is found whatever shell punctuation follows it: ; | & , } and an escaped quote (warn and enforce)" {
+  for cmd in \
+    'curl -s https://myapp.example.com;echo done' \
+    'curl -s https://myapp.example.com/x|jq .' \
+    'curl -s https://myapp.example.com/x && echo ok' \
+    'curl -s https://myapp.example.com/x&& echo ok' \
+    'curl -s https://myapp.example.com,https://staging.myapp.example.com' \
+    'echo {https://myapp.example.com}' \
+    'bash -c "curl \"https://myapp.example.com\""' \
+    "bash -c 'curl \\'https://myapp.example.com\\''"; do
+    for env in QA_PROBE=warn QA_AUTONOMOUS=1; do
+      guard_status "$cmd" "prod-url-config.json" "$env"
+      [ "$status" -eq 2 ] || { echo "NOT BLOCKED ($env): $cmd"; echo "$output"; false; }
+    done
+  done
+}
+
+@test "enforce: ordinary unattended-run syntax with the staging or localhost URL is not blocked just because punctuation follows the URL" {
+  for cmd in \
+    'export BASE_URL=https://staging.myapp.example.com; npx playwright test' \
+    'BASE_URL=http://localhost:3000; npx playwright test' \
+    'wait-on http://localhost:3000&& npm test' \
+    'curl -s http://localhost:3000|jq .' \
+    'curl -s "http://localhost:3000/health",' \
+    'npx wait-on http://localhost:3000 && BASE_URL=http://localhost:3000 npx playwright test'; do
+    guard_status "$cmd" "enforce-config.json"
+    [ "$status" -eq 0 ] || { echo "WRONGLY BLOCKED: $cmd"; echo "$output"; false; }
+  done
+}
+
+@test "a URL is still unverifiable when the unverifiable part is inside the host (a variable), punctuation or not" {
+  guard_status 'curl https://${HOST}/x; echo' "enforce-config.json"
+  [ "$status" -eq 2 ]
+  guard_status 'curl https://$HOST/x;echo' "enforce-config.json"
+  [ "$status" -eq 2 ]
+}
+
+@test "a backslash cannot hide a production host: a browser reads it as a slash, curl reads 'x\\@host' as host 'host'" {
+  for cmd in \
+    'curl -s https://staging.myapp.example.com\@myapp.example.com/' \
+    'curl -s https://myapp.example.com\path' \
+    'curl -s https:\\myapp.example.com\x' \
+    'curl -s https://x@staging.myapp.example.com\@myapp.example.com/'; do
+    for env in QA_PROBE=warn QA_AUTONOMOUS=1; do
+      guard_status "$cmd" "prod-url-config.json" "$env"
+      [ "$status" -eq 2 ] || { echo "NOT BLOCKED ($env): $cmd"; echo "$output"; false; }
+    done
+  done
+}
+
+@test "a backslash spelling of a host no pattern names is still unverifiable: warn warns, enforce blocks" {
+  guard_status 'curl https:\\otherapp.io\x' "prod-url-config.json"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "WARNING" ]]
+  guard_status 'curl https:\\otherapp.io\x' "enforce-config.json"
+  [ "$status" -eq 2 ]
+}
+
+@test "one long token cannot stall the guard (the bare-host reader once took quadratic time: 100 KB took seconds, past the hook's timeout)" {
+  run node -e '
+    const { scan } = require(process.argv[1]);
+    const cfg = { prodUrlPatterns: ["://myapp\\.example\\.com/"], mode: "warn" };
+    for (const filler of ["a-".repeat(150000), "a.".repeat(150000), "a+".repeat(150000), "a@".repeat(150000), "0123456789abcdef.".repeat(20000), "ab:/".repeat(80000), "http:".repeat(60000), "//a.".repeat(60000), "x=a.b".repeat(60000)]) {
+      const t0 = Date.now();
+      const found = scan("echo " + filler + " ; curl https://myapp.example.com/x", cfg);
+      const ms = Date.now() - t0;
+      if (ms > 1500) { console.log("SLOW " + ms + "ms for " + filler.slice(0, 8)); process.exit(1); }
+      if (!found.some((f) => f.reason === "PROD_PATTERN")) { console.log("MISSED the production URL after " + filler.slice(0, 8)); process.exit(1); }
+    }
+    console.log("OK");
+  ' "$REPO_ROOT/hooks/lib/url-guard.js"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$output" = "OK" ]
+}
+
+@test "a malformed config that says mode enforce is treated as enforce, with or without jq reading it (it resolved to warn and let a production URL through)" {
+  printf '{ "productionProtection": { "mode": "enforce", "prodUrlPatterns": ["://myapp\\\\.example\\\\.com/"], }, }' > "$TEST_TMP/qa-config.json"
+  jq -n '{tool_input:{command:"curl https://myapp.example.com/x"}}' > "$TEST_TMP/input.json"
+  run env -u QA_AUTONOMOUS bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json"
+  [ "$status" -eq 2 ]
+  [[ "$output" =~ "not valid JSON" ]]
+  run env -u QA_AUTONOMOUS bash -c "cd '$TEST_TMP' && bash '$GUARD' < input.json 2>&1 | head -1"
+  [[ "$output" =~ "BLOCKED" ]]
 }
