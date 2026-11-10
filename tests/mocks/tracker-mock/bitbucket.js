@@ -51,7 +51,15 @@ function createBitbucketMock({ secret = 'app-password', username = 'qa-bot', wor
     return [200, { size: all.length, page, pagelen: per, values, ...(page * per < all.length ? { next: `${baseUrl}/repositories/${workspace}/${repo}/issues?page=${page + 1}` } : {}) }];
   });
   core.route('GET', `${R}/:id`, ({ params }) => [200, issue(params)]);
-  core.route('GET', `${R}/:id/comments`, ({ params }) => { issue(params); const v = state.comments.get(Number(params.id)); return [200, { size: v.length, page: 1, pagelen: 100, values: v }]; });
+  // 10 per page unless pagelen says otherwise (at most 100); `next` is present while more remain, as in the real API
+  core.route('GET', `${R}/:id/comments`, ({ params, query }) => {
+    issue(params);
+    const all = state.comments.get(Number(params.id));
+    const per = Math.min(Number(query.pagelen) || 10, 100);
+    const page = Number(query.page) || 1;
+    const values = all.slice((page - 1) * per, page * per);
+    return [200, { size: all.length, page, pagelen: per, values, ...(page * per < all.length ? { next: `https://mock.test${R}/${params.id}/comments?pagelen=${per}&page=${page + 1}` } : {}) }];
+  });
   core.route('POST', R, ({ params, body }) => {
     inRepo(params);
     if (!body || !body.title) throw err(400, 'title: This field is required.');

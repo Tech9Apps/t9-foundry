@@ -2,6 +2,7 @@
 
 const { TrackerError } = require('../lib/errors');
 const { checkBaseUrl } = require('../lib/base-url');
+const { findInPages, PAGE_SIZE } = require('../lib/paging');
 const { request } = require('../lib/http');
 const { keyMarker, hasMarker, stepsAsMarkdown, extractAcceptanceCriteria } = require('../lib/contract');
 
@@ -112,8 +113,10 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
   }
 
   async function findCommentByKey(id, key) {
-    const { json } = await call('GET', `${issuePath(id)}/comments`, undefined, `look up idempotency key on GitHub issue ${id}`);
-    const hit = (json || []).find((c) => hasMarker(c.body, key));
+    const hit = await findInPages(async (page) => {
+      const { json } = await call('GET', `${issuePath(id)}/comments?per_page=${PAGE_SIZE}&page=${page}`, undefined, `look up idempotency key on GitHub issue ${id}`);
+      return { items: json || [], more: (json || []).length >= PAGE_SIZE };
+    }, (c) => hasMarker(c.body, key), `look up idempotency key on GitHub issue ${id}`);
     return hit ? { id: String(hit.id), url: hit.html_url } : null;
   }
 

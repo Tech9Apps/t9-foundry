@@ -42,9 +42,12 @@ function createGithubMock({ token = 'test-token', repo = 'acme/shop' } = {}) {
     return [200, all.slice((page - 1) * per, page * per)];
   });
   core.route('GET', '/repos/:owner/:repo/issues/:number', ({ params }) => [200, getIssue(params)]);
-  core.route('GET', '/repos/:owner/:repo/issues/:number/comments', ({ params }) => {
+  // Like the real API: 30 per page unless per_page says otherwise (at most 100), `page` from 1. A client that reads one page misses the rest.
+  core.route('GET', '/repos/:owner/:repo/issues/:number/comments', ({ params, query }) => {
     getIssue(params);
-    return [200, state.comments.get(Number(params.number))];
+    const per = Math.min(Number(query.per_page) || 30, 100);
+    const page = Number(query.page) || 1;
+    return [200, state.comments.get(Number(params.number)).slice((page - 1) * per, page * per)];
   });
   core.route('POST', '/repos/:owner/:repo/issues', ({ params, body }) => {
     inRepo(params);

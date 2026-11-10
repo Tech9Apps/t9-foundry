@@ -45,6 +45,12 @@ node_tests() { # <file> -> runs it, echoes the TAP summary lines
   [[ "$output" =~ "# fail 0" ]]
 }
 
+@test "the idempotency lookup for comments reads every page, and refuses to guess past the pages it reads" {
+  run node_tests comment-paging.test.js
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "# fail 0" ]]
+}
+
 @test "no credential reaches an error message or another host: redaction, redirects, base URLs, the hosts a token may go to" {
   run node_tests security.test.js
   [ "$status" -eq 0 ]
