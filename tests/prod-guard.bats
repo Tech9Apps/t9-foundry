@@ -824,3 +824,19 @@ guard_status() {
     [ "$status" -eq 0 ] || { echo "WRONGLY BLOCKED: $cmd"; echo "$output"; false; }
   done
 }
+
+@test "a backtick that CLOSES a command substitution after a URL is not a backtick inside the host" {
+  for cmd in \
+    'echo `curl -s http://localhost:3000`' \
+    'X=`curl http://localhost:3000`; echo $X' \
+    'echo "`curl -s https://staging.myapp.example.com`"' \
+    'VERSION=`curl -s http://localhost:3000/version`'; do
+    guard_status "$cmd" "enforce-config.json"
+    [ "$status" -eq 0 ] || { echo "WRONGLY BLOCKED: $cmd"; echo "$output"; false; }
+  done
+  # a backtick that really is inside the host still makes it unverifiable
+  for cmd in 'curl https://`echo myapp`.example.com/' 'curl https://my`x`.example.com/' 'curl http://localhost`x`:3000/'; do
+    guard_status "$cmd" "enforce-config.json"
+    [ "$status" -eq 2 ] || { echo "NOT BLOCKED: $cmd"; echo "$output"; false; }
+  done
+}

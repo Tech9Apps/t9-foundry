@@ -213,7 +213,9 @@ function findUrls(text) {
   // For those the whole token is judged as well (the host part is everything up to the first / ? #). A brace group or a backtick has no verifiable host.
   for (const m of s.matchAll(/\b(https?):([/\\]*)([^\s'"<>)]+)/gi)) {
     const [raw, scheme, slashes, rest] = m;
-    if (!/@|\{[^}]*\}|`/.test(rest.split(/[/?#]/)[0])) continue;
+    // (backticks and separators at the very END of the token are not in the host: a backtick there closes a command substitution around the URL,
+    // as in `curl http://localhost:3000`; or X=`curl http://localhost:3000`; echo $X. Braces are not stripped: "{a,b}" is a real brace group.)
+    if (!/@|\{[^}]*\}|`/.test(rest.split(/[/?#]/)[0].replace(/[`;|&,]+$/, ''))) continue;
     add(raw, `${scheme.toLowerCase()}://${rest}`, 'full');
   }
   // a URL the shell joins from quoted pieces: "https://staging.x.com"@prod.com/ is https://staging.x.com@prod.com/, host prod.com. (The host part is
