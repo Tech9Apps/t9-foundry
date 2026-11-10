@@ -59,4 +59,5 @@ bats \
   tests/layer5-guard.bats \
   tests/layer5-guard-py-rb.bats \
   tests/guard-parity.bats \
+  tests/layer5-wiring.bats \
   tests/demo.bats
