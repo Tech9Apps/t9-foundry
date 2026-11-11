@@ -72,6 +72,35 @@ async function defaultRunResults(argv, env) {
   return { code, doc };
 }
 
+// What an earlier run left in <out>, cleared by OWNERSHIP, not by name: <out> may be a directory the user also keeps things in (--out . is legal), and a
+// snapshots/ or a plan.json there is not ours to delete. A file is ours when its NAME and its SHAPE are what this tool writes; a directory is removed only
+// if that left it empty. (run.js protects its raw/ the same way, with a marker.)
+const readJson = (file) => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return undefined; } };
+const isObj = (x) => x && typeof x === 'object' && !Array.isArray(x);
+const OWNED_FILES = {
+  'triage.json': (d) => isObj(d) && isObj(d.data) && Array.isArray(d.data.verdicts),
+  'plan.json': (d) => isObj(d) && isObj(d.data) && Array.isArray(d.data.actions),
+  'flaky.json': (d) => isObj(d) && Array.isArray(d.flaky) && 'runId' in d,
+  'evidence.json': (d) => isObj(d) && Object.values(d).every((v) => isObj(v) && 'locator' in v),
+};
+function clearStale(out, warnings) {
+  if (!fs.existsSync(out)) return;
+  const rm = (p) => fs.rmSync(p, { recursive: true, force: true });
+  for (const e of fs.readdirSync(out, { withFileTypes: true })) {
+    const p = path.join(out, e.name);
+    if (OWNED_FILES[e.name]) {
+      if (e.isSymbolicLink()) { fs.unlinkSync(p); warnings.push(`${e.name} in ${out} was a symlink: the link was removed (its target was not touched), so an earlier run's file cannot stand in for this one`); } // eslint-disable-line max-len
+      else if (e.isFile() && OWNED_FILES[e.name](readJson(p))) rm(p);
+    } else if (e.isDirectory() && /^rerun-\d+$/.test(e.name)) {
+      if (fs.existsSync(path.join(p, 'result.json')) || fs.existsSync(path.join(p, 'raw'))) rm(p); // what run.js writes into an --out directory
+    } else if (e.isDirectory() && (e.name === 'snapshots' || e.name === 'comments')) {
+      const mine = e.name === 'snapshots' ? /^qafp[0-9a-f]{12}\.html$/ : /^qafp[0-9a-f]{12}\.json$/;
+      for (const f of fs.readdirSync(p, { withFileTypes: true })) if (f.isFile() && mine.test(f.name)) rm(path.join(p, f.name));
+      if (!fs.readdirSync(p).length) fs.rmdirSync(p);
+    }
+  }
+}
+
 const writeJson = (file, obj) => { fs.mkdirSync(path.dirname(path.resolve(file)), { recursive: true }); fs.writeFileSync(file, `${JSON.stringify(obj, null, 2)}\n`); };
 const needsTriage = (t) => t.status === 'failed' || t.flaky;
 
@@ -88,12 +117,7 @@ async function orchestrate(opts, { env = process.env, fetch = globalThis.fetch, 
   // evidence and snapshots (a failure's token is stable across runs, so a stale snapshot would be applied to this run's failure with the same token),
   // and the previous triage/plan/flaky/comments (a green or --no-plan run would otherwise leave a failing run's files looking current). Clear exactly
   // those, by name. Nothing else in <out> is touched.
-  if (fs.existsSync(out)) {
-    for (const e of fs.readdirSync(out, { withFileTypes: true })) {
-      const stale = (e.isDirectory() && (/^rerun-\d+$/.test(e.name) || e.name === 'snapshots' || e.name === 'comments')) || (e.isFile() && ['evidence.json', 'triage.json', 'plan.json', 'flaky.json'].includes(e.name));
-      if (stale) fs.rmSync(path.join(out, e.name), { recursive: true, force: true });
-    }
-  }
+  clearStale(out, warnings);
 
   // 1. the main run
   const first = await runResults([...base, ...specArgs(opts.specs), '--out', path.join(out, 'main')], env);

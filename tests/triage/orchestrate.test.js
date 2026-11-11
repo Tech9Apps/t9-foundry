@@ -262,19 +262,49 @@ describe('orchestrate: what the second review of PR #9 found', () => {
     assert.equal(r.doc.data.warnings, undefined);
   });
 
-  test('what an EARLIER run left in <out> is cleared, by name, before this run: evidence, snapshots, triage/plan/flaky and comments; nothing else', async () => {
-    const out = tmp();
-    const put = (rel, body = '{}') => { fs.mkdirSync(path.dirname(path.join(out, rel)), { recursive: true }); fs.writeFileSync(path.join(out, rel), body); };
-    for (const f of ['evidence.json', 'triage.json', 'plan.json', 'flaky.json', 'snapshots/qafp1.html', 'comments/qafp1.json', 'keep-me.txt', 'main/notes.txt']) put(f);
-    const s = scripted({ main: { doc: result(passing()) } });
-    await go({ framework: 'node', out }, { runResults: s.runResults });
-    for (const gone of ['evidence.json', 'triage.json', 'plan.json', 'flaky.json', 'snapshots', 'comments']) assert.equal(fs.existsSync(path.join(out, gone)), false, `${gone} should be cleared`);
-    assert.equal(fs.existsSync(path.join(out, 'keep-me.txt')), true, 'an unrelated file is not touched');
+  describe('what an EARLIER run left in <out> is cleared; what is not ours is never touched', () => {
+    const put = (out, rel, body = '{}') => { fs.mkdirSync(path.dirname(path.join(out, rel)), { recursive: true }); fs.writeFileSync(path.join(out, rel), body); };
+    const has = (out, rel) => fs.existsSync(path.join(out, rel));
+    const OWNED = {
+      'triage.json': '{"ok":true,"data":{"verdicts":[]}}', 'plan.json': '{"ok":true,"data":{"actions":[]}}', 'flaky.json': '{"runId":"r","flaky":[]}',
+      'evidence.json': '{"k":{"locator":{"target":"x"}}}', 'comments/qafp0123456789ab.json': '{}', 'snapshots/qafp0123456789ab.html': '<html></html>', 'rerun-1/result.json': '{}',
+    };
+    test('files this tool wrote are cleared (and a directory left empty by that goes too)', async () => {
+      const out = tmp();
+      for (const [rel, body] of Object.entries(OWNED)) put(out, rel, body);
+      put(out, 'keep-me.txt', 'mine');
+      await go({ framework: 'node', out }, { runResults: scripted({ main: { doc: result(passing()) } }).runResults });
+      for (const rel of Object.keys(OWNED)) assert.equal(has(out, rel), false, `${rel} should be cleared`);
+      for (const dir of ['snapshots', 'comments', 'rerun-1']) assert.equal(has(out, dir), false, `${dir}/ was left empty and should go`);
+      assert.equal(has(out, 'keep-me.txt'), true);
+    });
+    test('a file of the user\'s in the same places survives: other names inside snapshots/ and comments/, a plan.json that is not ours, a triage.json that is not JSON, a rerun-N directory the runner did not write', async () => {
+      const out = tmp();
+      put(out, 'snapshots/visual.png', 'PNG'); put(out, 'snapshots/qafp0123456789ab.html', '<html>');
+      put(out, 'comments/notes.md', '# notes'); put(out, 'comments/qafp0123456789ab.json', '{}');
+      put(out, 'plan.json', '{"my":"own plan"}'); put(out, 'triage.json', 'not json at all'); put(out, 'flaky.json', '[1,2,3]'); put(out, 'evidence.json', '["not", "ours"]');
+      put(out, 'rerun-2/notes.txt', 'mine');
+      await go({ framework: 'node', out, noPlan: true }, { runResults: scripted({ main: { doc: result(passing()) } }).runResults });
+      for (const rel of ['snapshots/visual.png', 'comments/notes.md', 'plan.json', 'triage.json', 'flaky.json', 'evidence.json', 'rerun-2/notes.txt']) assert.equal(has(out, rel), true, `${rel} is the user's and must survive`);
+      assert.equal(fs.readFileSync(path.join(out, 'plan.json'), 'utf8'), '{"my":"own plan"}');
+      assert.equal(has(out, 'snapshots/qafp0123456789ab.html'), false, 'our own snapshot in the same directory is still cleared');
+      assert.equal(has(out, 'comments/qafp0123456789ab.json'), false);
+    });
+    test('a symlink where one of our files should be is removed as a link (its target is never touched) and reported', async () => {
+      const out = tmp();
+      const target = path.join(tmp(), 'precious.json');
+      fs.writeFileSync(target, '{"keep":true}');
+      fs.symlinkSync(target, path.join(out, 'evidence.json'));
+      const r = await go({ framework: 'node', out }, { runResults: scripted({ main: { doc: result(passing()) } }).runResults });
+      assert.equal(has(out, 'evidence.json'), false);
+      assert.equal(fs.readFileSync(target, 'utf8'), '{"keep":true}');
+      assert.ok((r.doc.data.warnings || []).some((w) => /evidence\.json/.test(w) && /symlink|link/.test(w)), JSON.stringify(r.doc.data));
+    });
   });
 
   test('a failing --no-plan run does not leave an earlier run\'s plan.json / flaky.json behind', async () => {
     const out = tmp();
-    fs.writeFileSync(path.join(out, 'plan.json'), '{"stale":true}'); fs.writeFileSync(path.join(out, 'flaky.json'), '{"stale":true}');
+    fs.writeFileSync(path.join(out, 'plan.json'), '{"ok":true,"data":{"actions":[]}}'); fs.writeFileSync(path.join(out, 'flaky.json'), '{"runId":"old","flaky":[]}');
     const s = scripted(() => ({ doc: result(failing()) }));
     const r = await go({ framework: 'node', out, noPlan: true }, { runResults: s.runResults });
     assert.equal(r.doc.data.status, 'triaged');
