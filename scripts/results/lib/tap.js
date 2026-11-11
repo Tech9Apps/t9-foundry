@@ -9,6 +9,11 @@ const { stripAnsi, truncate, firstLine, isTimeout, finish } = require('./shared'
 // "not ok" for its own reason (an after-hook threw, a suite-level error): then it is a failed test of its own.
 const POINT = /^(\s*)(not ok|ok)\s+\d+\s*(?:-\s*)?(.*)$/;
 
+// node:test reports EVERY error thrown in a test body with failureType "testCodeFailure" — a failed assertion and a `fetch failed` TypeError alike.
+// Only the error's own code/name tell them apart, and the difference matters: a failed assertion is evidence about the app, a thrown
+// error is not (it is a crash, a network error, a bug in the test), and triage turns "assertion about the app" into a bug report.
+const isAssertion = (y) => y.code === 'ERR_ASSERTION' || y.name === 'AssertionError';
+
 function parseYamlBlock(lines) {
   const fields = {};
   for (let i = 0; i < lines.length; i += 1) {
@@ -84,7 +89,7 @@ function parse(src, opts) {
     }
     if (t.status === 'failed') {
       const message = stripAnsi(y.error || y.message || '') || 'failed';
-      t.error = { message: truncate(firstLine(message) === message ? message : message.split('\n\n')[0], 1000), kind: y.failureType === 'testTimeoutFailure' || isTimeout(message) ? 'timeout' : (y.code === 'ERR_ASSERTION' || y.failureType === 'testCodeFailure' ? 'failure' : 'error') };
+      t.error = { message: truncate(firstLine(message) === message ? message : message.split('\n\n')[0], 1000), kind: y.failureType === 'testTimeoutFailure' || isTimeout(message) ? 'timeout' : (isAssertion(y) ? 'failure' : 'error') };
       const full = stripAnsi([y.error, y.stack].filter(Boolean).join('\n'));
       if (full && full !== t.error.message) t.error.details = truncate(full);
       if (y.expected !== undefined) t.error.expected = String(y.expected);

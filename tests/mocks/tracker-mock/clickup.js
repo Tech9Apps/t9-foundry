@@ -9,9 +9,10 @@ function createClickupMock({ token = 'pk_test_token', listId = '9001' } = {}) {
   const P = '/api/v2';
 
   function seedTask({ name, description = '', tags = [], status = 'to do', priority = null, parent = null, attachments = [] }) {
-    const id = `86a${String(state.seq++).padStart(5, '0')}`;
+    const n = state.seq++;
+    const id = `86a${String(n).padStart(5, '0')}`;
     state.tasks.set(id, {
-      id, name, text_content: description, description, status: { status }, priority: priority ? { priority } : null,
+      id, date_created: String(Date.UTC(2026, 0, 2, 3, 4, 5) + (n - 1) * 1000), name, text_content: description, description, status: { status }, priority: priority ? { priority } : null,
       tags: tags.map((t) => ({ name: t })), parent, attachments, url: `https://app.clickup.test/t/${id}`, list: { id: listId }, assignees: [],
     });
     state.comments.set(id, []);
@@ -87,6 +88,9 @@ function createClickupMock({ token = 'pk_test_token', listId = '9001' } = {}) {
       const items = [...state.checklists.values()].filter((c) => c.task === id).flatMap((c) => c.items.map((i) => i.name));
       return { id, title: t.name, text: [t.description, ...items].join('\n') };
     }),
+    closeItem: (id) => { state.tasks.get(String(id)).status = { status: 'complete', type: 'closed' }; },
+    setStatus: (id, status, type = 'custom') => { state.tasks.get(String(id)).status = { status, type }; }, // any status a workspace could name
+    dismissItem: (id) => { state.tasks.get(String(id)).status = { status: "Won't do", type: 'custom' }; }, // a workspace's own status: type is custom, not closed
     commentsOn: (id) => state.comments.get(id).map((c) => c.comment_text),
     paths: { create: '/list/[^/]+/task$', search: '/list/[^/]+/task', ticket: '/task/[^/]+$', link: '/link/' },
     linkMethod: 'POST',

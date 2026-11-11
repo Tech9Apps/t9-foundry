@@ -36,7 +36,11 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
     if (!/^\d+$/.test(String(id))) throw new TrackerError('VALIDATION', `GitHub issue ids are numbers (got "${id}")`);
     return `/repos/${repo}/issues/${id}`;
   };
-  const summarize = (issue) => ({ id: String(issue.number), title: issue.title, url: issue.html_url, status: issue.state });
+  // "dismissed" = the team closed it WITHOUT fixing it: GitHub's own "Close as not planned" / "Close as duplicate", or its default wontfix/invalid/duplicate labels.
+  // A defect that reappears after that is not a regression of a fix, so it must not be filed as one.
+  const DISMISS_LABEL = /^(?:wontfix|won't fix|invalid|duplicate)$/i;
+  const dismissedIssue = (issue) => issue.state === 'closed' && (issue.state_reason === 'not_planned' || issue.state_reason === 'duplicate' || (issue.labels || []).some((l) => DISMISS_LABEL.test(typeof l === 'string' ? l : l.name || '')));
+  const summarize = (issue) => ({ id: String(issue.number), title: issue.title, url: issue.html_url, status: issue.state, open: issue.state === 'open', ...(issue.created_at ? { createdAt: issue.created_at } : {}), ...(dismissedIssue(issue) ? { dismissed: true } : {}) });
 
   async function fetchTicket(id) {
     const { json: issue } = await call('GET', issuePath(id), undefined, `fetch GitHub issue ${id}`);

@@ -12,7 +12,8 @@
 // repo / project / list, never your real one: there is no delete operation (by design), so what it creates
 // is left behind, labelled "qa-harness-smoke" (GitHub, GitLab, ClickUp) or titled "[qa-harness smoke <id>]".
 //
-// Checks: connect · create a bug · fetch it back · search finds it · create + link a test case ·
+// Checks: connect · create a bug · fetch it back · search finds it · search finds a marker that is ONLY in the body ·
+// create + link a test case ·
 // retrying the bug and the test case with the same key returns the originals · comment, and the same
 // comment again · an unknown id is NOT_FOUND · a bad token is rejected.
 // Each is pass / warn / fail. Warnings are real-world behavior worth knowing about (e.g. search that lags
@@ -121,11 +122,13 @@ async function main({
     const tcKey = `smoke-${runId}-tc`;
     const commentKey = `smoke-${runId}-comment`;
     const title = `[qa-harness smoke ${runId}] scratch bug — safe to close`;
+    // the same kind of marker the triage planner writes into real bugs (qafp + 12 hex), derived from the run id
+    const token = `qafp${Buffer.from(runId).toString('hex').slice(0, 12).padEnd(12, '0')}`;
     let bug; let tc;
 
     const hasBug = await step('create a bug', async () => {
       bug = await run(adapter, 'create-bug', {
-        title, body: `Created by scripts/tracker/smoke.js (run ${runId}) to check the tracker adapter against the real service. Safe to close or delete.`,
+        title, body: `Created by scripts/tracker/smoke.js (run ${runId}) to check the tracker adapter against the real service. Safe to close or delete.\n\nqa-harness-fingerprint: ${token}`,
         priority: 'Low', labels: [LABEL], idempotencyKey: bugKey,
       });
       leftovers.push({ kind: 'bug', id: bug.id, url: bug.url });
@@ -140,16 +143,31 @@ async function main({
       return `title round-trips (${String(t.title).length} chars)`;
     }, { skip: !hasBug && 'no bug was created' });
 
-    await step('search finds it', async () => {
+    // Search can lag writes (GitHub's index especially): poll for a while before calling a miss a warning.
+    async function pollSearch(query) {
       const budget = opts.searchWaitMs === undefined ? 20000 : opts.searchWaitMs;
       let waited = 0;
       for (let attempt = 1; ; attempt += 1) {
-        const r = await run(adapter, 'search', { query: runId, kind: 'any' });
-        if (r.items.some((i) => String(i.id) === String(bug.id))) return `found after ${attempt} attempt(s), ~${waited}ms`;
-        if (waited >= budget) return { status: 'warn', detail: `not in search results after ~${waited}ms — the search index lags writes; duplicate detection by search can miss brand-new items (key lookups do not use search)` };
+        const r = await run(adapter, 'search', { query, kind: 'bug' });
+        if (r.items.some((i) => String(i.id) === String(bug.id))) return { found: true, attempt, waited };
+        if (waited >= budget) return { found: false, attempt, waited };
         await sleep(2000);
         waited += 2000;
       }
+    }
+
+    await step('search finds it', async () => {
+      const r = await pollSearch(runId);
+      if (r.found) return `found after ${r.attempt} attempt(s), ~${r.waited}ms`;
+      return { status: 'warn', detail: `not in search results after ~${r.waited}ms — the search index lags writes; duplicate detection by search can miss brand-new items (key lookups do not use search)` };
+    }, { skip: !hasBug && 'no bug was created' });
+
+    await step('search finds a marker that is only in the body, and fetch returns the body', async () => {
+      const t = await run(adapter, 'fetch', { id: bug.id });
+      if (!String(t.description || '').includes(token)) throw new TrackerError('UPSTREAM_ERROR', 'fetch did not return the marker from the bug body — triage cannot confirm that a search hit is the same bug');
+      const r = await pollSearch(token);
+      if (r.found) return `found after ${r.attempt} attempt(s), ~${r.waited}ms`;
+      return { status: 'warn', detail: `a token that is only in the bug body was not found by search in ~${r.waited}ms: either the index lags, or this tracker's search does not look in bodies — failure dedupe would then miss existing bugs and file duplicates` };
     }, { skip: !hasBug && 'no bug was created' });
 
     const hasTc = await step('create a test case under it, then link it', async () => {

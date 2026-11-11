@@ -1,0 +1,243 @@
+'use strict';
+
+// String-level evidence for triage: what an error message says about WHY a test failed. Everything here is a
+// pattern over text, so it is only as good as the patterns — they are listed in one place so they can be
+// reviewed, extended, and tested against real messages.
+const path = require('path');
+const { stripAnsi } = require('../../results/lib/shared');
+
+// Volatile tokens are masked so the same defect produces the same signature on every run. Order matters:
+// paths and timestamps go before the generic number/duration rules.
+const VOLATILE = [
+  [/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '<uuid>'],
+  [/\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?/g, '<ts>'],
+  [/(?:[A-Za-z]:)?(?:[\\/][\w.@~+ -]+){2,}[\\/]([\w.-]+\.[A-Za-z0-9]+)(?::\d+){0,2}/g, '$1'], // /abs/path/file.js:3:33 -> file.js
+  [/0x[0-9a-f]+/gi, '<addr>'],
+  // per-run identifiers: a prefixed id (req_8f3a2b, trace_…) and a short hex id. The short one must hold BOTH a digit and a letter, so a plain
+  // word that happens to be spelled with a-f ("deadbeef") is left alone.
+  [/\b[a-z]{2,8}_[0-9a-f]{6,}\b/gi, '<id>'],
+  [/\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{8,11}\b/gi, '<hex>'],
+  [/\b[0-9a-f]{12,}\b/gi, '<hex>'],
+  [/\b\d+(?:\.\d+)?\s?(?:ms|s)\b/g, '<dur>'],
+  [/(localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0):\d{2,5}/g, '$1:<port>'],
+];
+
+const MAX_SIGNATURE_INPUT = 8000;
+// minDigits: a run of digits at least this long is masked. Prose uses 5 (an order number, a pid, a port is a different value every run), but
+// the lines that say what was EXPECTED and RECEIVED use 10 (an epoch timestamp): there a five-digit number is usually the data — 12999 cents,
+// not 13999 — and masking it would make two different defects share a fingerprint.
+function normalizeSignature(message, max = 300, { minDigits = 5 } = {}) {
+  let s = stripAnsi(message || '').slice(0, MAX_SIGNATURE_INPUT); // capped BEFORE the regexes: a path-like run of tens of thousands of characters is quadratic in the path mask
+  for (const [re, to] of VOLATILE) s = s.replace(re, to);
+  s = s.replace(new RegExp(`\\b\\d{${minDigits},}\\b`, 'g'), '<n>'); // last: the rules above have already taken the digits they own
+  return s.replace(/\s+/g, ' ').trim().slice(0, max);
+}
+
+// What a failure SAYS. Reporters put the one-line summary in `message` and the diagnosis in `details`: Playwright's
+// "Received: <element(s) not found>", the status a request got back, the locator it was waiting for. Classifying on the
+// message alone mistakes a stale selector, an expired session or a 503 for a failed assertion about the app, so every
+// signal below reads both. (Capped: details can be a whole stack trace.)
+const MAX_EVIDENCE = 4000;
+function evidenceText(error) {
+  if (!error) return '';
+  return stripAnsi(`${error.message || ''}\n${error.details || ''}`).slice(0, MAX_EVIDENCE);
+}
+
+// The lines of a failure that tell one defect from another — what was expected, what was received, which locator, and node's own
+// "<actual> !== <expected>" — and nothing volatile. The call log ("- locator resolved to …", repeated a different number of times on
+// every run) and the stack are deliberately NOT included: a fingerprint that changes between runs files the same bug again.
+const DIAGNOSTIC_LINE = /^\s*(?:Expected|Received|Actual|Locator)\b[^\n]*$/i;
+const COMPARISON_LINE = /^\s*[^\s|>][^\n]{0,150}?\s(?:!==?|===?)\s[^\n]{0,150}$/; // "10 !== 11" (not a code-frame line "  5 | if (a !== b)")
+const CODE_FRAME = /^\s*>?\s*\d+\s*\|/;
+const isDiagnostic = (l) => DIAGNOSTIC_LINE.test(l) || (COMPARISON_LINE.test(l) && !CODE_FRAME.test(l));
+const MAX_DIAGNOSTIC_INPUT = 20000;
+function diagnosticLines(text, { lines = 4 } = {}) {
+  return stripAnsi(text || '').slice(0, MAX_DIAGNOSTIC_INPUT).split('\n').filter(isDiagnostic).slice(0, lines).map((l) => l.trim());
+}
+const diagnosticHead = (details, opts) => diagnosticLines(details, opts).join(' ');
+
+// What the parser recorded as expected/actual (node's TAP gives both), as the same kind of line.
+const expectedActualLines = (e) => [e.expected !== undefined && `Expected: ${e.expected}`, e.actual !== undefined && `Received: ${e.actual}`].filter(Boolean).map((l) => l.slice(0, 120));
+
+// The fingerprint's signature: the message plus what it says was expected/received, volatile parts masked. Two failures that differ only in
+// WHAT was expected or received ("Expected: 10 / Received: 12" vs "Expected: "EUR" / Received: "USD"", or "10 !== 11" vs "12 !== 11") are different
+// defects. Those lines are pulled out of the message and the details alike and kept AFTER the (capped) prose, so a long message cannot push
+// them out of the signature, and a reporter that repeats them in both places does not change the hash.
+function signatureOf(error, max = 500) {
+  // Masked FIRST: a secret that is different on every run (a rotating bearer token, a session id) would otherwise give the same defect a new signature, and so a
+  // new fingerprint and a new bug, each run, and make two attempts of one failure look like two different errors.
+  const raw = error || {};
+  const e = { ...raw, message: redactSecrets(raw.message), details: redactSecrets(raw.details), ...(raw.expected !== undefined ? { expected: redactSecrets(raw.expected) } : {}), ...(raw.actual !== undefined ? { actual: redactSecrets(raw.actual) } : {}) };
+  const message = stripAnsi(e.message || '');
+  const diag = [...new Set([...diagnosticLines(message, { lines: 99 }), ...diagnosticLines(e.details, { lines: 99 }), ...expectedActualLines(e)])].slice(0, 6);
+  const parts = [normalizeSignature(message, 300), ...diag.map((l) => normalizeSignature(l, 120, { minDigits: 10 }))].filter(Boolean);
+  return parts.join(' ').slice(0, max);
+}
+
+// Errors that say "the environment is down", not "the app or the test is wrong". A bare "Timeout 30000ms
+// exceeded" is deliberately NOT here: it is ambiguous (slow app, wrong wait, dead server).
+// node:test (and plain assert) print a failed status check as "<actual> OP <expected>" — "503 !== 200" — with none of the words Playwright and
+// Jest use ("Received: 503"). Both orders, strict or loose, and never a longer number that merely ends in the code (1503).
+const CMP = '(?:!==?|===?)';
+// the OTHER side of the comparison must itself be a status code that exists: "503 !== 450" or "503 !== 600" is a count or an amount, not a gateway error.
+// (A count that happens to equal a real code, "504 !== 500" rows, still reads as a status: only a status word could tell, and node's own wording has none.)
+const HTTP_STATUS = '(?:200|201|202|203|204|206|301|302|303|304|307|308|400|401|402|403|404|405|406|408|409|410|413|415|418|422|423|425|426|428|429|431|451|500|501|502|503|504|505)';
+const statusComparisons = (codes) => [
+  new RegExp(`(?<![\\d.])(?:${codes})\\s*${CMP}\\s*${HTTP_STATUS}(?![\\d.])`),
+  new RegExp(`(?<![\\d.])${HTTP_STATUS}\\s*${CMP}\\s*(?:${codes})(?![\\d.])`),
+];
+// STRONG: the network layer says it could not reach or trust the host. WEAK: an HTTP status or a browser's "failed to fetch", which a CORS rule, a
+// removed route or a real regression produces just as well.
+const INFRA_STRONG = [
+  /\bECONNREFUSED\b/, /\bENOTFOUND\b/, /\bECONNRESET\b/, /\bEAI_AGAIN\b/, /\bEHOSTUNREACH\b/, /\bENETUNREACH\b/,
+  /\bgetaddrinfo\b/i, /\bERR_(?:CONNECTION|NAME_NOT_RESOLVED|INTERNET_DISCONNECTED|ADDRESS_UNREACHABLE|TIMED_OUT|CERT|SSL|BAD_SSL|EMPTY_RESPONSE|TUNNEL|PROXY|NETWORK)/,
+  /connect ECONN/i, /socket hang up/i,
+  // TLS problems with the test environment's certificate (Node and Chromium wording)
+  /\b(?:UNABLE_TO_VERIFY_LEAF_SIGNATURE|CERT_HAS_EXPIRED|DEPTH_ZERO_SELF_SIGNED_CERT|SELF_SIGNED_CERT_IN_CHAIN)\b/, /\bself[- ]signed certificate\b/i,
+  /\bcertificate (?:has expired|is not yet valid|verify failed)\b/i,
+];
+const INFRA_WEAK = [
+  /\bBad Gateway\b/i, /\bService Unavailable\b/i, /\bGateway Time-?out\b/i, /\bHTTP (?:status )?(?:502|503|504)\b/i,
+  /\b(?:status|code)[: ]+(?:502|503|504)\b/i,
+  // a status assertion that RECEIVED a gateway error ("Expected: 200  Received: 503")
+  /\bReceived\b[^\n]{0,30}\b(?:502|503|504)\b/i,
+  // a request that never got an answer: Node's fetch (undici) throws a bare "fetch failed" and hides the cause; browsers say the same in their own words
+  /\bfetch failed\b/i, /\bFailed to fetch\b/, /\bNetworkError when attempting to fetch\b/i, /\bLoad failed\b/, /\bNetwork request failed\b/i,
+  ...statusComparisons('502|503|504'),
+];
+const INFRA = [...INFRA_STRONG, ...INFRA_WEAK];
+const infraStrong = (message) => { const m = stripAnsi(message || ''); return INFRA_STRONG.some((re) => re.test(m)); };
+const infraSignal = (message) => { const m = stripAnsi(message || ''); const hit = INFRA.find((re) => re.test(m)); return hit ? hit.source : null; };
+
+// "Is this an authentication / session problem?" An expired test account, a login page where the app should be, a 401 where
+// a 200 was expected: these look like an app that returns the wrong thing but are as often the test's credentials. They are
+// never evidence of a product bug on their own, so they never reach a bug report without a human.
+const AUTH = [
+  /\bReceived\b[^\n]{0,30}\b(?:401|403)\b/i,
+  /\bReceived\b[^\n]*\/(?:log-?in|sign-?in|signin|auth|sso|session-expired)\b/i, // toHaveURL: bounced to a login page
+  /\b(?:status|code)[: ]+(?:401|403)\b/i, /\bHTTP (?:status )?(?:401|403)\b/i,
+  /\bsession (?:has )?(?:expired|timed out)\b/i, /\b(?:token|credentials?) (?:has )?expired\b/i, /\bunauthori[sz]ed\b/i,
+  ...statusComparisons('401|403'),
+];
+const authSignal = (message) => { const m = stripAnsi(message || ''); const hit = AUTH.find((re) => re.test(m)); return hit ? hit.source : null; };
+
+// The page or API answered with an error page (404 / 500 / "Something went wrong"). A wrong base URL, a dead route and a
+// real regression all look like this from the test alone.
+const ERROR_PAGE = [/\bReceived\b[^\n]{0,60}(?:\b(?:404|500)\b|Not Found|Internal Server Error|Application Error|Something went wrong)/i, ...statusComparisons('404|500')];
+const errorPageSignal = (message) => { const m = stripAnsi(message || ''); const hit = ERROR_PAGE.find((re) => re.test(m)); return hit ? hit.source : null; };
+
+// "I could not find the thing on the page", across Playwright, Cypress, Selenium/WebDriver, Capybara and our own
+// page helpers. Cypress's wording ("Timed out retrying … Expected to find element") is the one that a plain
+// "timeout" check misses.
+const LOCATOR = [
+  /waiting for (?:getBy\w+|locator|selector)/i, /locator\.\w+: .*(?:timeout|not found)/i, /resolved to 0 elements/i,
+  /<element\(s\) not found>/i, /strict mode violation/i, /resolved to [2-9]\d* elements/i,
+  /expected to find (?:element|content)/i, /no such element/i, /unable to locate element/i, /unable to find (?:an? )?(?:element|css|visible)/i,
+  /\belement not found\b/i, /\bno element(?:s)? found\b/i, /\blocator not found\b/i, /NoSuchElement/i, /Capybara::ElementNotFound/i,
+];
+// Playwright prints "waiting for getByTestId('x')" in the call log of EVERY locator-based failure, including `toHaveText` on an element that was
+// found and simply had the wrong text ("locator resolved to <button data-testid=…>"). An element that resolved is not a stale selector: that failure
+// is about the value, which is evidence about the app. (Found on real Playwright 1.65 output; the hand-written fixtures never had both lines.)
+const ELEMENT_FOUND = /\blocator resolved to <[a-z]/i;
+const isLocatorError = (message) => { const m = stripAnsi(message || ''); return LOCATOR.some((re) => re.test(m)) && !ELEMENT_FOUND.test(m); };
+
+// The test-id a locator error is about: getByTestId('x'), [data-testid="x"], data-testid=x, [data-cy=x] …
+function extractTestId(message) {
+  const m = stripAnsi(message || '');
+  const patterns = [
+    /getByTestId\(\s*['"`]([^'"`]+)['"`]\s*\)/i,
+    /\[\s*data-(?:testid|test-id|test|cy|qa)\s*=\s*['"`]?([^'"`\]\s]+)['"`]?\s*\]/i,
+    /data-(?:testid|cy|qa)\s*=\s*['"`]([^'"`]+)['"`]/i,
+    /testid[=:]\s*['"`]?([\w-]+)['"`]?/i,
+  ];
+  for (const re of patterns) { const x = m.match(re); if (x) return x[1]; }
+  return null;
+}
+
+// Did the test CRASH in its own code (TypeError, bad import …) rather than fail an assertion? Look at the first
+// stack frame that names a source file: if it is a test file, the bug is in the test. The runner's own "kind" is NOT
+// used: most runners (node:test, Playwright, Jest) report a thrown exception and a failed assertion identically, so
+// the wording and the stack location are the evidence.
+const CRASH = /\b(?:TypeError|ReferenceError|SyntaxError)\b|Cannot find module|is not a function|is not defined|NameError|AttributeError|NoMethodError|undefined method/;
+const ASSERTION = /\bAssertionError\b|expect\(received\)|\bexpected\b.*\b(?:to|but)\b|!==|Failure\/Error: expect/i;
+// Crashes that can ONLY be the test's own fault: no response from the app can cause a ReferenceError or a missing module. A TypeError / "is not a function"
+// is different: an API test that reads a response whose shape changed throws one in the test file (the app is remote, so the first frame is always the
+// test), and that is a product regression. Those are still test-bug, but only as a proposal.
+// Only a ReferenceError / SyntaxError / NameError in the test's own code. NOT a missing module (a test that imports the app's file fails when the app renames
+// it), and NOT one the application can cause: a body that is not JSON ("Unexpected token '<'", "Unexpected end of JSON input"), a global the app removed seen
+// through page.evaluate, or an error Cypress says "originated from your application code".
+const STRONG_CRASH = /\b(?:ReferenceError|SyntaxError)\b|is not defined|NameError/;
+const APP_CAUSED = /\bJSON\b|<!DOCTYPE|Unexpected token '?<|Unexpected end of (?:JSON )?input|\b(?:page|locator|frame|elementHandle)\.evaluate\w*:|\bevaluate\w*: |originated from your application|application code/i;
+// A test file is named like one (anywhere), or sits in a tests/ specs/ e2e/ directory BELOW the project root. An ancestor directory of the checkout that
+// happens to be called tests/ says nothing about the file.
+const TEST_FILE = /\.(?:test|spec)\.[cm]?[jt]sx?$|_spec\.rb$|(?:^|[\\/])test_[^\\/]*\.py$|_test\.py$/;
+const TEST_DIR = /(?:^|[\\/])(?:tests?|specs?|e2e|__tests__|cypress[\\/]e2e)[\\/]/;
+function isTestFile(file, root) {
+  if (TEST_FILE.test(file)) return true;
+  const base = root ? path.resolve(root) : '';
+  if (!base || path.parse(base).root === base) return false; // no real project root ("" or "/"): every directory is below it, so the directories prove nothing
+  const rel = path.isAbsolute(file) ? path.relative(base, file) : file;
+  if (rel.startsWith('..') || path.isAbsolute(rel)) return false; // outside the project: only the file name could say "test"
+  return TEST_DIR.test(rel);
+}
+function firstSourceFrame(details) {
+  const m = stripAnsi(details || '').slice(0, MAX_EVIDENCE).match(/(?:\(|\bat\s+|^\s*)((?:[A-Za-z]:)?[\\/]?[\w.@~+ \\/-]*?[\w.-]+\.(?:[cm]?[jt]sx?|py|rb))(?::(\d+))?(?::\d+)?/m);
+  return m ? { file: m[1], line: m[2] ? Number(m[2]) : undefined } : null;
+}
+function testCrash(error, { root = process.cwd() } = {}) {
+  if (!error) return null;
+  const head = `${error.message || ''}`;
+  if (!CRASH.test(`${head}\n${error.details || ''}`) || ASSERTION.test(head)) return null;
+  const frame = firstSourceFrame(error.details);
+  return frame && isTestFile(frame.file, root) ? { ...frame, strong: (() => { const all = `${head}\n${error.details || ''}`; return STRONG_CRASH.test(all) && !APP_CAUSED.test(all); })() } : null;
+}
+
+// What a failing test printed can hold a credential (a request dump with its Authorization header, a connection string, an API key in a URL), and the
+// text is copied into the triage report, a comment on a tracker and a bug. Mask what is a secret; leave ordinary failure text alone, because the evidence is
+// the point ("Expected: \"Password: required\"" is an assertion about a validation message, not a leak). Three kinds of rule, from surest to least sure:
+//   - shapes that are secrets wherever they appear (PEM keys, provider tokens, webhook URLs, credentials in a URL, a long bearer token);
+//   - assignment syntax (key=value, "key":"value"): always masked, whatever the value;
+//   - prose ("key: value"): masked only when the value looks like a secret and not like a message about one.
+const WORDS = 'passw(?:or)?d|passphrase|pwd|secret|token|api[_-]?key|apikey|access[_-]?key|private[ _-]?key|session[_-]?id|sessionid|csrf|xsrf|signature|credentials?|secret[_-]?key|signing[_-]?key|encryption[_-]?key|master[_-]?key|app[_-]?secret';
+const KEY = '[\\w-]{0,40}?(?:' + WORDS + ')'; // a prefix of up to 40 characters: aws_secret_access_key, csrf_token, apiToken, my-service-password (unbounded, a long dashed run is quadratic)
+const VALUE = '"[^"\\n]*"|\'[^\'\\n]*\'|[^\\s"\'&;,]+';
+const SCHEME = '(?:Bearer|Basic|Digest|Token|Negotiate|AWS4-HMAC-SHA256)';
+// the first word of a value that is a message ABOUT a secret or a sentence, not a secret
+const BENIGN = /^(?:required|invalid|incorrect|wrong|missing|empty|blank|none|null|undefined|too|not|expired|accepted|rejected|valid|granted|denied|hidden|masked|mismatch(?:ed)?|unchanged|changed|set|unset|the|a|an|is|was|are|must|should|cannot|can't|does|did|field|input|value|to|for|of|and|or|but|has|have|will|would|\*+|<redacted>)\b/i;
+const maskProse = (match, key, sep, value) => {
+  const quoted = /^(["'])(.*)\1$/.exec(value);
+  const raw = (quoted ? quoted[2] : value).trim();
+  if (!raw || BENIGN.test(raw)) return match;
+  if (/^[\d.]{1,8}$/.test(raw.split(/\s+/)[0]) || /\s(?:!==?|===?)\s/.test(raw)) return match; // a number or a comparison of values ("secret: 42 !== 43") is evidence, not a secret
+  if (/passw|passphrase|pwd|secret|private/i.test(key)) return key + sep + (quoted ? quoted[1] + '<redacted>' + quoted[1] : '<redacted>'); // a passphrase can be several words
+  const first = raw.split(/\s+/)[0].replace(/[.,;:!?]+$/, '');
+  if (!(first.length >= 8 || /[\d_\-/+=.]/.test(first))) return match; // a short plain word is a status ("token: expired"), not a token
+  return key + sep + (quoted ? quoted[1] : '') + raw.replace(first, '<redacted>') + (quoted ? quoted[1] : '');
+};
+const SECRET_RULES = [
+  [/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g, '<redacted private key>'],
+  [new RegExp('\\b(authorization|proxy-authorization)(["\']?\\s*[:=]\\s*["\']?)(?=' + SCHEME + '\\s+\\S|\\S*\\d|\\S{20,})(?:' + SCHEME + '\\s+)?[^\\s"\']+', 'gi'), '$1$2<redacted>'], // the scheme and ONE token: whatever follows on the line ("expected 1 to equal 2") is evidence
+  [/\b(cookie|set-cookie)(["']?\s*[:=]\s*["']?)(?=[^\n"']*=)[^\n"']+/gi, '$1$2<redacted>'],
+  [/\b(Bearer)\s+[A-Za-z0-9._~+/=-]{20,}/gi, '$1 <redacted>'],
+  [/\b(Bearer|Basic)\s+(?=[A-Za-z0-9._~+/=-]*[0-9=.])[A-Za-z0-9._~+/=-]{8,}/gi, '$1 <redacted>'],
+  [new RegExp('(["\']\\b' + KEY + '\\b["\']\\s*:\\s*)(?:"[^"\\n]*"|\'[^\'\\n]*\')', 'gi'), '$1"<redacted>"'],
+  [new RegExp('\\b(' + KEY + ')(["\']?\\s*=\\s*)(' + VALUE + ')', 'gi'), (m, key, sep, value) => (/^["']?(?:undefined|null|nil|true|false|none|<redacted>)["']?$/i.test(value) ? m : key + sep + '<redacted>')],
+  [new RegExp('\\b(' + KEY + ')(\\s*:\\s+)("[^"\\n]*"|\'[^\'\\n]*\'|[^\\n"]*)', 'gi'), maskProse],
+  // "label value" with no separator, when the value is token-shaped (a digit and 16+ characters): "using api key abcd1234efgh5678", "token 8f14e45f..."
+  [/\b(api[ _-]?key|secret(?: access)? key|access[ _-]?key|token|secret)(\s+)(?=[A-Za-z0-9+/=_-]*\d)[A-Za-z0-9+/=_-]{16,}\b/gi, '$1$2<redacted>'],
+  [/([?&]key=)[^&\s"']+/gi, '$1<redacted>'],
+  [/\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{10,}|xox[abprs]-[A-Za-z0-9-]{8,}|(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{8,}|sk-[A-Za-z0-9_-]{16,}|npm_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{20,})/g, '<redacted>'],
+  [/(https:\/\/hooks\.slack\.com\/services\/)[A-Za-z0-9/_-]+/g, '$1<redacted>'],
+  [/(https:\/\/discord(?:app)?\.com\/api\/webhooks\/)\d+\/[A-Za-z0-9_-]+/g, '$1<redacted>'],
+  [/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*/g, '<redacted>'],
+  [/(\b[a-z][a-z0-9+.-]*:\/\/)[^\s/@:]+:[^\s/@]+@/gi, '$1<redacted>@'],
+];
+function redactSecrets(text) {
+  let s = String(text == null ? '' : text).slice(0, MAX_DIAGNOSTIC_INPUT);
+  for (const [re, to] of SECRET_RULES) s = s.replace(re, to);
+  return s;
+}
+
+const baseName = (p) => (p ? path.basename(String(p)) : '');
+
+module.exports = { normalizeSignature, evidenceText, diagnosticHead, diagnosticLines, signatureOf, infraSignal, infraStrong, authSignal, errorPageSignal, isLocatorError, extractTestId, testCrash, firstSourceFrame, redactSecrets, baseName, INFRA, AUTH, ERROR_PAGE, LOCATOR };

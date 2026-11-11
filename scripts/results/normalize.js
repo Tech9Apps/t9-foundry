@@ -65,6 +65,9 @@ function merge(results, opts) {
   const flaky = tests.filter((t) => t.flaky).length;
   const durationMs = results.reduce((n, r) => n + (r.durationMs || 0), 0);
   const formats = [...new Set(results.map((r) => r.format))];
+  // The merged result names ONE format, and triage decides what may act on it by that name. Naming the first file's format for a mix of formats
+  // would let reports nobody verified ride on a trusted one.
+  if (formats.length > 1) throw fail('MIXED_FORMATS', `the reports in this directory are in different formats (${formats.join(', ')}): point at one report, or at a directory with one kind`);
   return {
     format: formats[0],
     ...(opts.framework ? { framework: opts.framework } : {}),

@@ -1,0 +1,143 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="jest tests" tests="20" failures="7" errors="0" time="1.711">
+  <testsuite name="api" errors="0" failures="7" skipped="0" timestamp="2026-11-06T16:58:15" time="1.643" tests="20">
+    <testcase classname="api DEMO-9/TC-900: filler 0" name="api DEMO-9/TC-900: filler 0" time="0.009">
+    </testcase>
+    <testcase classname="api DEMO-9/TC-901: filler 1" name="api DEMO-9/TC-901: filler 1" time="0.001">
+    </testcase>
+    <testcase classname="api DEMO-9/TC-902: filler 2" name="api DEMO-9/TC-902: filler 2" time="0.001">
+    </testcase>
+    <testcase classname="api DEMO-9/TC-903: filler 3" name="api DEMO-9/TC-903: filler 3" time="0.001">
+    </testcase>
+    <testcase classname="api DEMO-9/TC-904: filler 4" name="api DEMO-9/TC-904: filler 4" time="0">
+    </testcase>
+    <testcase classname="api DEMO-9/TC-905: filler 5" name="api DEMO-9/TC-905: filler 5" time="0.001">
+    </testcase>
+    <testcase classname="api DEMO-9/TC-906: filler 6" name="api DEMO-9/TC-906: filler 6" time="0">
+    </testcase>
+    <testcase classname="api DEMO-9/TC-907: filler 7" name="api DEMO-9/TC-907: filler 7" time="0.001">
+    </testcase>
+    <testcase classname="api DEMO-9/TC-908: filler 8" name="api DEMO-9/TC-908: filler 8" time="0.001">
+    </testcase>
+    <testcase classname="api DEMO-9/TC-909: filler 9" name="api DEMO-9/TC-909: filler 9" time="0.001">
+    </testcase>
+    <testcase classname="api DEMO-9/TC-910: filler 10" name="api DEMO-9/TC-910: filler 10" time="0">
+    </testcase>
+    <testcase classname="api DEMO-9/TC-911: filler 11" name="api DEMO-9/TC-911: filler 11" time="0.001">
+    </testcase>
+    <testcase classname="api DEMO-1/TC-001: health is ok" name="api DEMO-1/TC-001: health is ok" time="0">
+    </testcase>
+    <testcase classname="api DEMO-1/TC-002: the cart total is 11" name="api DEMO-1/TC-002: the cart total is 11" time="0.002">
+      <failure>Error: expect(received).toBe(expected) // Object.is equality
+
+Expected: 11
+Received: 10
+    at Object.toBe (/work/demo-app/tests/jest/api.test.js:8:127)
+    at processTicksAndRejections (node:internal/process/task_queues:105:5)</failure>
+    </testcase>
+    <testcase classname="api DEMO-1/TC-003: the reports service answers 200" name="api DEMO-1/TC-003: the reports service answers 200" time="0.001">
+      <failure>Error: expect(received).toBe(expected) // Object.is equality
+
+Expected: 200
+Received: 503
+    at Object.toBe (/work/demo-app/tests/jest/api.test.js:9:119)
+    at processTicksAndRejections (node:internal/process/task_queues:105:5)</failure>
+    </testcase>
+    <testcase classname="api DEMO-1/TC-004: the secure endpoint is reachable" name="api DEMO-1/TC-004: the secure endpoint is reachable" time="0.001">
+      <failure>Error: expect(received).toBe(expected) // Object.is equality
+
+Expected: 200
+Received: 401
+    at Object.toBe (/work/demo-app/tests/jest/api.test.js:10:115)
+    at processTicksAndRejections (node:internal/process/task_queues:105:5)</failure>
+    </testcase>
+    <testcase classname="api DEMO-1/TC-005: the archive page exists" name="api DEMO-1/TC-005: the archive page exists" time="0">
+      <failure>Error: expect(received).toBe(expected) // Object.is equality
+
+Expected: 200
+Received: 404
+    at Object.toBe (/work/demo-app/tests/jest/api.test.js:11:107)
+    at processTicksAndRejections (node:internal/process/task_queues:105:5)</failure>
+    </testcase>
+    <testcase classname="api DEMO-1/TC-006: the payment service is reachable" name="api DEMO-1/TC-006: the payment service is reachable" time="0">
+      <failure>TypeError: fetch failed
+    at node:internal/deps/undici/undici:13510:13
+    at processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at Object.&lt;anonymous&gt; (/work/demo-app/tests/jest/api.test.js:12:83)
+
+[cause]: Error: bad port
+    at makeNetworkError (node:internal/deps/undici/undici:9277:35)
+    at mainFetch (node:internal/deps/undici/undici:10503:20)
+    at fetching (node:internal/deps/undici/undici:10489:7)
+    at fetch (node:internal/deps/undici/undici:10358:20)
+    at fetch (node:internal/deps/undici/undici:13508:10)
+    at fetch (node:internal/bootstrap/web/exposed-window-or-worker:75:12)
+    at Object.fetch (/work/demo-app/tests/jest/api.test.js:12:89)
+    at Promise.finally.completed (/work/demo-app/node_modules/jest-circus/build/jestAdapterInit.js:1834:28)
+    at new Promise (&lt;anonymous&gt;)
+    at callAsyncCircusFn (/work/demo-app/node_modules/jest-circus/build/jestAdapterInit.js:1774:10)
+    at _callCircusTest (/work/demo-app/node_modules/jest-circus/build/jestAdapterInit.js:1167:40)
+    at processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at _runTestInContext (/work/demo-app/node_modules/jest-circus/build/jestAdapterInit.js:1103:3)
+    at runTestWithContext (/work/demo-app/node_modules/jest-circus/build/jestAdapterInit.js:996:5)
+    at _runTestsForDescribeBlockOnce (/work/demo-app/node_modules/jest-circus/build/jestAdapterInit.js:1008:11)
+    at _runTestsForDescribeBlock (/work/demo-app/node_modules/jest-circus/build/jestAdapterInit.js:824:5)
+    at _runTestsForDescribeBlockOnce (/work/demo-app/node_modules/jest-circus/build/jestAdapterInit.js:1003:11)
+    at _runTestsForDescribeBlock (/work/demo-app/node_modules/jest-circus/build/jestAdapterInit.js:824:5)
+    at run (/work/demo-app/node_modules/jest-circus/build/jestAdapterInit.js:789:3)
+    at runAndTransformResultsToJestFormat (/work/demo-app/node_modules/jest-circus/build/jestAdapterInit.js:2300:21)
+    at jestAdapter (/work/demo-app/node_modules/jest-circus/build/runner.js:111:19)
+    at runTestInternal (/work/demo-app/node_modules/jest-runner/build/index.js:247:16)
+    at runTest (/work/demo-app/node_modules/jest-runner/build/index.js:315:7)</failure>
+    </testcase>
+    <testcase classname="api DEMO-1/TC-007: the helper formats a price" name="api DEMO-1/TC-007: the helper formats a price" time="0">
+      <failure>TypeError: helperThatDoesNotExist is not a function
+    at Object.helperThatDoesNotExist (/work/demo-app/tests/jest/api.test.js:13:68)
+    at Promise.finally.completed (/work/demo-app/node_modules/jest-circus/build/jestAdapterInit.js:1834:28)
+    at new Promise (&lt;anonymous&gt;)
+    at callAsyncCircusFn (/work/demo-app/node_modules/jest-circus/build/jestAdapterInit.js:1774:10)
+    at _callCircusTest (/work/demo-app/node_modules/jest-circus/build/jestAdapterInit.js:1167:40)
+    at processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at _runTestInContext (/work/demo-app/node_modules/jest-circus/build/jestAdapterInit.js:1103:3)
+    at runTestWithContext (/work/demo-app/node_modules/jest-circus/build/jestAdapterInit.js:996:5)
+    at _runTestsForDescribeBlockOnce (/work/demo-app/node_modules/jest-circus/build/jestAdapterInit.js:1008:11)
+    at _runTestsForDescribeBlock (/work/demo-app/node_modules/jest-circus/build/jestAdapterInit.js:824:5)
+    at _runTestsForDescribeBlockOnce (/work/demo-app/node_modules/jest-circus/build/jestAdapterInit.js:1003:11)
+    at _runTestsForDescribeBlock (/work/demo-app/node_modules/jest-circus/build/jestAdapterInit.js:824:5)
+    at run (/work/demo-app/node_modules/jest-circus/build/jestAdapterInit.js:789:3)
+    at runAndTransformResultsToJestFormat (/work/demo-app/node_modules/jest-circus/build/jestAdapterInit.js:2300:21)
+    at jestAdapter (/work/demo-app/node_modules/jest-circus/build/runner.js:111:19)
+    at runTestInternal (/work/demo-app/node_modules/jest-runner/build/index.js:247:16)
+    at runTest (/work/demo-app/node_modules/jest-runner/build/index.js:315:7)</failure>
+    </testcase>
+    <testcase classname="api DEMO-1/TC-008: the slow report finishes" name="api DEMO-1/TC-008: the slow report finishes" time="1.501">
+      <failure>Error: thrown: &quot;Exceeded timeout of 1500 ms for a test.
+Add a timeout value to this test to increase the timeout, if this is a long-running test. See https://jestjs.io/docs/api#testname-fn-timeout.&quot;
+    at _getError (/work/demo-app/node_modules/jest-circus/build/jestAdapterInit.js:1985:12)
+    at Array.map (&lt;anonymous&gt;)
+    at makeSingleTestResult (/work/demo-app/node_modules/jest-circus/build/jestAdapterInit.js:1915:38)
+    at makeTestResults (/work/demo-app/node_modules/jest-circus/build/jestAdapterInit.js:1945:26)
+    at makeRunResult (/work/demo-app/node_modules/jest-circus/build/jestAdapterInit.js:1876:18)
+    at run (/work/demo-app/node_modules/jest-circus/build/jestAdapterInit.js:797:35)
+    at runAndTransformResultsToJestFormat (/work/demo-app/node_modules/jest-circus/build/jestAdapterInit.js:2300:21)
+    at jestAdapter (/work/demo-app/node_modules/jest-circus/build/runner.js:111:19)
+    at runTestInternal (/work/demo-app/node_modules/jest-runner/build/index.js:247:16)
+    at runTest (/work/demo-app/node_modules/jest-runner/build/index.js:315:7)
+
+[cause]: Error: thrown: &quot;Exceeded timeout of 1500 ms for a test.
+Add a timeout value to this test to increase the timeout, if this is a long-running test. See https://jestjs.io/docs/api#testname-fn-timeout.&quot;
+    at test (/work/demo-app/tests/jest/api.test.js:14:3)
+    at _dispatchDescribe (/work/demo-app/node_modules/jest-circus/build/jestAdapterInit.js:626:26)
+    at describe (/work/demo-app/node_modules/jest-circus/build/jestAdapterInit.js:594:44)
+    at Object.describe (/work/demo-app/tests/jest/api.test.js:5:1)
+    at ModuleExecutor.exec (/work/demo-app/node_modules/jest-runtime/build/index.js:3055:26)
+    at CjsLoader.loadModule (/work/demo-app/node_modules/jest-runtime/build/index.js:440:36)
+    at CjsLoader.requireModule (/work/demo-app/node_modules/jest-runtime/build/index.js:335:12)
+    at Runtime.requireModule (/work/demo-app/node_modules/jest-runtime/build/index.js:4981:27)
+    at jestAdapter (/work/demo-app/node_modules/jest-circus/build/runner.js:96:13)
+    at processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at runTestInternal (/work/demo-app/node_modules/jest-runner/build/index.js:247:16)
+    at runTest (/work/demo-app/node_modules/jest-runner/build/index.js:315:7)</failure>
+    </testcase>
+  </testsuite>
+</testsuites>

@@ -37,6 +37,16 @@ Build a structured report:
 - **Severity/Priority** — proposed, with one-line justification
 - **Suspected Area** — source files/modules implicated (if the code scan found any)
 
+### When the failure was handed over by the triage orchestrator
+
+`/run-and-triage` passes extra facts with a failure. They are not optional:
+- A line `qa-harness-fingerprint: <token>` goes **verbatim as the last line of the report body**, for every tracker
+  including Jira and `none`. It is how the next triage run finds this bug instead of filing it again.
+- An `idempotencyKey` it provides replaces `bug-<slug>` as the `idempotencyKey` below.
+- A closed report it names (`regressionOf`) means this defect **came back**: begin the body with
+  `Regression of #<id> (<url>)`, and list that report under **Possible existing reports** at the review gate.
+- Its verdict (rule, confidence, attempts) belongs in the report's Evidence section.
+
 ## Check for an existing report (every tracker with an adapter)
 
 Before the review gate, look for a report of the same defect so the user can decide not to file a duplicate:

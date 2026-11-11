@@ -325,7 +325,8 @@ test('a JSON file in a directory that is CUT OFF (a runner killed mid-write) fai
   for (const opts of [{}, { format: 'jest-json' }]) {
     assert.throws(() => normalizePath(dir, opts), (e) => e.code === 'UNPARSEABLE' && /jest\.json/.test(e.message) && /JSON/.test(e.message), JSON.stringify(opts));
   }
-  // JSON that parses but is not a report (a package.json) is still just ignored, with a warning
+  // JSON that parses but is not a report (a package.json) is still just ignored, with a warning (one report format per directory, so the XML goes)
+  fs.rmSync(path.join(dir, 'results-0.xml'));
   fs.writeFileSync(path.join(dir, 'jest.json'), whole);
   fs.writeFileSync(path.join(dir, 'package.json'), '{"name":"x"}');
   const warnings = [];
