@@ -72,6 +72,15 @@ describe('orchestrate: the loop', () => {
     assert.deepEqual(r.doc.data.verdicts.map((v) => [v.class, v.rule]), [['environment', 'ENV-1']]);
   });
 
+  test('a snapshot too large to scan gives a warning and an undetermined verdict, never "the element is not on the page"', async () => {
+    const snap = path.join(tmp(), 'huge.html');
+    fs.writeFileSync(snap, `${'<p>x</p>'.repeat(9 * 1024 * 1024 + 10)}<button data-testid="coupon-apply-btn">Apply</button>`);
+    const stale = T('DEMO-101/TC-901: apply', 'failed', { ticket: 'DEMO-101', caseId: 'TC-901', file: '/w/tests/ui.test.js', error: E("locator not found: getByTestId('coupon-apply-btn')") });
+    const r = await go({ framework: 'node', snapshot: snap, noPlan: true }, { runResults: scripted(() => ({ doc: result(stale) })).runResults });
+    assert.ok(r.doc.data.warnings.some((w) => /locator evidence unavailable/.test(w) && /too large/.test(w)), JSON.stringify(r.doc.data.warnings));
+    assert.deepEqual(r.doc.data.verdicts.map((v) => [v.class, v.action]), [['undetermined', 'propose']]);
+  });
+
   test('a failure with no file location re-runs the caller\'s whole selection, and says so', async () => {
     const s = scripted(() => ({ doc: result(T('no-file test', 'failed', { error: ASSERT })) }));
     const r = await go({ framework: 'node', specs: ['suite.test.js'], noPlan: true }, { runResults: s.runResults });

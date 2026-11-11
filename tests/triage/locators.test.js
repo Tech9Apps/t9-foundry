@@ -190,10 +190,27 @@ describe('analyzeLocator reads the page like a parser, not a regex: "not on the 
     assert.equal(r.present, false);
     assert.deepEqual(r.candidates.map((c) => [c.testid, c.tag, c.text]), [['add-to-cart-all', 'a', 'x'], ['add-to-basket', 'button', 'Add to basket']]);
   });
-  test('a repeated attribute: the FIRST one counts, as in a browser', () => {
+  test('a REPEATED attribute: the first one counts, as in a browser', () => {
     assert.equal(present('<i data-testid="add-to-cart" data-testid="other"></i>'), true);
     assert.equal(present('<i data-testid="other" data-testid="add-to-cart"></i>'), false);
-    assert.equal(present('<i data-cy="other" data-testid="add-to-cart"></i>'), false, 'the first test-id-like attribute of any spelling');
+    assert.equal(present('<i DATA-TESTID="other" data-testid="add-to-cart"></i>'), false, 'the same attribute in another case is the same attribute');
+  });
+  test('DIFFERENT test attributes on one element are all exposed: data-cy="x" data-testid="add-to-cart" has both ids', () => {
+    assert.equal(present('<button data-cy="x" data-testid="add-to-cart">Add</button>'), true);
+    assert.equal(present('<button data-testid="x" data-cy="add-to-cart">Add</button>'), true);
+    assert.equal(present('<button data-qa="x" data-test="y" data-test-id="add-to-cart">Add</button>'), true);
+    assert.equal(present('<button data-cy="x" data-testid="y">Add</button>'), false);
+  });
+  test('empty and odd comments end where HTML says they end: <!-->, <!--->, --!>', () => {
+    for (const open of ['<!-->', '<!--->']) assert.equal(present(`${open}<button data-testid="add-to-cart">Add</button>`), true, open);
+    assert.equal(present('<!-- x --!><button data-testid="add-to-cart">Add</button>'), true);
+    assert.equal(present('<!-- x --><button data-testid="add-to-cart">Add</button>'), true);
+    assert.equal(present('<!-- <button data-testid="add-to-cart"> -->'), false);
+    assert.equal(present('<!-- never closed <button data-testid="add-to-cart">'), false, 'an unterminated comment swallows the rest, as in a browser');
+  });
+  test('a page too large to scan is an ERROR, never "the element is not on the page"', () => {
+    const big = `${'<p>x</p>'.repeat(9 * 1024 * 1024 + 10)}<i data-testid="add-to-cart"></i>`; // > 64 MB, the id is at the very end
+    assert.throws(() => at(big), (e) => e.code === 'TOO_LARGE' && /too large/.test(e.message));
   });
   test('malformed HTML does not throw and does not hang', () => {
     for (const html of ['<', '<a', '<a data-testid="x', '<a data-testid=', '<<<>>>', '</>', '<!--', '<a "x" data-testid="add-to-cart">']) assert.doesNotThrow(() => at(html), html);

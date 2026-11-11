@@ -164,7 +164,10 @@ async function orchestrate(opts, { env = process.env, fetch = globalThis.fetch, 
       const { keyOf } = makeKeyer([main, ...reruns]); // the same key classify() looks the evidence up by
       for (const t of main.tests.filter((x) => x.status === 'failed' && x.error && isLocatorError(evidenceText(x.error)))) {
         if (!extractTestId(evidenceText(t.error))) continue;
-        evidence[keyOf(t)] = { locator: analyzeLocator({ html, selector: evidenceText(t.error), bare: false }) };
+        try { evidence[keyOf(t)] = { locator: analyzeLocator({ html, selector: evidenceText(t.error), bare: false }) }; } catch (e) {
+          if (!e.code) throw e;
+          warnings.push(`locator evidence unavailable for ${t.name}: ${e.message}`);
+        }
       }
     }
   }
