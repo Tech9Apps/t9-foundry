@@ -71,6 +71,15 @@ describe('clickup: statuses are whatever the workspace named them (type "custom"
   for (const status of ["Closed - Won't fix", "Won't fix (by design)", 'Will not fix', 'Not planned', 'Out of scope', 'Abandoned', 'Works as designed', 'WONTFIX', 'Won\u2019t do', 'Done / Duplicate', "Won't-fix", 'A duplicate']) {
     test(`"${status}" is dismissed`, () => expectState(createClickupMock, setStatus(status), DISMISSED));
   }
+  // real dismissals in the workspace's own words: a leading "closed as", a trailing "by/for/of ..." clause, punctuation and emoji
+  for (const status of ['Closed as duplicate', 'Duplicate of #12', "Closed as won't fix", 'Invalid report', 'Invalid bug', 'Working as designed', 'Out of scope for v2', 'Rejected by PM', 'Declined by customer',
+    'Canceled by user', 'Abandoned by team', 'Dismissed as noise', 'Merged as duplicate', "won't fix.", 'Wontfix!', "\u274C Won't fix", "Resolved as won't fix", 'Rejected - by design']) {
+    test(`"${status}" is dismissed`, () => expectState(createClickupMock, setStatus(status), DISMISSED));
+  }
+  // ...but anything that says a person still has work to do is active, however it is worded
+  for (const status of ['Rejected - needs rework', 'Rejected by QA', 'QA rejected', 'Failed QA - rejected', 'Reopened - was duplicate', 'Needs retest after reject', 'Closed as duplicate? needs check', 'Declined, pending QA', 'Rejected, pending decision', 'Duplicate - pending confirmation']) {
+    test(`"${status}" is OPEN: it says work remains`, () => expectState(createClickupMock, setStatus(status), OPEN));
+  }
   for (const status of ['to do', 'In progress', 'In review', 'Blocked', 'Will do']) {
     test(`"${status}" is open`, () => expectState(createClickupMock, setStatus(status), OPEN));
   }
