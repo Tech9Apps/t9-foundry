@@ -137,7 +137,10 @@ if (![...cmd.matchAll(/`\*\*✅ [^`]+\*\*`/g)].length) bad(`${CMD}: no checkpoin
 // The checks above look for a phrase being PRESENT, so a rule that is weakened by appending an exception ("…, or automatically when the user ran with
 // --yes") or reversed in place passes them. These pin the exact LINE of every rule that keeps a human in the loop: the whole step table, the gate and
 // production sentences, the agent's model/turn limit, and the rubric's "never" rules. The pins are in triage-prose-pins.json beside this file.
-// Changing one of these lines on purpose is a decision: edit the prose, run `node tests/helpers/orchestrator-drift-check.js --write-pins`, and review the diff.
+// Lines are not enough on their own: a NEW section ("if the user passes --yes, approve every gate") or an exception appended to a line that is not pinned
+// changes no pinned line. So the pins also hold a hash of each whole file, and any change to one of these four files fails the check until a person has read the
+// diff and run `node tests/helpers/orchestrator-drift-check.js --write-pins`. That is deliberate friction: these files ARE the safety policy of an agent that can
+// file bugs.
 const FILEBUG = '.claude/commands/file-bug.md';
 const RUBRIC = '.claude/memory/failure-triage-rules.md';
 const PIN_SELECTORS = {
@@ -147,20 +150,23 @@ const PIN_SELECTORS = {
   [FILEBUG]: (l) => /PRODUCTION PROHIBITION|Do NOT file anything until/.test(l),
 };
 const PIN_FILE = path.join(__dirname, 'triage-prose-pins.json');
+const sha = (file) => require('crypto').createHash('sha256').update(read(file).replace(/\r\n/g, '\n')).digest('hex');
 if (process.argv.includes('--write-pins')) {
-  const pins = {};
-  for (const [file, pick] of Object.entries(PIN_SELECTORS)) pins[file] = read(file).split('\n').map((l) => l.trimEnd()).filter(pick);
-  fs.writeFileSync(PIN_FILE, `${JSON.stringify(pins, null, 2)}\n`);
-  console.log(`wrote ${PIN_FILE}: ${Object.values(pins).reduce((n, l) => n + l.length, 0)} pinned lines`);
+  const lines = {}; const sha256 = {};
+  for (const [file, pick] of Object.entries(PIN_SELECTORS)) { lines[file] = read(file).split('\n').map((l) => l.trimEnd()).filter(pick); sha256[file] = sha(file); }
+  fs.writeFileSync(PIN_FILE, `${JSON.stringify({ lines, sha256 }, null, 2)}\n`);
+  console.log(`wrote ${PIN_FILE}: ${Object.values(lines).reduce((n, l) => n + l.length, 0)} pinned lines, ${Object.keys(sha256).length} file hashes`);
   process.exit(0);
 }
-let pins = {};
+let pins = { lines: {}, sha256: {} };
 try { pins = JSON.parse(fs.readFileSync(PIN_FILE, 'utf8')); } catch (e) { bad(`cannot read ${PIN_FILE}: ${e.message} (generate it with --write-pins)`); }
 for (const file of Object.keys(PIN_SELECTORS)) {
   const have = new Set(read(file).split('\n').map((l) => l.trimEnd()));
-  const want = pins[file] || [];
+  const want = (pins.lines || {})[file] || [];
   if (!want.length) bad(`${file}: no pinned lines (${PIN_FILE} is missing this file)`);
   for (const line of want) if (!have.has(line)) bad(`${file}: a pinned line changed or is missing: "${line.trim().slice(0, 120)}" — if that was on purpose, run --write-pins and review the diff`);
+  if (!(pins.sha256 || {})[file]) bad(`${file}: no hash in ${PIN_FILE} (generate it with --write-pins)`);
+  else if (sha(file) !== pins.sha256[file]) bad(`${file}: changed since the pins were written. Read the diff: these files are the agent's safety policy. If every change is intended, run \`node tests/helpers/orchestrator-drift-check.js --write-pins\` and commit the pins with it`);
 }
 
 if (problems.length) { console.log(`${problems.length} problem(s):\n  - ${problems.join('\n  - ')}`); process.exit(1); }

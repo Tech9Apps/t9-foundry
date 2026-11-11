@@ -219,6 +219,8 @@ were places where a real product bug could be reported as something else at a co
   ends comments as HTML does and refuses (rather than cuts) a page over 64 MB; `redactSecrets` masks assignment syntax always and prose only when the value
   looks like a secret, and masks before it cuts; ClickUp reads "Closed as duplicate" and "Rejected by PM" as dismissed and "Rejected by QA" as active; the plan's
   lookup caveat rides on every step; `--run-id` takes any 1-128 printable characters (odd ones are hashed into the key); and the drift checks pin the exact
-  LINE of every gate (tests/helpers/triage-prose-pins.json; `--write-pins` regenerates it after a deliberate change).
+  LINE of every gate and a hash of each of the four safety-policy files (tests/helpers/triage-prose-pins.json): any change to the command, the agent, the rubric or
+  `file-bug.md` fails the check until a person has read the diff and run `node tests/helpers/orchestrator-drift-check.js --write-pins`. (A line pin cannot see a new
+  section that contradicts a gate; the hash can. The price is that editing those files means re-pinning them, on purpose.)
 - **Accepted, documented:** results of a re-run repeat whole spec files (side effects included); trust is keyed on the format name, not the runner, so
   a TAP report from another producer fed straight to `classify.js` inherits TAP's privilege (the orchestrator only produces TAP from `node`).
