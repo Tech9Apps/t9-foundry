@@ -190,16 +190,41 @@ function testCrash(error, { root = process.cwd() } = {}) {
 }
 
 // What a failing test printed can hold a credential (a request dump with its Authorization header, a connection string, an API key in a URL), and the
-// text is copied into the triage report, a comment on a tracker and a bug. Mask the shapes that are secrets; leave ordinary failure text (assertions,
-// paths, numbers, a field called "password" that is merely mentioned) alone, since the evidence is the point.
-const SECRET_KEY = '(?:authorization|proxy-authorization|cookie|set-cookie|password|passwd|pwd|secret|client[_-]?secret|api[_-]?key|apikey|access[_-]?token|refresh[_-]?token|auth[_-]?token|private[_-]?key|token)';
+// text is copied into the triage report, a comment on a tracker and a bug. Mask what is a secret; leave ordinary failure text alone, because the evidence is
+// the point ("Expected: \"Password: required\"" is an assertion about a validation message, not a leak). Three kinds of rule, from surest to least sure:
+//   - shapes that are secrets wherever they appear (PEM keys, provider tokens, webhook URLs, credentials in a URL, a long bearer token);
+//   - assignment syntax (key=value, "key":"value"): always masked, whatever the value;
+//   - prose ("key: value"): masked only when the value looks like a secret and not like a message about one.
+const WORDS = 'passw(?:or)?d|passphrase|pwd|secret|token|api[_-]?key|apikey|access[_-]?key|private[ _-]?key|session[_-]?id|sessionid|csrf|xsrf|signature|credentials?';
+const KEY = '[\\w-]{0,40}?(?:' + WORDS + ')'; // a prefix of up to 40 characters: aws_secret_access_key, csrf_token, apiToken, my-service-password (unbounded, a long dashed run is quadratic)
+const VALUE = '"[^"\\n]*"|\'[^\'\\n]*\'|[^\\s"\'&;,]+';
+const SCHEME = '(?:Bearer|Basic|Digest|Token|Negotiate|AWS4-HMAC-SHA256)';
+// the first word of a value that is a message ABOUT a secret or a sentence, not a secret
+const BENIGN = /^(?:required|invalid|incorrect|wrong|missing|empty|blank|none|null|undefined|too|not|expired|accepted|rejected|valid|granted|denied|hidden|masked|mismatch(?:ed)?|unchanged|changed|set|unset|the|a|an|is|was|are|must|should|cannot|can't|does|did|field|input|value|to|for|of|and|or|but|has|have|will|would|\*+|<redacted>)\b/i;
+const maskProse = (match, key, sep, value) => {
+  const quoted = /^(["'])(.*)\1$/.exec(value);
+  const raw = (quoted ? quoted[2] : value).trim();
+  if (!raw || BENIGN.test(raw)) return match;
+  if (/passw|passphrase|pwd|secret|private/i.test(key)) return key + sep + (quoted ? quoted[1] + '<redacted>' + quoted[1] : '<redacted>'); // a passphrase can be several words
+  const first = raw.split(/\s+/)[0].replace(/[.,;:!?]+$/, '');
+  if (!(first.length >= 8 || /[\d_\-/+=.]/.test(first))) return match; // a short plain word is a status ("token: expired"), not a token
+  return key + sep + (quoted ? quoted[1] : '') + raw.replace(first, '<redacted>') + (quoted ? quoted[1] : '');
+};
 const SECRET_RULES = [
-  [/\b(authorization|proxy-authorization|cookie|set-cookie)(["']?\s*[:=]\s*["']?)[^\n"']+/gi, '$1$2<redacted>'],
-  [/\b(Bearer|Basic)\s+(?=[A-Za-z0-9._~+\/=-]*[0-9=.])[A-Za-z0-9._~+\/=-]{8,}/g, '$1 <redacted>'],
-  [new RegExp(`\\b(${SECRET_KEY})(["']?\\s*[:=]\\s*["']?)([^\\s"'&;,]{3,})`, 'gi'), '$1$2<redacted>'],
-  [/\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{10,}|xox[abprs]-[A-Za-z0-9-]{8,}|sk-[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{20,})/g, '<redacted>'],
+  [/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g, '<redacted private key>'],
+  [new RegExp('\\b(authorization|proxy-authorization)(["\']?\\s*[:=]\\s*["\']?)(?=' + SCHEME + '\\s+\\S|\\S*\\d|\\S{20,})[^\\n"\']+', 'gi'), '$1$2<redacted>'],
+  [/\b(cookie|set-cookie)(["']?\s*[:=]\s*["']?)(?=[^\n"']*=)[^\n"']+/gi, '$1$2<redacted>'],
+  [/\b(Bearer)\s+[A-Za-z0-9._~+/=-]{20,}/g, '$1 <redacted>'],
+  [/\b(Bearer|Basic)\s+(?=[A-Za-z0-9._~+/=-]*[0-9=.])[A-Za-z0-9._~+/=-]{8,}/g, '$1 <redacted>'],
+  [new RegExp('(["\']\\b' + KEY + '\\b["\']\\s*:\\s*)(?:"[^"\\n]*"|\'[^\'\\n]*\')', 'gi'), '$1"<redacted>"'],
+  [new RegExp('\\b(' + KEY + ')(["\']?\\s*=\\s*)(?:' + VALUE + ')', 'gi'), '$1$2<redacted>'],
+  [new RegExp('\\b(' + KEY + ')(\\s*:\\s+)("[^"\\n]*"|\'[^\'\\n]*\'|[^\\n]*)', 'gi'), maskProse],
+  [/([?&]key=)[^&\s"']+/gi, '$1<redacted>'],
+  [/\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{10,}|xox[abprs]-[A-Za-z0-9-]{8,}|(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{8,}|sk-[A-Za-z0-9_-]{16,}|npm_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{20,})/g, '<redacted>'],
+  [/(https:\/\/hooks\.slack\.com\/services\/)[A-Za-z0-9/_-]+/g, '$1<redacted>'],
+  [/(https:\/\/discord(?:app)?\.com\/api\/webhooks\/)\d+\/[A-Za-z0-9_-]+/g, '$1<redacted>'],
   [/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*/g, '<redacted>'],
-  [/(\b[a-z][a-z0-9+.-]*:\/\/)[^\s\/@:]+:[^\s\/@]+@/gi, '$1<redacted>@'],
+  [/(\b[a-z][a-z0-9+.-]*:\/\/)[^\s/@:]+:[^\s/@]+@/gi, '$1<redacted>@'],
 ];
 function redactSecrets(text) {
   let s = String(text == null ? '' : text).slice(0, MAX_DIAGNOSTIC_INPUT);

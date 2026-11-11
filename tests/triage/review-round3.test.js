@@ -341,3 +341,93 @@ describe('ENV-2 status comparisons: the other side must be a status code that ex
     for (const m of ['503 !== 200', '200 !== 503', '504 === 404', '502 !== 301', '429 !== 502', '502 !== 204', '500 !== 504']) assert.ok(infraSignal(m), m);
   });
 });
+
+describe('redactSecrets, second pass: the shapes the review found leaking, and the assertion text it must not destroy', () => {
+  const { redactSecrets } = require('../../scripts/triage/lib/text');
+  const masked = (input, ...secrets) => { const out = redactSecrets(input); for (const x of secrets) assert.ok(!out.includes(x), `${JSON.stringify(x)} survived in ${JSON.stringify(out)}`); return out; };
+  test('a letters-only bearer token', () => { masked('Authorization header was Bearer abcdefghijklmnopqrstuvwx', 'abcdefghijklmnopqrstuvwx'); masked('sent Bearer abcdefghijklmnopqrstuv', 'abcdefghijklmnopqrstuv'); });
+  test('keys with a prefix attached by _ or -', () => {
+    masked('aws_secret_access_key=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY', 'wJalrXUtnFEMI');
+    masked('csrf_token=abc123xyz789', 'abc123xyz789');
+    masked('sessionid=9f8e7d6c5b4a', '9f8e7d6c5b4a');
+    masked('session_id: 9f8e7d6c5b4a3210', '9f8e7d6c5b4a3210');
+    masked('apiToken: "tok_abcdefghijklmnop"', 'tok_abcdefghijklmnop');
+    masked('X-Amz-Signature=0123456789abcdef0123', '0123456789abcdef0123');
+    masked('my-service-password=hunter2hunter2', 'hunter2hunter2');
+  });
+  test('a PEM private key block, whole, even when it is cut off', () => {
+    masked('key:\n-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC\n-----END PRIVATE KEY-----\nafter', 'MIIEvQIB');
+    masked('-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA0Z3VS5JJcds3xfn', 'MIIEowIB');
+    assert.match(redactSecrets('before -----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY----- after'), /before .* after/);
+  });
+  test('more token shapes: Stripe keys, npm tokens, Slack/Discord webhooks, a key in a query string', () => {
+    masked('sk_live_abcdefghijklmnopqrstu', 'sk_live_abcdef');
+    masked('rk_test_abcdefghijklmnopqrstu', 'rk_test_abcdef');
+    masked('npm_abcdefghijklmnopqrstuvwxyz0123456789', 'npm_abcdef');
+    masked('POST https://hooks.slack.com/services/T0000000/B0000000/XXXXXXXXXXXXXXXXXXXXXXXX failed', 'XXXXXXXXXXXXXXXX', 'B0000000');
+    masked('https://discord.com/api/webhooks/123456789012345678/abcdefghijklmnopqrstuvwxyz_ABCDEF', 'abcdefghijklmnopqrstuvwxyz');
+    masked('GET /v1/places?key=AIzaSyDabcdefghijklmnopqrstu&q=x', 'AIzaSyDabcdefghijklmnopqrstu');
+  });
+  test('short values and multi-word passphrases', () => {
+    masked('password=ab', 'ab');
+    masked('{"password":"xy"}', 'xy');
+    masked('password: my secret passphrase', 'my', 'secret passphrase', 'passphrase');
+    masked("passphrase: 'correct horse battery staple'", 'correct horse', 'staple');
+  });
+  test('assertion text ABOUT a field (validation messages, expected/received values) is left alone', () => {
+    for (const t of ['Expected: "Password: required"', 'Received: "Password: too short"', 'expected token: expired to equal token: valid', 'Received: cookie: accepted', 'expected authorization: granted',
+      'expected password: invalid to be shown', 'the password: field is required', 'Secret: none']) assert.equal(redactSecrets(t), t, t);
+  });
+  test('a cookie or authorization header with a real value is still masked', () => {
+    masked('Cookie: sid=abcdef123456; theme=dark', 'abcdef123456');
+    masked('Authorization: Basic dXNlcjpwYXNz', 'dXNlcjpwYXNz');
+    masked('authorization: Token abcdef0123456789', 'abcdef0123456789');
+    masked('Authorization: 0123456789abcdef0123456789', '0123456789abcdef');
+  });
+});
+
+describe('what is shown is masked BEFORE it is cut, so a secret at the cut cannot leak its first characters', () => {
+  test('the details kept in the report (cut at 1000) and the signature (cut at 300)', () => {
+    // the cut lands one character into the value: "password=S" is all that is left of it, and a rule that needs three characters would let it through
+    const details = `${'x'.repeat(989)} password=SuperSecret123456 trailing`; // 989 + space + len('password=') = 999: the 1000-character cut keeps 'password=S'
+    const message = `${'a'.repeat(289)} password=abcdefghijklmnop`; // the signature's 300-character cut keeps 'password=a'
+    const v = twice(err(message, 'failure', details));
+    const text = JSON.stringify(v);
+    for (const leak of ['password=S', 'password=a', 'SuperSecret', 'abcdefgh']) assert.ok(!text.includes(leak), `${leak} leaked`);
+  });
+  test('a token SHAPE that is only recognised at full length (a GitHub token needs 20+ characters) is not left half-visible by the cut', () => {
+    const token = `ghp_${'A'.repeat(36)}`;
+    // the 1000-character cut of the details keeps only 'ghp_' plus 10 characters, which no pattern would recognise on its own
+    const details = `${'x'.repeat(985)} ${token}`;
+    const message = `${'a'.repeat(285)} ${token}`; // and the 300-character cut of the signature
+    const v = twice(err(message, 'failure', details));
+    const text = JSON.stringify(v);
+    assert.ok(!text.includes('ghp_AAAA'), `leaked: ${text.slice(0, 120)}`);
+    assert.ok(!text.includes('AAAAAAAA'));
+  });
+});
+
+describe('plan: the test title in a comment is masked too', () => {
+  test('a title that carries a secret', () => {
+    const { plan } = require('../../scripts/triage/plan');
+    const ids = { ticket: 'DEMO-1', caseId: 'TC-1' };
+    const title = 'DEMO-1/TC-1: login with password=hunter2hunter2 works';
+    const report = classify({ runs: [run(fail(title, err('the answer is wrong'), ids)), run(fail(title, err('the answer is wrong'), ids))] });
+    const adapter = { async search() { return { items: [{ id: '1', title: 't', status: 'open', open: true, url: 'u' }] }; }, async fetchTicket() { return { description: `qa-harness-fingerprint: ${report.verdicts[0].token}` }; } };
+    return plan({ report, runId: 'r1', adapter }).then((p) => {
+      const body = p.actions[0].commentInput.body;
+      assert.ok(!body.includes('hunter2hunter2'), body);
+    });
+  });
+});
+
+describe('redactSecrets stays fast on hostile input (it runs on text a test printed)', () => {
+  const { redactSecrets } = require('../../scripts/triage/lib/text');
+  for (const [name, input] of Object.entries({ 'dashed run': 'a-'.repeat(10000), 'prefixed key spam': 'my-'.repeat(7000) + 'token', 'scheme-like run': 'a+a+a.'.repeat(3000), 'dotted run': 'a.a.'.repeat(5000), 'colon spam': 'password: '.repeat(2000) })) {
+    test(name, () => {
+      const t = Date.now();
+      redactSecrets(input);
+      assert.ok(Date.now() - t < 250, `took ${Date.now() - t} ms`);
+    });
+  }
+});

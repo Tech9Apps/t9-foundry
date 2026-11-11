@@ -108,7 +108,7 @@ const dismissedAfterFix = (found) => newest(found.dismissed) > newest(found.clos
 function commentBody(v, runId) {
   return [
     `Run ${runId}: this failure occurred again.`, '',
-    `Test: ${v.test.name}${v.test.file ? ` (${path.basename(v.test.file)})` : ''}`,
+    `Test: ${redactSecrets(v.test.name)}${v.test.file ? ` (${path.basename(v.test.file)})` : ''}`,
     `Error: ${redactSecrets((v.error && v.error.message) || '') || '(none recorded)'}`, // masked again here: the report may have been edited or come from elsewhere
     `Triage: ${v.class} by rule ${v.rule}, confidence ${v.confidence} — ${v.attempts.length} attempt(s), ${v.attempts.filter((a) => a.status === 'failed').length} failed`,
     '', `qa-harness-fingerprint: ${v.token}`,

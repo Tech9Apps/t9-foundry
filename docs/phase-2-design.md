@@ -107,8 +107,12 @@ The lookup is honest about what it did not see. A matching search result that ca
 and listed under `lookup.partial` with a warning; a search that returns as many results as it asks for (5) may have more behind them, so that is
 flagged `lookup.truncated`. A `file-bug` after a partial lookup says so in its `note`. The run's part of the idempotency key is the run id as given when
 it is short and made of safe characters; otherwise a readable prefix plus a hash of the whole id, so two different run ids can never share a key. The text
-of a failure that is copied into a report, a comment or a bug passes through `redactSecrets` (authorization headers, bearer/basic credentials,
-`password=`-style pairs, well-known token shapes, credentials in URLs); the fingerprint is computed from the original, so masking never changes it.
+of a failure that is copied into a report, a comment or a bug (message, details, evidence lines, signature, test title) passes through `redactSecrets`:
+PEM private keys, provider tokens and webhook URLs, credentials in a URL, authorization and cookie headers with a real value, and any `key=value` / `"key":"value"`
+whose key names a secret (any prefix: `aws_secret_access_key`, `csrf_token`). The prose form `key: value` is masked only when the value looks like a secret, so an
+assertion about a validation message (`Expected: "Password: required"`) keeps its evidence. Text is masked BEFORE it is cut, so a secret straddling a cut is not
+left half-visible. The fingerprint is computed from the original, so masking never changes it. Not covered: `qa-results/main/result.json` and the test runner's own
+output stay raw; this protects what the triage tools copy elsewhere.
 
 **Jira is not covered.** The tracker adapters (and so the lookup, regression and dismissed logic above) exist for GitHub, GitLab, Bitbucket, Azure
 DevOps and ClickUp. Jira is reached only through the Atlassian MCP, interactively, so with `ticketSource.type: jira` `plan.js` has no adapter: it warns

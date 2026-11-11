@@ -188,7 +188,9 @@ function evaluate({ key, attempts }, { runCount, preflight, blast, evidence, roo
 }
 
 // the details kept in a report: enough for a later step (locators.js, the Bug-reporter) to see the diagnosis, not a whole stack trace
-const evidenceDetails = (error) => redactSecrets(evidenceText({ message: '', details: error.details }).trim().slice(0, 1000));
+// mask FIRST, then cut: cut first and a secret that straddles the cut is left as its first few characters, which no rule recognises
+const evidenceDetails = (error) => redactSecrets(evidenceText({ message: '', details: error.details }).trim()).slice(0, 1000);
+const redactedError = (error) => (error ? { ...error, message: redactSecrets(error.message), details: redactSecrets(error.details), ...(error.expected !== undefined ? { expected: redactSecrets(error.expected) } : {}), ...(error.actual !== undefined ? { actual: redactSecrets(error.actual) } : {}) } : error);
 
 function classify({ runs, preflight = 'unknown', evidence = {}, threshold = DEFAULT_THRESHOLD, trustedFormats = DEFAULT_TRUSTED_FORMATS, root = process.cwd() }) {
   if (!runs.length) throw usage('at least one run is required');
@@ -220,7 +222,7 @@ function classify({ runs, preflight = 'unknown', evidence = {}, threshold = DEFA
       ...(rest.length ? { alternatives: rest.map((m) => ({ class: m.class, rule: m.rule, confidence: m.confidence })) } : {}),
       attempts: entry.attempts.map((a) => ({ run: a.run, status: a.status })),
       ...(failing.length ? { error: { kind: failing[0].error && failing[0].error.kind, message: msgOf(failing[0]), ...(failing[0].error && failing[0].error.details ? { details: evidenceDetails(failing[0].error) } : {}) } } : {}),
-      fingerprint: fp.fingerprint, token: fp.token, signature: redactSecrets(fp.signature), // the hash was taken from the original; only the text shown is masked
+      fingerprint: fp.fingerprint, token: fp.token, signature: signatureOf(redactedError(failing.length ? failing[0].error : main.error)), // the hash was taken from the original; the text SHOWN is built from the masked error (masked before the signature's own cut)
     });
   }
   const byClass = Object.fromEntries(CLASSES.map((c) => [c, verdicts.filter((v) => v.class === c).length]));
