@@ -241,3 +241,61 @@ describe('orchestrate: what the review of PR #9 found', () => {
     assert.match(err, /unknown format "playwrite-json"/);
   });
 });
+
+describe('orchestrate: what the second review of PR #9 found', () => {
+  const failing = () => T('DEMO-101/TC-005: x', 'failed', { ...ids(5), error: ASSERT });
+  const passing = () => T('DEMO-101/TC-005: x', 'passed', ids(5));
+
+  test('a re-run the runner calls untrustworthy (exit 3, with a report) is NOT an attempt: it is dropped with a warning, and a consistent failure stays a product bug', async () => {
+    // exit 3 with data = the runner's exit code contradicts its own report (a crash after a partial report). Counting that "pass" made PRD-1 look flaky.
+    const s = scripted({ main: { doc: result(failing()) }, 'rerun-1': { code: 3, doc: { ...result(passing()), warnings: ['exit code 1 but the report shows no failures'] } }, 'rerun-2': { doc: result(failing()) } });
+    const r = await go({ framework: 'node', noPlan: true }, { runResults: s.runResults });
+    assert.equal(r.doc.data.runs, 2, 'main + the one usable re-run');
+    assert.ok(r.doc.data.warnings.some((w) => /re-run 1/.test(w) && /cannot be trusted|untrust/.test(w)), JSON.stringify(r.doc.data.warnings));
+    assert.deepEqual(r.doc.data.verdicts.map((v) => [v.class, v.rule]), [['product-bug', 'PRD-1']]);
+  });
+
+  test('a re-run with exit 1 (tests failed) and a report is still a normal attempt', async () => {
+    const s = scripted({ main: { doc: result(failing()) }, 'rerun-1': { code: 1, doc: result(failing()) }, 'rerun-2': { code: 1, doc: result(failing()) } });
+    const r = await go({ framework: 'node', noPlan: true }, { runResults: s.runResults });
+    assert.equal(r.doc.data.runs, 3);
+    assert.equal(r.doc.data.warnings, undefined);
+  });
+
+  test('what an EARLIER run left in <out> is cleared, by name, before this run: evidence, snapshots, triage/plan/flaky and comments; nothing else', async () => {
+    const out = tmp();
+    const put = (rel, body = '{}') => { fs.mkdirSync(path.dirname(path.join(out, rel)), { recursive: true }); fs.writeFileSync(path.join(out, rel), body); };
+    for (const f of ['evidence.json', 'triage.json', 'plan.json', 'flaky.json', 'snapshots/qafp1.html', 'comments/qafp1.json', 'keep-me.txt', 'main/notes.txt']) put(f);
+    const s = scripted({ main: { doc: result(passing()) } });
+    await go({ framework: 'node', out }, { runResults: s.runResults });
+    for (const gone of ['evidence.json', 'triage.json', 'plan.json', 'flaky.json', 'snapshots', 'comments']) assert.equal(fs.existsSync(path.join(out, gone)), false, `${gone} should be cleared`);
+    assert.equal(fs.existsSync(path.join(out, 'keep-me.txt')), true, 'an unrelated file is not touched');
+  });
+
+  test('a failing --no-plan run does not leave an earlier run\'s plan.json / flaky.json behind', async () => {
+    const out = tmp();
+    fs.writeFileSync(path.join(out, 'plan.json'), '{"stale":true}'); fs.writeFileSync(path.join(out, 'flaky.json'), '{"stale":true}');
+    const s = scripted(() => ({ doc: result(failing()) }));
+    const r = await go({ framework: 'node', out, noPlan: true }, { runResults: s.runResults });
+    assert.equal(r.doc.data.status, 'triaged');
+    assert.equal(fs.existsSync(path.join(out, 'plan.json')), false);
+    assert.equal(fs.existsSync(path.join(out, 'flaky.json')), false);
+    assert.equal(fs.existsSync(path.join(out, 'triage.json')), true);
+  });
+
+  describe('arguments that used to be accepted and ignored are refused (exit 2)', () => {
+    const cli = async (argv) => { let err = ''; const code = await main({ argv: ['--framework', 'node', '--out', tmp(), ...argv], env: {}, stdout: { write: () => {} }, stderr: { write: (x) => { err += x; } }, runResults: async () => ({ code: 3, doc: noReport }) }); return { code, err }; };
+    test('--timeout-ms must be a positive whole number', async () => {
+      for (const bad of ['abc', '0', '-5', '1.5', '']) assert.equal((await cli(['--timeout-ms', bad])).code, 2, `--timeout-ms ${JSON.stringify(bad)}`);
+      assert.equal((await cli(['--timeout-ms', '5000'])).code, 3, 'a valid value gets as far as the (scripted) run');
+    });
+    test('--run-id is letters, digits, dot, underscore and hyphen, 1-64 characters: it ends up in tracker idempotency keys and file names', async () => {
+      for (const bad of ['!!!', 'a b', 'a/b', '../x', 'a'.repeat(65), '']) assert.equal((await cli(['--run-id', bad])).code, 2, `--run-id ${JSON.stringify(bad)}`);
+      for (const ok of ['r1', 'ci-4242', '20260102T030405Z', 'a.b_c-d', 'a'.repeat(64)]) assert.equal((await cli(['--run-id', ok])).code, 3, ok);
+    });
+    test('the message names the flag', async () => {
+      assert.match((await cli(['--timeout-ms', 'abc'])).err, /--timeout-ms/);
+      assert.match((await cli(['--run-id', '!!!'])).err, /--run-id/);
+    });
+  });
+});

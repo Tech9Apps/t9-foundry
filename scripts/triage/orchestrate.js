@@ -57,6 +57,9 @@ function parseArgs(argv) {
   if (!Number.isInteger(opts.reruns) || opts.reruns < 0 || opts.reruns > MAX_RERUNS) throw usage(`--reruns must be a whole number from 0 to ${MAX_RERUNS}`);
   if (opts.preflight && !['ok', 'failed', 'unknown'].includes(opts.preflight)) throw usage('--preflight must be ok, failed or unknown');
   if (opts.threshold !== undefined && !(opts.threshold > 0 && opts.threshold <= 1)) throw usage('--threshold must be between 0 and 1');
+  if (opts.timeoutMs !== undefined && !(Number.isInteger(opts.timeoutMs) && opts.timeoutMs > 0)) throw usage('--timeout-ms must be a positive whole number of milliseconds');
+  // the run id ends up in tracker idempotency keys and in file names
+  if (opts.runId !== undefined && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(opts.runId)) throw usage('--run-id must be 1-64 characters: letters, digits, ".", "_" or "-", starting with a letter or digit');
   return opts;
 }
 
@@ -81,9 +84,16 @@ async function orchestrate(opts, { env = process.env, fetch = globalThis.fetch, 
     ...(opts.cwd ? ['--cwd', opts.cwd] : []), ...(opts.config ? ['--config', opts.config] : []), ...(opts.timeoutMs ? ['--timeout-ms', String(opts.timeoutMs)] : []), '--quiet'];
   const specArgs = (specs) => specs.flatMap((s) => ['--spec', s]);
 
-  // Re-runs left in <out> by an EARLIER run would be read as this run's attempts (the prose says "one --rerun per rerun-<k> directory that exists"):
-  // clear exactly those, by name. Nothing else in <out> is touched.
-  if (fs.existsSync(out)) for (const e of fs.readdirSync(out, { withFileTypes: true })) if (e.isDirectory() && /^rerun-\d+$/.test(e.name)) fs.rmSync(path.join(out, e.name), { recursive: true, force: true });
+  // What an EARLIER run left in <out> would be read as this run's: re-runs (the prose says "one --rerun per rerun-<k> directory that exists"), locator
+  // evidence and snapshots (a failure's token is stable across runs, so a stale snapshot would be applied to this run's failure with the same token),
+  // and the previous triage/plan/flaky/comments (a green or --no-plan run would otherwise leave a failing run's files looking current). Clear exactly
+  // those, by name. Nothing else in <out> is touched.
+  if (fs.existsSync(out)) {
+    for (const e of fs.readdirSync(out, { withFileTypes: true })) {
+      const stale = (e.isDirectory() && (/^rerun-\d+$/.test(e.name) || e.name === 'snapshots' || e.name === 'comments')) || (e.isFile() && ['evidence.json', 'triage.json', 'plan.json', 'flaky.json'].includes(e.name));
+      if (stale) fs.rmSync(path.join(out, e.name), { recursive: true, force: true });
+    }
+  }
 
   // 1. the main run
   const first = await runResults([...base, ...specArgs(opts.specs), '--out', path.join(out, 'main')], env);
@@ -112,7 +122,10 @@ async function orchestrate(opts, { env = process.env, fetch = globalThis.fetch, 
     if (!everyFileKnown) rerunNotes.push('some failures carry no file location, so each re-run repeats the whole selection');
     for (let k = 1; k <= opts.reruns; k += 1) {
       const r = await runResults([...base, ...specArgs(scope), '--out', path.join(out, `rerun-${k}`)], env);
-      if (r.doc && r.doc.data) reruns.push(r.doc.data);
+      // exit 3 WITH a report = the runner's exit code contradicts its own report (a crash after a partial report). The main run stops on that; a re-run
+      // that is not trusted must not count either: its "pass" would turn a consistent failure into a flaky one.
+      if (r.code === 3 && r.doc && r.doc.data) warnings.push(`re-run ${k} cannot be trusted (${(r.doc.warnings && r.doc.warnings[0]) || 'its exit code contradicts its report'}); it is not counted, classifying with ${reruns.length + 1} run(s)`);
+      else if (r.doc && r.doc.data) reruns.push(r.doc.data);
       else warnings.push(`re-run ${k} produced no usable report (${(r.doc && r.doc.error && r.doc.error.message) || `exit ${r.code}`}); classifying with ${reruns.length + 1} run(s)`);
     }
   }
