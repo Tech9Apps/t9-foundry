@@ -340,9 +340,9 @@ describe('plan: behavior that does not depend on the tracker', () => {
     const k = async (args) => stepOf(await plan('github', rep, { args })).idempotencyKey;
     assert.equal(await k(['--run-id', 'r1']), await k(['--run-id', 'r1']));
     assert.notEqual(await k(['--run-id', 'r1']), await k(['--run-id', 'r2']));
-    const long = await k(['--run-id', 'x'.repeat(64)]); // the longest id the CLI accepts
+    const long = await k(['--run-id', 'x'.repeat(128)]); // the longest id the CLI accepts
     assert.match(long, /^[A-Za-z0-9._-]{1,80}$/);
-    assert.ok(long.length < `fp-${rep.verdicts[0].fingerprint}-${'x'.repeat(64)}`.length, 'shortened');
+    assert.ok(long.length < `fp-${rep.verdicts[0].fingerprint}-${'x'.repeat(128)}`.length, 'shortened');
   });
 
   test('without --run-id a UTC timestamp id is used', async () => {
@@ -379,7 +379,7 @@ describe('plan CLI', () => {
     assert.equal((await cli(['--report', path.join(dir, 'nope.json')])).json.error.code, 'UNREADABLE');
     const bad = path.join(dir, 'bad.json'); fs.writeFileSync(bad, '{"hello":1}');
     assert.match((await cli(['--report', bad])).json.error.message, /no "verdicts" array/);
-    for (const argv of [[], ['--bogus'], ['--report'], ['--report', 'x', '--run-id', '!!!']]) assert.equal((await cli(argv)).code, 2, argv.join(' '));
+    for (const argv of [[], ['--bogus'], ['--report'], ['--report', 'x', '--run-id', '']]) assert.equal((await cli(argv)).code, 2, argv.join(' '));
   });
 });
 
@@ -405,11 +405,22 @@ describe('plan: what the third review of PR #9 found', () => {
     assertValidInput('comment', a.commentInput);
     assert.ok(bug);
   });
-  test('--run-id is the same safe set orchestrate.js accepts: anything else is refused (exit 2)', async () => {
-    for (const bad of ['!!!', 'a b', 'a/b', '../x', 'a'.repeat(65)]) {
-      const r = await plan('github', report(productBug()), { args: ['--run-id', bad] });
-      assert.equal(r.code, 2, `--run-id ${bad}`);
+  test('--run-id accepts what orchestrate.js accepts (odd ids are hashed into the key) and refuses empty, over-long and control characters (exit 2)', async () => {
+    for (const bad of ['', 'a'.repeat(129), 'a\nb', 'a\u0000b']) assert.equal((await plan('github', report(productBug()), { args: ['--run-id', bad] })).code, 2, JSON.stringify(bad));
+    for (const ok of ['refs/heads/main', 'build#42', '2026-11-11 18:15', '!!!', 'a b', '../x']) {
+      const r = await plan('github', report(productBug()), { args: ['--run-id', ok] });
+      assert.equal(r.code, 0, ok);
+      assert.match(stepOf(r).idempotencyKey, /^fp-[0-9a-f]{12}-[A-Za-z0-9._-]+$/, ok);
     }
+  });
+  test('keys never collide: distinct odd ids, and a literal id that equals another id\'s HASHED form', async () => {
+    const fp = report(productBug()).verdicts[0].fingerprint;
+    const long = 'ci-build-1234567890-abcdefghijklmnopqrstuvwxyz-1';
+    const hashedPart = (await keyFor(long)).slice(`fp-${fp}-`.length);
+    assert.notEqual(await keyFor(hashedPart), await keyFor(long), 'a run literally named like the hashed form must not share its key');
+    const set = new Set([await keyFor('a/b'), await keyFor('a-b'), await keyFor('a b'), await keyFor('a_b'), await keyFor(long), await keyFor(`${long.slice(0, -1)}2`), await keyFor(hashedPart)]);
+    assert.equal(set.size, 7);
+    for (const id of ['x'.repeat(128), '!'.repeat(128), 'a/b', hashedPart]) assert.ok((await keyFor(id)).length + '-comment'.length <= 80, id.slice(0, 20));
   });
 
   describe('the tracker lookup', () => {
@@ -445,6 +456,30 @@ describe('plan: what the third review of PR #9 found', () => {
       const r = await plan('github', rep, { mock });
       assert.ok(r.json.data.warnings.some((w) => /only the first 5/.test(w)), JSON.stringify(r.json.data.warnings));
       assert.ok(stepOf(r).lookup.truncated);
+    });
+    test('every step that FILES or REPORTS carries the lookup caveat, not only file-bug: a regression or a dismissal decided from a partial lookup says so', async () => {
+      const rep = report(productBug());
+      // (a) a closed match plus an unreadable candidate (which might be the open one) -> file-regression
+      const m1 = MOCKS.github();
+      await seedBug('github', m1, tokenOf(rep), { title: '[BUG] old', close: true });
+      const hidden = await seedBug('github', m1, tokenOf(rep), { title: '[BUG] maybe open' });
+      const a = stepOf(await plan('github', rep, { mock: m1, fetch: breakIssue(m1, hidden.id) }));
+      assert.equal(a.step, 'file-regression');
+      assert.match(a.note, /could not be read/);
+      assert.match(a.note, /regression/, 'the regression explanation is still there');
+      // (b) a dismissed match plus an unreadable candidate -> report-dismissed
+      const m2 = MOCKS.github();
+      await seedBug('github', m2, tokenOf(rep), { title: '[BUG] wontfix', dismiss: true });
+      const hidden2 = await seedBug('github', m2, tokenOf(rep), { title: '[BUG] maybe open' });
+      const b = stepOf(await plan('github', rep, { mock: m2, fetch: breakIssue(m2, hidden2.id) }));
+      assert.equal(b.step, 'report-dismissed');
+      assert.match(b.note, /could not be read/);
+      // (c) the candidate limit was hit -> file-regression / file-bug say only the first 5 were checked
+      const m3 = MOCKS.github();
+      for (let i = 0; i < 6; i += 1) await seedBug('github', m3, tokenOf(rep), { title: `[BUG] copy ${i}`, close: true });
+      const c = stepOf(await plan('github', rep, { mock: m3 }));
+      assert.equal(c.step, 'file-regression');
+      assert.match(c.note, /only the first 5/);
     });
     test('fewer candidates than the limit: no warning and no partial flag', async () => {
       const mock = MOCKS.github();

@@ -330,13 +330,13 @@ describe('orchestrate: what the second review of PR #9 found', () => {
       for (const bad of ['abc', '0', '-5', '1.5', '']) assert.equal((await cli(['--timeout-ms', bad])).code, 2, `--timeout-ms ${JSON.stringify(bad)}`);
       assert.equal((await cli(['--timeout-ms', '5000'])).code, 3, 'a valid value gets as far as the (scripted) run');
     });
-    test('--run-id is letters, digits, dot, underscore and hyphen, 1-64 characters: it ends up in tracker idempotency keys and file names', async () => {
-      for (const bad of ['!!!', 'a b', 'a/b', '../x', 'a'.repeat(65), '']) assert.equal((await cli(['--run-id', bad])).code, 2, `--run-id ${JSON.stringify(bad)}`);
-      for (const ok of ['r1', 'ci-4242', '20260102T030405Z', 'a.b_c-d', 'a'.repeat(64)]) assert.equal((await cli(['--run-id', ok])).code, 3, ok);
+    test('--run-id is any 1-128 printable characters (a CI ref like refs/heads/main is fine: odd ids are hashed into the tracker key); empty, too long or with control characters is refused', async () => {
+      for (const bad of ['', 'a'.repeat(129), 'a\nb', 'a\u0000b', 'a\u007fb']) assert.equal((await cli(['--run-id', bad])).code, 2, `--run-id ${JSON.stringify(bad)}`);
+      for (const ok of ['r1', 'ci-4242', '20260102T030405Z', 'a.b_c-d', 'a'.repeat(128), 'refs/heads/main', 'build#42', '2026-11-11 18:15', '!!!']) assert.equal((await cli(['--run-id', ok])).code, 3, ok);
     });
     test('the message names the flag', async () => {
       assert.match((await cli(['--timeout-ms', 'abc'])).err, /--timeout-ms/);
-      assert.match((await cli(['--run-id', '!!!'])).err, /--run-id/);
+      assert.match((await cli(['--run-id', ''])).err, /--run-id/);
     });
   });
 });

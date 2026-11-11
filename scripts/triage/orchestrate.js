@@ -25,7 +25,7 @@ const { main: runResultsMain } = require('../results/run');
 const { classify, makeKeyer, DEFAULT_THRESHOLD, DEFAULT_TRUSTED_FORMATS, parseTrustedFormats } = require('./classify');
 const { analyzeLocator } = require('./locators');
 const { isLocatorError, extractTestId, evidenceText } = require('./lib/text');
-const { plan, connectIfNeeded, writeCommentInputs } = require('./plan');
+const { plan, connectIfNeeded, writeCommentInputs, isValidRunId } = require('./plan');
 
 const usage = (message) => Object.assign(new Error(message), { isUsage: true });
 const MAX_RERUNS = 5;
@@ -58,8 +58,8 @@ function parseArgs(argv) {
   if (opts.preflight && !['ok', 'failed', 'unknown'].includes(opts.preflight)) throw usage('--preflight must be ok, failed or unknown');
   if (opts.threshold !== undefined && !(opts.threshold > 0 && opts.threshold <= 1)) throw usage('--threshold must be between 0 and 1');
   if (opts.timeoutMs !== undefined && !(Number.isInteger(opts.timeoutMs) && opts.timeoutMs > 0)) throw usage('--timeout-ms must be a positive whole number of milliseconds');
-  // the run id ends up in tracker idempotency keys and in file names
-  if (opts.runId !== undefined && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(opts.runId)) throw usage('--run-id must be 1-64 characters: letters, digits, ".", "_" or "-", starting with a letter or digit');
+  // the run id ends up in tracker idempotency keys (an odd one is hashed there, see plan.js runPart) and in comment text
+  if (opts.runId !== undefined && !isValidRunId(opts.runId)) throw usage('--run-id must be 1-128 characters with no control characters');
   return opts;
 }
 

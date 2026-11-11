@@ -45,11 +45,14 @@ const sanitize = (s) => String(s).replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+
 // The run's part of an idempotency key. A short id made of safe characters is used as it is (readable, and what an operator would type). Anything else
 // (long, or with characters that would fold together: "a/b" and "a-b") keeps a readable prefix and adds a hash of the WHOLE id, so two different run
 // ids never share a key, which would silently deduplicate the second run's bug into the first. At most 24 + 1 + 8 characters, so the key stays under 80.
+// An id that already ENDS like a hashed one ("-" and 12 hex digits) is hashed too, so a run literally named like another run's hashed form cannot share its key:
+// every key part ending that way was produced by hashing the whole id.
 const runPart = (runId) => {
   const id = String(runId);
-  return /^[A-Za-z0-9._-]{1,40}$/.test(id) ? id : `${sanitize(id).slice(0, 24)}-${crypto.createHash('sha256').update(id).digest('hex').slice(0, 8)}`;
+  return /^[A-Za-z0-9._-]{1,40}$/.test(id) && !/-[0-9a-f]{12}$/.test(id) ? id : `${sanitize(id).slice(0, 24)}-${crypto.createHash('sha256').update(id).digest('hex').slice(0, 12)}`;
 };
-const RUN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+// Any 1-128 printable characters: an odd id (refs/heads/main, build#42) is hashed into the key above, so there is nothing to protect by refusing it.
+const isValidRunId = (id) => typeof id === 'string' && /^[^\u0000-\u001f\u007f]{1,128}$/u.test(id);
 const TOKEN = /^qafp[0-9a-f]{12}$/;
 
 function parseArgs(argv) {
@@ -69,7 +72,7 @@ function parseArgs(argv) {
     else throw usage(`unknown option ${flag}`);
   }
   if (!opts.report) throw usage('--report <triage report json> is required');
-  if (opts.runId !== undefined && !RUN_ID.test(opts.runId)) throw usage('--run-id must be 1-64 characters: letters, digits, ".", "_" or "-", starting with a letter or digit');
+  if (opts.runId !== undefined && !isValidRunId(opts.runId)) throw usage('--run-id must be 1-128 characters with no control characters');
   return opts;
 }
 
@@ -142,6 +145,11 @@ async function plan({ report, runId, adapter, trackerWarning, commentsDir }) {
     const key = `fp-${v.fingerprint}-${runPart(runId)}`;
     const lookupInfo = found ? { open: found.open, closed: found.closed, dismissed: found.dismissed, ...(found.unread.length ? { partial: found.unread } : {}), ...(found.truncated ? { truncated: true } : {}) } : { skipped: lookupNote };
     if (found && found.unread.length) warnings.push(`${v.key}: ${found.unread.length} report(s) with a matching search result could not be read (${found.unread.map((u) => `#${u.id}: ${u.code}`).join(', ')}), so the lookup is partial — an existing report may exist`);
+    // the same caveat goes on whatever step the lookup led to: a regression or a dismissal decided from a partial lookup must say so too
+    const caveats = [];
+    if (found && found.unread.length) caveats.push(`report(s) ${found.unread.map((u) => `#${u.id}`).join(', ')} could not be read, so an existing (possibly open) report may exist: check before filing`);
+    if (found && found.truncated) caveats.push(`only the first ${MAX_CANDIDATES} search results were checked, so an older matching report may exist`);
+    const caveat = caveats.join('; ');
     if (found && found.truncated) warnings.push(`${v.key}: the search returned ${MAX_CANDIDATES} results, the most it is asked for: only the first ${MAX_CANDIDATES} were checked, so an older matching report may exist`);
     if (v.action === 'propose') { actions.push({ ...base, step: 'propose', reason: v.cap ? CAP_REASON : 'low confidence: shown to the human, not acted on', evidence: v.evidence, lookup: lookupInfo }); continue; }
     if (found && found.open.length) {
@@ -151,14 +159,15 @@ async function plan({ report, runId, adapter, trackerWarning, commentsDir }) {
         ...(commentsDir ? { commentInputFile: path.join(commentsDir, `${v.token}.json`) } : {}) });
     } else if (found && found.closed.length && !(found.dismissed.length && dismissedAfterFix(found))) {
       actions.push({ ...base, step: 'file-regression', regressionOf: found.closed[0], lookup: lookupInfo, idempotencyKey: key, marker: `qa-harness-fingerprint: ${v.token}`,
-        note: `report #${found.closed[0].id} with this fingerprint was closed as fixed, so this is a regression: file a new bug that links it${found.dismissed.length ? ` (a report closed without a fix also matches, but it is not newer than the fixed one — or the tracker gave no dates to tell: if it is the later decision, do not file)` : ''}` });
+        note: `report #${found.closed[0].id} with this fingerprint was closed as fixed, so this is a regression: file a new bug that links it${found.dismissed.length ? ` (a report closed without a fix also matches, but it is not newer than the fixed one — or the tracker gave no dates to tell: if it is the later decision, do not file)` : ''}${caveat ? ` — CAVEAT: ${caveat}` : ''}` });
     } else if (found && found.dismissed.length) {
       // The team decided NOT to fix this. It is not a regression of a fix, and a comment on a dismissed report is noise: say so, file nothing.
       actions.push({ ...base, step: 'report-dismissed', dismissedAs: found.dismissed[0], lookup: lookupInfo,
-        reason: `report #${found.dismissed[0].id} with this fingerprint was closed WITHOUT a fix (${found.dismissed[0].status}): nothing is filed or commented. If that decision should be revisited, re-open it yourself` });
+        reason: `report #${found.dismissed[0].id} with this fingerprint was closed WITHOUT a fix (${found.dismissed[0].status}): nothing is filed or commented. If that decision should be revisited, re-open it yourself`,
+        ...(caveat ? { note: caveat } : {}) });
     } else {
       actions.push({ ...base, step: 'file-bug', lookup: lookupInfo, idempotencyKey: key, marker: `qa-harness-fingerprint: ${v.token}`,
-        ...(lookupNote || (found && found.unread.length) ? { note: lookupNote ? `existing reports were not checked (${lookupNote})` : `report(s) ${found.unread.map((u) => `#${u.id}`).join(', ')} could not be read, so an existing report may exist: check before filing` } : {}) });
+        ...(lookupNote || caveat ? { note: lookupNote ? `existing reports were not checked (${lookupNote})` : caveat } : {}) });
     }
   }
   const flaky = report.verdicts.filter((v) => v.class === 'flaky').map((v) => ({ key: v.key, test: v.test.name, rule: v.rule, confidence: v.confidence, attempts: v.attempts }));
@@ -223,4 +232,4 @@ async function main({ argv = process.argv.slice(2), env = process.env, stdout = 
 
 if (require.main === module) main().then((code) => { process.exitCode = code; });
 
-module.exports = { main, plan, connectIfNeeded, writeCommentInputs, sanitize, STEPS };
+module.exports = { main, plan, connectIfNeeded, writeCommentInputs, sanitize, isValidRunId, STEPS };
