@@ -22,11 +22,12 @@ const VOLATILE = [
   [/(localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0):\d{2,5}/g, '$1:<port>'],
 ];
 
+const MAX_SIGNATURE_INPUT = 8000;
 // minDigits: a run of digits at least this long is masked. Prose uses 5 (an order number, a pid, a port is a different value every run), but
 // the lines that say what was EXPECTED and RECEIVED use 10 (an epoch timestamp): there a five-digit number is usually the data — 12999 cents,
 // not 13999 — and masking it would make two different defects share a fingerprint.
 function normalizeSignature(message, max = 300, { minDigits = 5 } = {}) {
-  let s = stripAnsi(message || '');
+  let s = stripAnsi(message || '').slice(0, MAX_SIGNATURE_INPUT); // capped BEFORE the regexes: a path-like run of tens of thousands of characters is quadratic in the path mask
   for (const [re, to] of VOLATILE) s = s.replace(re, to);
   s = s.replace(new RegExp(`\\b\\d{${minDigits},}\\b`, 'g'), '<n>'); // last: the rules above have already taken the digits they own
   return s.replace(/\s+/g, ' ').trim().slice(0, max);
@@ -49,8 +50,9 @@ const DIAGNOSTIC_LINE = /^\s*(?:Expected|Received|Actual|Locator)\b[^\n]*$/i;
 const COMPARISON_LINE = /^\s*[^\s|>][^\n]{0,150}?\s(?:!==?|===?)\s[^\n]{0,150}$/; // "10 !== 11" (not a code-frame line "  5 | if (a !== b)")
 const CODE_FRAME = /^\s*>?\s*\d+\s*\|/;
 const isDiagnostic = (l) => DIAGNOSTIC_LINE.test(l) || (COMPARISON_LINE.test(l) && !CODE_FRAME.test(l));
+const MAX_DIAGNOSTIC_INPUT = 20000;
 function diagnosticLines(text, { lines = 4 } = {}) {
-  return stripAnsi(text || '').split('\n').filter(isDiagnostic).slice(0, lines).map((l) => l.trim());
+  return stripAnsi(text || '').slice(0, MAX_DIAGNOSTIC_INPUT).split('\n').filter(isDiagnostic).slice(0, lines).map((l) => l.trim());
 }
 const diagnosticHead = (details, opts) => diagnosticLines(details, opts).join(' ');
 
@@ -74,24 +76,33 @@ function signatureOf(error, max = 500) {
 // node:test (and plain assert) print a failed status check as "<actual> OP <expected>" — "503 !== 200" — with none of the words Playwright and
 // Jest use ("Received: 503"). Both orders, strict or loose, and never a longer number that merely ends in the code (1503).
 const CMP = '(?:!==?|===?)';
+// the OTHER side of the comparison must itself be a possible HTTP status (100-599): "503 !== 600" is a row count or an amount, not a gateway error
+const HTTP_STATUS = '[1-5]\\d{2}';
 const statusComparisons = (codes) => [
-  new RegExp(`(?<![\\d.])(?:${codes})\\s*${CMP}\\s*\\d{3}(?![\\d.])`),
-  new RegExp(`(?<![\\d.])\\d{3}\\s*${CMP}\\s*(?:${codes})(?![\\d.])`),
+  new RegExp(`(?<![\\d.])(?:${codes})\\s*${CMP}\\s*${HTTP_STATUS}(?![\\d.])`),
+  new RegExp(`(?<![\\d.])${HTTP_STATUS}\\s*${CMP}\\s*(?:${codes})(?![\\d.])`),
 ];
-const INFRA = [
+// STRONG: the network layer says it could not reach or trust the host. WEAK: an HTTP status or a browser's "failed to fetch", which a CORS rule, a
+// removed route or a real regression produces just as well.
+const INFRA_STRONG = [
   /\bECONNREFUSED\b/, /\bENOTFOUND\b/, /\bECONNRESET\b/, /\bEAI_AGAIN\b/, /\bEHOSTUNREACH\b/, /\bENETUNREACH\b/,
   /\bgetaddrinfo\b/i, /\bERR_(?:CONNECTION|NAME_NOT_RESOLVED|INTERNET_DISCONNECTED|ADDRESS_UNREACHABLE|TIMED_OUT|CERT|SSL|BAD_SSL|EMPTY_RESPONSE|TUNNEL|PROXY|NETWORK)/,
-  /\bBad Gateway\b/i, /\bService Unavailable\b/i, /\bGateway Time-?out\b/i, /\bHTTP (?:status )?(?:502|503|504)\b/i,
-  /\b(?:status|code)[: ]+(?:502|503|504)\b/i, /connect ECONN/i, /socket hang up/i,
-  // a status assertion that RECEIVED a gateway error ("Expected: 200  Received: 503")
-  /\bReceived\b[^\n]{0,30}\b(?:502|503|504)\b/i,
+  /connect ECONN/i, /socket hang up/i,
   // TLS problems with the test environment's certificate (Node and Chromium wording)
   /\b(?:UNABLE_TO_VERIFY_LEAF_SIGNATURE|CERT_HAS_EXPIRED|DEPTH_ZERO_SELF_SIGNED_CERT|SELF_SIGNED_CERT_IN_CHAIN)\b/, /\bself[- ]signed certificate\b/i,
   /\bcertificate (?:has expired|is not yet valid|verify failed)\b/i,
+];
+const INFRA_WEAK = [
+  /\bBad Gateway\b/i, /\bService Unavailable\b/i, /\bGateway Time-?out\b/i, /\bHTTP (?:status )?(?:502|503|504)\b/i,
+  /\b(?:status|code)[: ]+(?:502|503|504)\b/i,
+  // a status assertion that RECEIVED a gateway error ("Expected: 200  Received: 503")
+  /\bReceived\b[^\n]{0,30}\b(?:502|503|504)\b/i,
   // a request that never got an answer: Node's fetch (undici) throws a bare "fetch failed" and hides the cause; browsers say the same in their own words
   /\bfetch failed\b/i, /\bFailed to fetch\b/, /\bNetworkError when attempting to fetch\b/i, /\bLoad failed\b/, /\bNetwork request failed\b/i,
   ...statusComparisons('502|503|504'),
 ];
+const INFRA = [...INFRA_STRONG, ...INFRA_WEAK];
+const infraStrong = (message) => { const m = stripAnsi(message || ''); return INFRA_STRONG.some((re) => re.test(m)); };
 const infraSignal = (message) => { const m = stripAnsi(message || ''); const hit = INFRA.find((re) => re.test(m)); return hit ? hit.source : null; };
 
 // "Is this an authentication / session problem?" An expired test account, a login page where the app should be, a 401 where
@@ -145,19 +156,32 @@ function extractTestId(message) {
 // the wording and the stack location are the evidence.
 const CRASH = /\b(?:TypeError|ReferenceError|SyntaxError)\b|Cannot find module|is not a function|is not defined|NameError|AttributeError|NoMethodError|undefined method/;
 const ASSERTION = /\bAssertionError\b|expect\(received\)|\bexpected\b.*\b(?:to|but)\b|!==|Failure\/Error: expect/i;
-const TEST_PATH = /(?:^|[\\/])(?:tests?|specs?|e2e|__tests__|cypress[\\/]e2e)[\\/]|\.(?:test|spec)\.[cm]?[jt]sx?$|_spec\.rb$|(?:^|[\\/])test_[^\\/]*\.py$|_test\.py$/;
+// Crashes that can ONLY be the test's own fault: no response from the app can cause a ReferenceError or a missing module. A TypeError / "is not a function"
+// is different: an API test that reads a response whose shape changed throws one in the test file (the app is remote, so the first frame is always the
+// test), and that is a product regression. Those are still test-bug, but only as a proposal.
+const STRONG_CRASH = /\b(?:ReferenceError|SyntaxError)\b|Cannot find module|is not defined|NameError/;
+// A test file is named like one (anywhere), or sits in a tests/ specs/ e2e/ directory BELOW the project root. An ancestor directory of the checkout that
+// happens to be called tests/ says nothing about the file.
+const TEST_FILE = /\.(?:test|spec)\.[cm]?[jt]sx?$|_spec\.rb$|(?:^|[\\/])test_[^\\/]*\.py$|_test\.py$/;
+const TEST_DIR = /(?:^|[\\/])(?:tests?|specs?|e2e|__tests__|cypress[\\/]e2e)[\\/]/;
+function isTestFile(file, root) {
+  if (TEST_FILE.test(file)) return true;
+  const rel = path.isAbsolute(file) ? path.relative(path.resolve(root), file) : file;
+  if (rel.startsWith('..') || path.isAbsolute(rel)) return false; // outside the project: only the file name could say "test"
+  return TEST_DIR.test(rel);
+}
 function firstSourceFrame(details) {
-  const m = stripAnsi(details || '').match(/(?:\(|\bat\s+|^\s*)((?:[A-Za-z]:)?[\\/]?[\w.@~+ \\/-]*?[\w.-]+\.(?:[cm]?[jt]sx?|py|rb))(?::(\d+))?(?::\d+)?/m);
+  const m = stripAnsi(details || '').slice(0, MAX_EVIDENCE).match(/(?:\(|\bat\s+|^\s*)((?:[A-Za-z]:)?[\\/]?[\w.@~+ \\/-]*?[\w.-]+\.(?:[cm]?[jt]sx?|py|rb))(?::(\d+))?(?::\d+)?/m);
   return m ? { file: m[1], line: m[2] ? Number(m[2]) : undefined } : null;
 }
-function testCrash(error) {
+function testCrash(error, { root = process.cwd() } = {}) {
   if (!error) return null;
   const head = `${error.message || ''}`;
   if (!CRASH.test(`${head}\n${error.details || ''}`) || ASSERTION.test(head)) return null;
   const frame = firstSourceFrame(error.details);
-  return frame && TEST_PATH.test(frame.file) ? frame : null;
+  return frame && isTestFile(frame.file, root) ? { ...frame, strong: STRONG_CRASH.test(`${head}\n${error.details || ''}`) } : null;
 }
 
 const baseName = (p) => (p ? path.basename(String(p)) : '');
 
-module.exports = { normalizeSignature, evidenceText, diagnosticHead, diagnosticLines, signatureOf, infraSignal, authSignal, errorPageSignal, isLocatorError, extractTestId, testCrash, firstSourceFrame, baseName, INFRA, AUTH, ERROR_PAGE, LOCATOR };
+module.exports = { normalizeSignature, evidenceText, diagnosticHead, diagnosticLines, signatureOf, infraSignal, infraStrong, authSignal, errorPageSignal, isLocatorError, extractTestId, testCrash, firstSourceFrame, baseName, INFRA, AUTH, ERROR_PAGE, LOCATOR };

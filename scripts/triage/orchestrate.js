@@ -146,7 +146,7 @@ async function orchestrate(opts, { env = process.env, fetch = globalThis.fetch, 
   }
 
   // 4. classify
-  const report = classify({ runs: [main, ...reruns], preflight, evidence, threshold: opts.threshold || DEFAULT_THRESHOLD, trustedFormats: opts.trustedFormats || DEFAULT_TRUSTED_FORMATS });
+  const report = classify({ runs: [main, ...reruns], preflight, evidence, threshold: opts.threshold || DEFAULT_THRESHOLD, trustedFormats: opts.trustedFormats || DEFAULT_TRUSTED_FORMATS, root: path.resolve(opts.cwd || process.cwd()) });
   writeJson(path.join(out, 'triage.json'), { ok: true, data: report });
   const files = { triage: path.join(out, 'triage.json') };
 

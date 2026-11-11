@@ -65,10 +65,10 @@ from) and `action: "act" | "propose"`: **`act` only when `confidence ≥ thresho
 | Id | Class | When | Conf. |
 |---|---|---|---:|
 | ENV-1 | environment | preflight reported failure | 0.95 |
-| ENV-2 | environment | **every** failing attempt's error matches an infrastructure signature (`ECONNREFUSED`, `ENOTFOUND`, `ECONNRESET`, `EAI_AGAIN`, `getaddrinfo`, `net::ERR_CONNECTION*`/`NAME_NOT_RESOLVED`, `502/503/504`, `Bad Gateway`, `Service Unavailable`). A bare "timeout exceeded" is **not** a signature — it is ambiguous. | 0.90 |
+| ENV-2 | environment | **every** failing attempt's error matches an infrastructure signature (`ECONNREFUSED`, `ENOTFOUND`, `ECONNRESET`, `EAI_AGAIN`, `getaddrinfo`, `net::ERR_CONNECTION*`/`NAME_NOT_RESOLVED`, `502/503/504`, `Bad Gateway`, `Service Unavailable`). A bare "timeout exceeded" is **not** a signature — it is ambiguous. **Exception:** when preflight said the environment was ready, no attempt passed, and every error is only an HTTP status or a failed fetch (no network-level error), the confidence is 0.70 and it is a proposal: a CORS rule, a removed route or a regression looks the same. In HTTP comparisons the other side must itself be 100-599 (`503 !== 600` is data). | 0.90 / 0.70 |
 | FLK-1 | flaky | attempts contain both a pass and a fail (flip), or the runner itself flagged `flaky` | 0.90 / 0.85 |
 | TST-1 | test-bug | locator-not-found in every failing attempt **and** evidence names exactly one candidate element under a different selector | 0.85 |
-| TST-2 | test-bug | the test **crashed** (`kind: error`, not an assertion) with a `TypeError`/`ReferenceError`/`SyntaxError`/`Cannot find module` whose first stack frame is in a test file | 0.80 |
+| TST-2 | test-bug | the test **crashed** (not an assertion) and the first stack frame is in a test file below the project root. `ReferenceError`/`SyntaxError`/`Cannot find module`/"is not defined": 0.80; `TypeError`/"is not a function": 0.65, because an API test throws one when a response changed shape | 0.80 / 0.65 |
 | ENV-3 | environment | ≥ 3 tests and ≥ 50% of the run failed, and one error signature accounts for ≥ 80% of those failures (blast radius) — could equally be a real suite-wide regression, so it is only a proposal | 0.60 |
 | PRD-1 | product-bug | every attempt failed (≥ 2), assertion failures (`kind: failure`) with the **same signature**, test traceable to a manual case (`caseId`) | 0.85 |
 | PRD-2 | product-bug | as PRD-1 but not traceable to a case | 0.75 |

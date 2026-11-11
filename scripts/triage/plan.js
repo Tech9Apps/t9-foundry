@@ -38,7 +38,7 @@ const STEPS = ['file-bug', 'file-regression', 'report-dismissed', 'comment-exist
 
 const usage = (message) => Object.assign(new Error(message), { isUsage: true });
 const MAX_CANDIDATES = 5;
-const CAP_REASON = 'held at propose: classification of this runner format has not been verified on real failures (triage.trustedFormats), so a person decides';
+const CAP_REASON = 'held at propose: classification of this runner format has not been verified on real failures (a person widens the trusted formats with --trusted-formats), so a person decides';
 const sanitize = (s) => String(s).replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
 
 function parseArgs(argv) {

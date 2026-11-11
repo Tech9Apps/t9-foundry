@@ -6,7 +6,7 @@
 // and whether it is confident enough to ACT on or should only be PROPOSED.
 //
 //   node scripts/triage/classify.js --run qa-results/result.json [--rerun qa-results/rerun-1/result.json]...
-//                                   [--preflight ok|failed] [--evidence evidence.json] [--threshold 0.8] [--trusted-formats tap] [--out report.json]
+//                                   [--preflight ok|failed] [--evidence evidence.json] [--threshold 0.8] [--trusted-formats tap] [--root <project dir>] [--out report.json]
 //
 // The rules are ordered; the first that matches wins and the rest are kept as `alternatives`. They implement
 // .claude/memory/failure-triage-rules.md — the rule ids below are checked against it by a drift test.
@@ -16,13 +16,14 @@
 const fs = require('fs');
 const path = require('path');
 const { fingerprint, identity, pathTail } = require('./fingerprint');
-const { signatureOf, evidenceText, infraSignal, authSignal, errorPageSignal, isLocatorError, testCrash, baseName } = require('./lib/text');
+const { signatureOf, evidenceText, infraSignal, infraStrong, authSignal, errorPageSignal, isLocatorError, extractTestId, testCrash, baseName } = require('./lib/text');
 
 const DEFAULT_THRESHOLD = 0.8;
 // The raw formats scripts/results/normalize.js produces. Only formats whose classification has been checked against REAL failure
 // output may let a verdict ACT; for the others, product-bug and test-bug verdicts (the two that can file a bug or edit a test) are
 // capped at "propose". Today that is TAP only: the Playwright/Jest/JUnit paths were built against hand-written reporter output.
-// Widen it with --trusted-formats once a format has been verified on real failures (there is no qa-config.json setting for it here).
+// Widen it with --trusted-formats once a format has been verified on real failures. That is a decision for the person running the tools: there is
+// deliberately no qa-config.json setting for it, and the agent's prose tells it to pass the flag only when the user says a format has been verified.
 const FORMATS = ['junit', 'tap', 'playwright-json', 'jest-json'];
 const DEFAULT_TRUSTED_FORMATS = ['tap'];
 const CAPPED_CLASSES = ['product-bug', 'test-bug'];
@@ -31,10 +32,10 @@ const CAPPED_CLASSES = ['product-bug', 'test-bug'];
 // and add() below refuses to emit a confidence that is not listed here.
 const RULE_TABLE = {
   'ENV-1': { class: 'environment', confidence: [0.95] },
-  'ENV-2': { class: 'environment', confidence: [0.9] },
+  'ENV-2': { class: 'environment', confidence: [0.9, 0.7] },
   'FLK-1': { class: 'flaky', confidence: [0.9, 0.85] },
   'TST-1': { class: 'test-bug', confidence: [0.85] },
-  'TST-2': { class: 'test-bug', confidence: [0.8] },
+  'TST-2': { class: 'test-bug', confidence: [0.8, 0.65] },
   'ENV-3': { class: 'environment', confidence: [0.6] },
   'PRD-1': { class: 'product-bug', confidence: [0.85] },
   'PRD-2': { class: 'product-bug', confidence: [0.75] },
@@ -104,7 +105,7 @@ function blastSignatures(run) {
   return n >= 0.8 * failed.length ? new Set([top]) : new Set();
 }
 
-function evaluate({ key, attempts }, { runCount, preflight, blast, evidence }) {
+function evaluate({ key, attempts }, { runCount, preflight, blast, evidence, root }) {
   const failing = attempts.filter((a) => a.status === 'failed');
   const passing = attempts.filter((a) => a.status === 'passed');
   const main = attempts[0].test;
@@ -122,22 +123,30 @@ function evaluate({ key, attempts }, { runCount, preflight, blast, evidence }) {
   }
   const infra = failing.map((a) => infraSignal(textOf(a)));
   if (failing.length && infra.every(Boolean)) {
-    add('ENV-2', 'environment', 0.9, `every failing attempt (${failing.length}) carries an infrastructure error: "${short(msgOf(failing[0]))}"`);
+    // a preflight that just said "ready" followed by a failure in EVERY attempt that only says an HTTP status or "failed to fetch": the check is evidence
+    // too, and a CORS rule, a removed route or a regression looks the same. A network-level error (refused, not resolved, TLS) stays an outage.
+    const healthy = preflight === 'ok' && !passing.length && failing.every((a) => !infraStrong(textOf(a)));
+    add('ENV-2', 'environment', healthy ? 0.7 : 0.9, `every failing attempt (${failing.length}) carries an infrastructure error: "${short(msgOf(failing[0]))}"`,
+      ...(healthy ? ['preflight reported the environment as ready and the error is only an HTTP status or a failed fetch, so it is proposed, not acted on, as an environment problem'] : []));
   }
   if ((failing.length && passing.length) || attempts.some((a) => a.flaky)) {
     if (failing.length && passing.length) add('FLK-1', 'flaky', 0.9, `failed in run ${runsOf(failing)} but passed in run ${runsOf(passing)} with no change`);
     else add('FLK-1', 'flaky', 0.85, `the runner retried it and it passed (retries: ${Math.max(...attempts.map((a) => a.retries))})`);
   }
   const locatorFails = failing.length > 0 && failing.every((a) => isLocatorError(textOf(a)));
-  const loc = evidence && evidence.locator;
+  // DOM evidence is about ONE locator. If the id in this failure's error is not the evidence's target (evidence left by an earlier run, or about another
+  // failure), it says nothing about this one.
+  const rawLoc = evidence && evidence.locator;
+  const staleLoc = locatorFails && rawLoc && !failing.every((a) => extractTestId(textOf(a)) === rawLoc.target);
+  const loc = staleLoc ? undefined : rawLoc;
   if (locatorFails && loc && loc.present === false && Array.isArray(loc.candidates) && loc.candidates.length === 1) {
     const c = loc.candidates[0];
     add('TST-1', 'test-bug', 0.85, `the test looks for "${loc.target}", which is not on the page, but "${c.testid}" is (similarity ${c.similarity})`, `locator error in every failing attempt: "${short(msgOf(failing[0]))}"`);
   }
-  const crash = failing.length > 0 && failing.every((a) => testCrash(a.error));
-  if (crash) {
-    const f = testCrash(failing[0].error);
-    add('TST-2', 'test-bug', 0.8, `the test crashed in its own code (${baseName(f.file)}${f.line ? `:${f.line}` : ''}): "${short(msgOf(failing[0]))}"`);
+  const crashes = failing.map((a) => testCrash(a.error, { root }));
+  if (failing.length > 0 && crashes.every(Boolean)) {
+    const f = crashes[0];
+    add('TST-2', 'test-bug', crashes.every((c) => c.strong) ? 0.8 : 0.65, `the test crashed in its own code (${baseName(f.file)}${f.line ? `:${f.line}` : ''}): "${short(msgOf(failing[0]))}"`);
   }
   if (failing.length && blast.size && failing.every((a) => blast.has(signatureOf(a.error)))) {
     add('ENV-3', 'environment', 0.6, 'most of the run failed with this one error — an outage or a single suite-wide regression; cannot tell which from the tests alone');
@@ -161,7 +170,8 @@ function evaluate({ key, attempts }, { runCount, preflight, blast, evidence }) {
   if (!matches.length) {
     // nothing above applied: say why, so a human knows what evidence would settle it
     let why; let conf = 0.3;
-    if (locatorFails && !loc) { why = 'a locator was not found, but no DOM evidence was supplied — capture the page and run scripts/triage/locators.js'; conf = 0.4; }
+    if (staleLoc) { why = `DOM evidence was supplied for a different locator ("${rawLoc.target}") than the one in this failure, so it is ignored — capture the page and run scripts/triage/locators.js for this failure`; conf = 0.4; }
+    else if (locatorFails && !loc) { why = 'a locator was not found, but no DOM evidence was supplied — capture the page and run scripts/triage/locators.js'; conf = 0.4; }
     else if (locatorFails && loc && loc.present === true) { why = `the locator "${loc.target}" IS on the page, so this is not a stale selector — look at visibility/timing`; conf = 0.4; }
     else if (locatorFails && loc && loc.candidates && loc.candidates.length > 1) { why = `the locator is not on the page and ${loc.candidates.length} elements resemble it — ambiguous`; conf = 0.5; }
     else if (locatorFails && loc) { why = 'the locator is not on the page and nothing resembles it — the app may have removed it, or the test is wrong'; conf = 0.5; }
@@ -179,7 +189,7 @@ function evaluate({ key, attempts }, { runCount, preflight, blast, evidence }) {
 // the details kept in a report: enough for a later step (locators.js, the Bug-reporter) to see the diagnosis, not a whole stack trace
 const evidenceDetails = (error) => evidenceText({ message: '', details: error.details }).trim().slice(0, 1000);
 
-function classify({ runs, preflight = 'unknown', evidence = {}, threshold = DEFAULT_THRESHOLD, trustedFormats = DEFAULT_TRUSTED_FORMATS }) {
+function classify({ runs, preflight = 'unknown', evidence = {}, threshold = DEFAULT_THRESHOLD, trustedFormats = DEFAULT_TRUSTED_FORMATS, root = process.cwd() }) {
   if (!runs.length) throw usage('at least one run is required');
   const format = runs[0].format || 'unknown'; // a result that does not say what it was parsed from cannot be trusted
   const trusted = trustedFormats.includes(format);
@@ -189,7 +199,7 @@ function classify({ runs, preflight = 'unknown', evidence = {}, threshold = DEFA
   for (const entry of attemptsByKey.values()) {
     const first = entry.attempts.find((a) => a.run === 0);
     if (!first || !(first.status === 'failed' || first.flaky)) continue; // triage what failed or flaked in the MAIN run
-    const ctx = { runCount: runs.length, preflight, blast, evidence: evidence[entry.key] || evidence[first.test.name] };
+    const ctx = { runCount: runs.length, preflight, blast, root, evidence: evidence[entry.key] || evidence[first.test.name] };
     const { matches, failing, main } = evaluate(entry, ctx);
     const [win, ...rest] = matches;
     let action = win.confidence >= threshold ? 'act' : 'propose';
@@ -197,7 +207,7 @@ function classify({ runs, preflight = 'unknown', evidence = {}, threshold = DEFA
     const capped = action === 'act' && !trusted && CAPPED_CLASSES.includes(win.class);
     if (capped) {
       action = 'propose';
-      evidenceLines.push(`capped at propose: classification of ${format} output has not been verified against real failures, so a ${win.class} verdict is shown to a human, not acted on (triage.trustedFormats lists the formats that may act)`);
+      evidenceLines.push(`capped at propose: classification of ${format} output has not been verified against real failures, so a ${win.class} verdict is shown to a human, not acted on (a person widens the list with --trusted-formats once a format has been checked on real failures)`);
     }
     const fp = fingerprint(failing.length ? { ...main, error: failing[0].error } : main);
     verdicts.push({
@@ -240,6 +250,7 @@ function parseArgs(argv) {
     else if (flag === '--evidence') opts.evidence = value();
     else if (flag === '--threshold') opts.threshold = Number(value());
     else if (flag === '--trusted-formats') opts.trustedFormats = parseTrustedFormats(value());
+    else if (flag === '--root') opts.root = value();
     else if (flag === '--out') opts.out = value();
     else throw usage(`unknown option ${flag}`);
   }
@@ -261,7 +272,7 @@ function main({ argv = process.argv.slice(2), stdout = process.stdout, stderr = 
   const out = (obj) => stdout.write(`${JSON.stringify(obj, null, 2)}\n`);
   try {
     if (!argv.length || argv[0] === '-h' || argv[0] === '--help') {
-      stderr.write('Usage: classify.js --run <result.json> [--rerun <result.json>]... [--preflight ok|failed] [--evidence <json>] [--threshold 0.8] [--trusted-formats tap,junit|none] [--out <file>]\n');
+      stderr.write('Usage: classify.js --run <result.json> [--rerun <result.json>]... [--preflight ok|failed] [--evidence <json>] [--threshold 0.8] [--trusted-formats tap,junit|none] [--root <project dir>] [--out <file>]\n');
       return argv.length ? 0 : 2;
     }
     const opts = parseArgs(argv);
@@ -270,7 +281,7 @@ function main({ argv = process.argv.slice(2), stdout = process.stdout, stderr = 
     if (opts.evidence) {
       try { evidence = JSON.parse(fs.readFileSync(opts.evidence, 'utf8')); } catch (e) { throw Object.assign(new Error(`cannot read ${opts.evidence}: ${e.message}`), { code: 'UNREADABLE' }); }
     }
-    const data = classify({ runs, preflight: opts.preflight || 'unknown', evidence, threshold: opts.threshold || DEFAULT_THRESHOLD, trustedFormats: opts.trustedFormats || DEFAULT_TRUSTED_FORMATS });
+    const data = classify({ runs, preflight: opts.preflight || 'unknown', evidence, threshold: opts.threshold || DEFAULT_THRESHOLD, trustedFormats: opts.trustedFormats || DEFAULT_TRUSTED_FORMATS, ...(opts.root ? { root: path.resolve(opts.root) } : {}) });
     const doc = { ok: true, data };
     if (opts.out) { fs.mkdirSync(path.dirname(path.resolve(opts.out)), { recursive: true }); fs.writeFileSync(opts.out, `${JSON.stringify(doc, null, 2)}\n`); }
     out(doc);

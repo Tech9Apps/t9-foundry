@@ -45,6 +45,12 @@ node_tests() { cd "$REPO_ROOT" && env -u NODE_TEST_CONTEXT node --test --test-re
   [[ "$output" =~ "# fail 0" ]]
 }
 
+@test "the findings of the third independent review hold: crashes, infrastructure signals, stale evidence and input caps cannot hide a product bug" {
+  run node_tests review-round3.test.js
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "# fail 0" ]]
+}
+
 @test "triage on REAL Jest 30.5.2 and Playwright 1.65.0 reports: every failure of a demo app with known causes is classified correctly" {
   run node_tests real-output.test.js
   [ "$status" -eq 0 ]
@@ -310,7 +316,7 @@ corrupt() { # <file> <from> <to>
   corrupt "$(CMD_COPY)" "\`classify.js\` the same" "nothing"
   orch_check
   [ "$status" -eq 1 ]
-  [[ "$output" =~ "pass --threshold / --trusted-formats on to classify.js" ]]
+  [[ "$output" =~ "pass --threshold / --trusted-formats / --cwd (as --root) on to classify.js" ]]
 }
 
 @test "orchestrator drift: no longer calling failure text 'data' for the Bug-reporter handoff is caught" {
@@ -369,4 +375,55 @@ corrupt() { # <file> <from> <to>
   orch_check
   [ "$status" -eq 1 ]
   [[ "$output" =~ "does not point at .claude/commands/run-and-triage.md" ]]
+}
+
+# ── the safety prose and the agent's tools are pinned, not just the flags ──
+# (the third review corrupted each of these in a copy and the checks still printed OK)
+
+@test "orchestrator drift: the agent may have exactly these tools; any other (a tracker write tool, say) is caught" {
+  corrupt "$(AGENT_COPY)" "tools: Read, Bash, Grep, Glob, Agent, AskUserQuestion" "tools: Read, Bash, Grep, Glob, Agent, AskUserQuestion, mcp__claude_ai_Atlassian__createJiraIssue"
+  orch_check
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "createJiraIssue" ]]
+  [[ "$output" =~ "exactly" ]]
+}
+
+@test "orchestrator drift: a missing allowed tool is caught too (an agent that cannot run the scripts does nothing)" {
+  corrupt "$(AGENT_COPY)" "tools: Read, Bash, Grep, Glob, Agent, AskUserQuestion" "tools: Read, Bash, Grep, Glob, Agent"
+  orch_check
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "AskUserQuestion" ]]
+}
+
+@test "orchestrator drift: the human gates in the step table and the closing rule are pinned" {
+  corrupt "$(CMD_COPY)" '**only on their yes**' 'right away'
+  orch_check; [ "$status" -eq 1 ]; [[ "$output" =~ "comment-existing" ]]; [[ "$output" =~ "only on their yes" ]]
+  cp "$REPO_ROOT/.claude/commands/run-and-triage.md" "$(CMD_COPY)"
+  corrupt "$(CMD_COPY)" 'File nothing and comment on nothing' 'File a regression bug'
+  orch_check; [ "$status" -eq 1 ]; [[ "$output" =~ "report-dismissed" ]]
+  cp "$REPO_ROOT/.claude/commands/run-and-triage.md" "$(CMD_COPY)"
+  corrupt "$(CMD_COPY)" 'Nothing is filed, commented or edited without the human review gate.' 'Everything is filed automatically.'
+  orch_check; [ "$status" -eq 1 ]; [[ "$output" =~ "human review gate" ]]
+  cp "$REPO_ROOT/.claude/commands/run-and-triage.md" "$(CMD_COPY)"
+  corrupt "$(CMD_COPY)" 'Never file it.' 'File it.'
+  orch_check; [ "$status" -eq 1 ]; [[ "$output" =~ "Never file it" ]]
+}
+
+@test "orchestrator drift: the instruction not to widen the trusted formats is pinned (flipping it to 'Pass it' is caught)" {
+  corrupt "$(CMD_COPY)" 'Do not pass `--trusted-formats`' 'Pass `--trusted-formats`'
+  orch_check
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "not to pass --trusted-formats" ]]
+}
+
+@test "rubric drift: the never-file and never-close rules are pinned" {
+  corrupt "$TEST_TMP/.claude/memory/failure-triage-rules.md" 'Never file a bug for `flaky`, `environment`, `test-bug` or `undetermined`.' 'Bugs are filed for everything.'
+  run env DRIFT_ROOT="$TEST_TMP" node "$CHECK"
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "Never file a bug for" ]]
+  cp "$REPO_ROOT/.claude/memory/failure-triage-rules.md" "$TEST_TMP/.claude/memory/failure-triage-rules.md"
+  corrupt "$TEST_TMP/.claude/memory/failure-triage-rules.md" 'Never close, reopen or re-prioritize an existing bug.' 'Reopen bugs freely.'
+  run env DRIFT_ROOT="$TEST_TMP" node "$CHECK"
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "Never close, reopen" ]]
 }

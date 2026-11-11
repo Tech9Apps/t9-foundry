@@ -82,8 +82,8 @@ node scripts/triage/classify.js --run qa-results/main/result.json --rerun qa-res
 node scripts/triage/plan.js --report qa-results/triage.json --run-id <run-id> --out qa-results/plan.json --flaky-out qa-results/flaky.json
 ```
 
-(Pass one `--rerun` per `rerun-<k>` directory that exists. If you gave `orchestrate.js` a `--threshold` or `--trusted-formats`, give
-`classify.js` the same: they are not remembered, and without them the re-classification quietly goes back to the defaults.)
+(Pass one `--rerun` per `rerun-<k>` directory that exists. If you gave `orchestrate.js` a `--threshold`, `--trusted-formats` or `--cwd`, give
+`classify.js` the same (`--cwd` is `--root` there): they are not remembered, and without them the re-classification quietly goes back to the defaults.)
 
 ## 4. Act on each step in `plan.json`
 

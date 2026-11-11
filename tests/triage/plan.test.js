@@ -282,7 +282,7 @@ describe('plan: behavior that does not depend on the tracker', () => {
   test('each class maps to its step: flaky and environment are reported, test-bug is only proposed, undetermined is proposed', async () => {
     const flaky = report([R(failing('f', ASSERT)), R(T('f', 'passed'))]);
     const env = report([R(failing('e', E('connect ECONNREFUSED 127.0.0.1:1', 'error'))), R(failing('e', E('connect ECONNREFUSED 127.0.0.1:1', 'error')))]);
-    const crash = E('TypeError: x is not a function', 'error', 'at run (/work/tests/a.test.js:3:3)');
+    const crash = E('ReferenceError: x is not defined', 'error', 'at run (/work/tests/a.test.js:3:3)'); // a crash only the test can cause: acts. (A TypeError is 0.65: only proposed.)
     const testBug = report([R(failing('t', crash)), R(failing('t', crash))]);
     const und = report([R(failing('u', E('Timeout 30000ms exceeded.', 'timeout'))), R(failing('u', E('Timeout 30000ms exceeded.', 'timeout')))]);
     const steps = {};
@@ -321,7 +321,7 @@ describe('plan: behavior that does not depend on the tracker', () => {
     const both = () => R(failing('DEMO-101/TC-001: a', ASSERT, ids(1)), failing('DEMO-101/TC-002: b', ASSERT, ids(2)));
     const dup = report([both(), both(), both()]); dup.verdicts[1].fingerprint = dup.verdicts[0].fingerprint; dup.verdicts[1].token = dup.verdicts[0].token;
     const env = report([R(failing('e', E('connect ECONNREFUSED 127.0.0.1:1', 'error'))), R(failing('e', E('connect ECONNREFUSED 127.0.0.1:1', 'error')))]);
-    const crash = E('TypeError: x is not a function', 'error', 'at run (/work/tests/a.test.js:3:3)');
+    const crash = E('ReferenceError: x is not defined', 'error', 'at run (/work/tests/a.test.js:3:3)');
     const tb = report([R(failing('t', crash)), R(failing('t', crash))]);
     const closedMock = MOCKS.github(); await seedBug('github', closedMock, tokenOf(pb), { close: true });
     const dismissedMock = MOCKS.github(); await seedBug('github', dismissedMock, tokenOf(pb), { dismiss: true });

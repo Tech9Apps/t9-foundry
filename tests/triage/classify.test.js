@@ -196,10 +196,12 @@ describe('test-bug (TST-1/2)', () => {
     assert.equal(v.rule, 'TST-1');
   });
 
-  test('TST-2: a TypeError whose first stack frame is in the test file → test-bug 0.8', () => {
-    const e = err("TypeError: Cannot read properties of undefined (reading 'click')", 'error', 'TestContext.<anonymous> (/work/e2e/checkout.spec.ts:12:7)\n at node:internal/x:1:1');
+  test('TST-2: a crash only the test can cause (ReferenceError, missing module) whose first stack frame is in the test file → test-bug 0.8, act; a TypeError is 0.65, propose', () => {
+    const e = err('ReferenceError: page is not defined', 'error', 'TestContext.<anonymous> (/work/e2e/checkout.spec.ts:12:7)\n at node:internal/x:1:1');
     const v = only(triage([run(fail('t', e)), run(fail('t', e))]));
     assert.deepEqual([v.class, v.rule, v.confidence, v.action], ['test-bug', 'TST-2', 0.8, 'act']);
+    const t = err("TypeError: Cannot read properties of undefined (reading 'click')", 'error', 'TestContext.<anonymous> (/work/e2e/checkout.spec.ts:12:7)');
+    assert.deepEqual([only(triage([run(fail('t', t)), run(fail('t', t))])).confidence, only(triage([run(fail('t', t)), run(fail('t', t))])).action], [0.65, 'propose']);
     assert.match(v.evidence[0], /checkout\.spec\.ts:12/);
   });
 
