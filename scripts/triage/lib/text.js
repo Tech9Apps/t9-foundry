@@ -76,8 +76,9 @@ function signatureOf(error, max = 500) {
 // node:test (and plain assert) print a failed status check as "<actual> OP <expected>" — "503 !== 200" — with none of the words Playwright and
 // Jest use ("Received: 503"). Both orders, strict or loose, and never a longer number that merely ends in the code (1503).
 const CMP = '(?:!==?|===?)';
-// the OTHER side of the comparison must itself be a possible HTTP status (100-599): "503 !== 600" is a row count or an amount, not a gateway error
-const HTTP_STATUS = '[1-5]\\d{2}';
+// the OTHER side of the comparison must itself be a status code that exists: "503 !== 450" or "503 !== 600" is a count or an amount, not a gateway error.
+// (A count that happens to equal a real code, "504 !== 500" rows, still reads as a status: only a status word could tell, and node's own wording has none.)
+const HTTP_STATUS = '(?:200|201|202|203|204|206|301|302|303|304|307|308|400|401|402|403|404|405|406|408|409|410|413|415|418|422|423|425|426|428|429|431|451|500|501|502|503|504|505)';
 const statusComparisons = (codes) => [
   new RegExp(`(?<![\\d.])(?:${codes})\\s*${CMP}\\s*${HTTP_STATUS}(?![\\d.])`),
   new RegExp(`(?<![\\d.])${HTTP_STATUS}\\s*${CMP}\\s*(?:${codes})(?![\\d.])`),
@@ -159,14 +160,20 @@ const ASSERTION = /\bAssertionError\b|expect\(received\)|\bexpected\b.*\b(?:to|b
 // Crashes that can ONLY be the test's own fault: no response from the app can cause a ReferenceError or a missing module. A TypeError / "is not a function"
 // is different: an API test that reads a response whose shape changed throws one in the test file (the app is remote, so the first frame is always the
 // test), and that is a product regression. Those are still test-bug, but only as a proposal.
-const STRONG_CRASH = /\b(?:ReferenceError|SyntaxError)\b|Cannot find module|is not defined|NameError/;
+// Only a ReferenceError / SyntaxError / NameError in the test's own code. NOT a missing module (a test that imports the app's file fails when the app renames
+// it), and NOT one the application can cause: a body that is not JSON ("Unexpected token '<'", "Unexpected end of JSON input"), a global the app removed seen
+// through page.evaluate, or an error Cypress says "originated from your application code".
+const STRONG_CRASH = /\b(?:ReferenceError|SyntaxError)\b|is not defined|NameError/;
+const APP_CAUSED = /\bJSON\b|<!DOCTYPE|Unexpected token '?<|Unexpected end of (?:JSON )?input|\b(?:page|locator|frame|elementHandle)\.evaluate\w*:|\bevaluate\w*: |originated from your application|application code/i;
 // A test file is named like one (anywhere), or sits in a tests/ specs/ e2e/ directory BELOW the project root. An ancestor directory of the checkout that
 // happens to be called tests/ says nothing about the file.
 const TEST_FILE = /\.(?:test|spec)\.[cm]?[jt]sx?$|_spec\.rb$|(?:^|[\\/])test_[^\\/]*\.py$|_test\.py$/;
 const TEST_DIR = /(?:^|[\\/])(?:tests?|specs?|e2e|__tests__|cypress[\\/]e2e)[\\/]/;
 function isTestFile(file, root) {
   if (TEST_FILE.test(file)) return true;
-  const rel = path.isAbsolute(file) ? path.relative(path.resolve(root), file) : file;
+  const base = root ? path.resolve(root) : '';
+  if (!base || path.parse(base).root === base) return false; // no real project root ("" or "/"): every directory is below it, so the directories prove nothing
+  const rel = path.isAbsolute(file) ? path.relative(base, file) : file;
   if (rel.startsWith('..') || path.isAbsolute(rel)) return false; // outside the project: only the file name could say "test"
   return TEST_DIR.test(rel);
 }
@@ -179,7 +186,7 @@ function testCrash(error, { root = process.cwd() } = {}) {
   const head = `${error.message || ''}`;
   if (!CRASH.test(`${head}\n${error.details || ''}`) || ASSERTION.test(head)) return null;
   const frame = firstSourceFrame(error.details);
-  return frame && isTestFile(frame.file, root) ? { ...frame, strong: STRONG_CRASH.test(`${head}\n${error.details || ''}`) } : null;
+  return frame && isTestFile(frame.file, root) ? { ...frame, strong: (() => { const all = `${head}\n${error.details || ''}`; return STRONG_CRASH.test(all) && !APP_CAUSED.test(all); })() } : null;
 }
 
 // What a failing test printed can hold a credential (a request dump with its Authorization header, a connection string, an API key in a URL), and the

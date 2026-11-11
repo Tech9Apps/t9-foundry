@@ -26,8 +26,8 @@ describe('TST-2 (the test crashed): only a crash that can ONLY be the test\'s fa
     const nf = twice(err('TypeError: helpers.login is not a function', 'error', 'at (/work/tests/a.test.js:3:3)'), { root: '/work' });
     assert.deepEqual([nf.rule, nf.confidence, nf.action], ['TST-2', 0.65, 'propose']);
   });
-  test('a ReferenceError / SyntaxError / missing module / "is not defined" in the test file is still 0.8 and acts: no app response can cause it', () => {
-    for (const m of ['ReferenceError: cart is not defined', 'SyntaxError: Unexpected token', "Error: Cannot find module './helpers'", 'NameError: name x is not defined']) {
+  test('a ReferenceError / SyntaxError / "is not defined" in the test file is still 0.8 and acts', () => {
+    for (const m of ['ReferenceError: cart is not defined', 'SyntaxError: Unexpected token }', 'NameError: name x is not defined']) {
       const v = twice(err(m, 'error', 'at (/work/tests/a.test.js:3:3)'), { root: '/work' });
       assert.deepEqual([v.rule, v.confidence, v.action], ['TST-2', 0.8, 'act'], m);
     }
@@ -66,7 +66,7 @@ describe('TST-2 (the test crashed): only a crash that can ONLY be the test\'s fa
 describe('ENV-2 (infrastructure error)', () => {
   test('a data comparison that merely looks like an HTTP status is not a 5xx: only 100-599 on the other side counts', () => {
     for (const m of ['503 !== 600', '502 !== 1000', '504 === 700', '999 !== 503']) assert.equal(infraSignal(m), null, m);
-    for (const m of ['503 !== 200', '200 !== 503', '504 === 404', '502 !== 599']) assert.ok(infraSignal(m), m);
+    for (const m of ['503 !== 200', '200 !== 503', '504 === 404', '502 !== 404']) assert.ok(infraSignal(m), m);
   });
   test('a healthy preflight followed by a failure in EVERY attempt that only says an HTTP status or "failed to fetch" is a proposal: a CORS rule or a removed route looks the same', () => {
     for (const m of ['Error: Failed to fetch', 'TypeError: fetch failed', '503 !== 200', 'Expected: 200\nReceived: 503 Service Unavailable']) {
@@ -286,7 +286,7 @@ describe('classify CLI flags that change what may act', () => {
 describe('testCrash vocabulary and what counts as an assertion', () => {
   const at = (message, details = 'at run (/w/tests/a.test.js:3:3)') => testCrash({ kind: 'error', message, details }, { root: '/w' });
   test('each crash wording is recognised (with its strength)', () => {
-    for (const [m, strong] of [['TypeError: x', false], ['ReferenceError: x is not defined', true], ['SyntaxError: bad', true], ["Error: Cannot find module './x'", true], ['x is not a function', false], ['y is not defined', true],
+    for (const [m, strong] of [['TypeError: x', false], ['ReferenceError: x is not defined', true], ['SyntaxError: bad', true], ["Error: Cannot find module './x'", false], ['x is not a function', false], ['y is not defined', true],
       ['NameError: name z', true], ["AttributeError: 'NoneType' object", false], ["NoMethodError: undefined method 'foo'", false], ["undefined method 'foo' for nil", false]]) {
       const c = at(m);
       assert.ok(c, m);
@@ -302,5 +302,42 @@ describe('testCrash vocabulary and what counts as an assertion', () => {
   test('evidence is capped (a whole stack trace is not evidence)', () => {
     const { evidenceText } = require('../../scripts/triage/lib/text');
     assert.equal(evidenceText({ message: 'm', details: 'x'.repeat(10000) }).length, 4000);
+  });
+});
+
+describe('TST-2 "strong": only a crash that NO response from the app can cause acts (second look)', () => {
+  const frame = 'at TestContext.<anonymous> (/repo/tests/api/cart.spec.ts:14:22)';
+  const strength = (message, details = frame) => { const c = testCrash({ kind: 'error', message, details }, { root: '/repo' }); return c && c.strong; };
+  test('a SyntaxError / ReferenceError the app can cause is only 0.65: a response that is not JSON, a removed global inside page.evaluate, an error from the application\'s own code', () => {
+    for (const m of [
+      "SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+      'SyntaxError: Unexpected end of JSON input',
+      'SyntaxError: JSON.parse: unexpected character at line 1 column 1',
+      'page.evaluate: ReferenceError: appStore is not defined',
+      'locator.evaluate: ReferenceError: cart is not defined',
+      'The following error originated from your application code, not from Cypress.\n\n  > checkout is not defined',
+    ]) assert.equal(strength(m), false, m);
+  });
+  test('a missing module is only 0.65 as well (a test that imports the app\'s file fails when the app renames it)', () => {
+    assert.equal(strength("Error: Cannot find module '../src/server'"), false);
+    assert.equal(strength("Error: Cannot find module './helpers'"), false);
+  });
+  test('what only the test can cause stays strong: a plain ReferenceError / SyntaxError / NameError in the test\'s own code', () => {
+    for (const m of ['ReferenceError: cart is not defined', 'ReferenceError: expect is not defined', 'SyntaxError: Unexpected token }', 'SyntaxError: missing ) after argument list', 'NameError: name \'x\' is not defined']) assert.equal(strength(m), true, m);
+  });
+  test('a root of "/" (or none that means anything) switches directory patterns OFF: only the file name can say "test"', () => {
+    const e = (f) => ({ kind: 'error', message: 'ReferenceError: x is not defined', details: `at (${f}:1:1)` });
+    assert.equal(testCrash(e('/home/ci/tests/shop/src/cart.js'), { root: '/' }), null);
+    assert.equal(testCrash(e('/home/ci/tests/shop/src/cart.js'), { root: '' }), null);
+    assert.ok(testCrash(e('/home/ci/tests/shop/cart.spec.js'), { root: '/' }), 'a .spec. file name is still a test file');
+  });
+});
+
+describe('ENV-2 status comparisons: the other side must be a status code that exists', () => {
+  test('a count or quantity in the 100-599 range that is not an HTTP status is not a gateway error', () => {
+    for (const m of ['503 !== 450', '502 !== 150', '504 === 333', '450 !== 503', '999 !== 503']) assert.equal(infraSignal(m), null, m);
+  });
+  test('real status codes still are, in either order', () => {
+    for (const m of ['503 !== 200', '200 !== 503', '504 === 404', '502 !== 301', '429 !== 502', '502 !== 204', '500 !== 504']) assert.ok(infraSignal(m), m);
   });
 });
