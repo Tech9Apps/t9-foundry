@@ -104,6 +104,7 @@ runner (12); the ones that survived the first round each exposed a missing test,
   only the TAP stream carries the `not ok … failureType: 'hookFailed'` line, and the node recipe reads JUnit. The TAP parser
   does report such a suite as a failed test (use `normalize.js` on a TAP file, or run `node --test --test-reporter=tap`
   yourself), but through `run.js` there is nothing in the report or the exit code to notice.
+- **One report format per directory.** A directory holding reports in different formats (JUnit next to Jest JSON, say) fails with `MIXED_FORMATS`: merging two producers' results would count one run twice or mix their notions of a failure. Point at one report, or at a directory with one kind. (A non-report file, like a `package.json`, is not a format: it is ignored with a warning.)
 - **A directory of reports** (WebdriverIO, Cypress) is read file by file. A file that is not a test report at all (a
   `package.json`) is left out and listed under `warnings`; a file that is a report but cannot be parsed, or is empty,
   fails the run with that file's name rather than being dropped. That includes a `.json` that does not parse at all (a runner killed
