@@ -283,6 +283,17 @@ describe('orchestrate: what the second review of PR #9 found', () => {
     assert.equal(fs.existsSync(path.join(out, 'triage.json')), true);
   });
 
+  test('--threshold reaches the classifier: a 0.85 product bug acts at the default and is only proposed at 0.9', async () => {
+    const s = scripted(() => ({ doc: result(failing()) }));
+    const dflt = await go({ framework: 'node', noPlan: true }, { runResults: s.runResults });
+    assert.deepEqual(dflt.doc.data.verdicts.map((v) => v.action), ['act']);
+    const strict = await go({ framework: 'node', noPlan: true, threshold: 0.9 }, { runResults: scripted(() => ({ doc: result(failing()) })).runResults });
+    assert.deepEqual(strict.doc.data.verdicts.map((v) => v.action), ['propose']);
+    const cli = async (argv) => { let out = ''; await main({ argv: ['--framework', 'node', '--out', tmp(), '--no-plan', ...argv], env: {}, stdout: { write: (x) => { out += x; } }, stderr: { write: () => {} }, runResults: scripted(() => ({ doc: result(failing()) })).runResults }); return JSON.parse(out); };
+    assert.deepEqual((await cli(['--threshold', '0.9'])).data.verdicts.map((v) => v.action), ['propose'], 'through the command line too');
+    assert.deepEqual((await cli([])).data.verdicts.map((v) => v.action), ['act']);
+  });
+
   describe('arguments that used to be accepted and ignored are refused (exit 2)', () => {
     const cli = async (argv) => { let err = ''; const code = await main({ argv: ['--framework', 'node', '--out', tmp(), ...argv], env: {}, stdout: { write: () => {} }, stderr: { write: (x) => { err += x; } }, runResults: async () => ({ code: 3, doc: noReport }) }); return { code, err }; };
     test('--timeout-ms must be a positive whole number', async () => {
