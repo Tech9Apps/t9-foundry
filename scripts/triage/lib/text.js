@@ -182,6 +182,24 @@ function testCrash(error, { root = process.cwd() } = {}) {
   return frame && isTestFile(frame.file, root) ? { ...frame, strong: STRONG_CRASH.test(`${head}\n${error.details || ''}`) } : null;
 }
 
+// What a failing test printed can hold a credential (a request dump with its Authorization header, a connection string, an API key in a URL), and the
+// text is copied into the triage report, a comment on a tracker and a bug. Mask the shapes that are secrets; leave ordinary failure text (assertions,
+// paths, numbers, a field called "password" that is merely mentioned) alone, since the evidence is the point.
+const SECRET_KEY = '(?:authorization|proxy-authorization|cookie|set-cookie|password|passwd|pwd|secret|client[_-]?secret|api[_-]?key|apikey|access[_-]?token|refresh[_-]?token|auth[_-]?token|private[_-]?key|token)';
+const SECRET_RULES = [
+  [/\b(authorization|proxy-authorization|cookie|set-cookie)(["']?\s*[:=]\s*["']?)[^\n"']+/gi, '$1$2<redacted>'],
+  [/\b(Bearer|Basic)\s+(?=[A-Za-z0-9._~+\/=-]*[0-9=.])[A-Za-z0-9._~+\/=-]{8,}/g, '$1 <redacted>'],
+  [new RegExp(`\\b(${SECRET_KEY})(["']?\\s*[:=]\\s*["']?)([^\\s"'&;,]{3,})`, 'gi'), '$1$2<redacted>'],
+  [/\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{10,}|xox[abprs]-[A-Za-z0-9-]{8,}|sk-[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{20,})/g, '<redacted>'],
+  [/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*/g, '<redacted>'],
+  [/(\b[a-z][a-z0-9+.-]*:\/\/)[^\s\/@:]+:[^\s\/@]+@/gi, '$1<redacted>@'],
+];
+function redactSecrets(text) {
+  let s = String(text == null ? '' : text).slice(0, MAX_DIAGNOSTIC_INPUT);
+  for (const [re, to] of SECRET_RULES) s = s.replace(re, to);
+  return s;
+}
+
 const baseName = (p) => (p ? path.basename(String(p)) : '');
 
-module.exports = { normalizeSignature, evidenceText, diagnosticHead, diagnosticLines, signatureOf, infraSignal, infraStrong, authSignal, errorPageSignal, isLocatorError, extractTestId, testCrash, firstSourceFrame, baseName, INFRA, AUTH, ERROR_PAGE, LOCATOR };
+module.exports = { normalizeSignature, evidenceText, diagnosticHead, diagnosticLines, signatureOf, infraSignal, infraStrong, authSignal, errorPageSignal, isLocatorError, extractTestId, testCrash, firstSourceFrame, redactSecrets, baseName, INFRA, AUTH, ERROR_PAGE, LOCATOR };

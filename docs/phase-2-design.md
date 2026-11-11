@@ -103,6 +103,18 @@ and is capped lower when it cannot be tied to a documented expectation.
    unknown and the plan stays with `file-regression`, with a note telling a person to check;
 5. **no match** → `file-bug`.
 
+The lookup is honest about what it did not see. A matching search result that cannot be fetched is skipped (it does not hide the ones that could be read)
+and listed under `lookup.partial` with a warning; a search that returns as many results as it asks for (5) may have more behind them, so that is
+flagged `lookup.truncated`. A `file-bug` after a partial lookup says so in its `note`. The run's part of the idempotency key is the run id as given when
+it is short and made of safe characters; otherwise a readable prefix plus a hash of the whole id, so two different run ids can never share a key. The text
+of a failure that is copied into a report, a comment or a bug passes through `redactSecrets` (authorization headers, bearer/basic credentials,
+`password=`-style pairs, well-known token shapes, credentials in URLs); the fingerprint is computed from the original, so masking never changes it.
+
+**Jira is not covered.** The tracker adapters (and so the lookup, regression and dismissed logic above) exist for GitHub, GitLab, Bitbucket, Azure
+DevOps and ClickUp. Jira is reached only through the Atlassian MCP, interactively, so with `ticketSource.type: jira` `plan.js` has no adapter: it warns
+("no tracker lookup … filing may duplicate") and every product bug is `file-bug`, on every run, whether or not a report for it exists. Search Jira yourself
+for the fingerprint token before approving a filing.
+
 This needs a normalized state on search results, which Phase 1's `search` lacks (each tracker returns its own status words).
 Adapters gain `open: boolean` and, when the tracker says the item was closed without a fix, `dismissed: true`, mapped per
 tracker (GitHub "not planned" and wontfix/invalid/duplicate labels, Bitbucket's wontfix/invalid/duplicate, ClickUp status
@@ -135,7 +147,7 @@ CI runs them against mocks and the real node runner; no browser, no network.
 
 ## What will and will not be verified
 
-Verified: the classifier, fingerprints and planner on real node:test output and tracker mocks; mutation-checked.
+Verified: the classifier, fingerprints and planner on real node:test output and tracker mocks. Mutation-checked in two senses, and the second is the honest one: the author mutated each new check as it was written, and a later independent review ran about 310 further hand-made mutants, of which about 90 survived (most not equivalent). The survivors that guard a decision are now tests; what remains untested is individual wording patterns (each infrastructure/auth/locator phrase is covered by the patterns table, not one test each) and some diagnostic caps.
 **Not** verified: classification quality on real Playwright/Cypress failures (the regex signatures are from experience
 of those tools' messages, not from a corpus), tracker search behavior on real services, the orchestrator agent's prose
 under a live model. The rubric thresholds are starting values, not tuned ones.
@@ -179,3 +191,22 @@ too far. What changed, and why:
 - **Nothing free-text from a failure reaches a command line or a file name.** Test keys come from test titles (slashes, pipes,
   quotes); the prose now passes only the fingerprint token (`qafp` plus 12 hex digits) and the scripts read the report themselves.
 - **Closed is not one thing** (see `report-dismissed` above).
+
+## What the third review changed
+
+A third independent review (about 310 hand-made mutants, a 20000-case fuzz, differential runs against `main`) found no blocker. What it found
+were places where a real product bug could be reported as something else at a confidence that acts, and prose the drift checks did not protect:
+
+- **TST-2** only acts for crashes the app cannot cause (ReferenceError, SyntaxError, missing module); a TypeError is 0.65. "A test file" is judged
+  below the project root (`--root` / `--cwd`).
+- **ENV-2** no longer matches a number that is not an HTTP status, and a healthy preflight followed by a weak signal (a bare 5xx, "failed to fetch")
+  in every attempt is 0.70, a proposal.
+- **Re-runs the runner cannot vouch for** (exit 3 with a report) are dropped, not counted: they used to turn a consistent failure into a flaky one.
+- **DOM evidence** must be about the id in the failure it is applied to, and `evidence.json`, `snapshots/`, `triage.json`, `plan.json`, `flaky.json`
+  and `comments/` from an earlier run are cleared at the start.
+- **Idempotency keys** cannot collide across run ids; the tracker lookup reports what it could not read or see; failure text is redacted;
+  a verdict token that is not a fingerprint token is refused (it names a file).
+- **The drift checks** pin the agent's exact tool allowlist and the human-gate sentences.
+- `triage.trustedFormats` never existed; the prose said it did. `--trusted-formats` is the only mechanism.
+- **Accepted, documented:** results of a re-run repeat whole spec files (side effects included); trust is keyed on the format name, not the runner, so
+  a TAP report from another producer fed straight to `classify.js` inherits TAP's privilege (the orchestrator only produces TAP from `node`).

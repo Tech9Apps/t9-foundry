@@ -340,8 +340,9 @@ describe('plan: behavior that does not depend on the tracker', () => {
     const k = async (args) => stepOf(await plan('github', rep, { args })).idempotencyKey;
     assert.equal(await k(['--run-id', 'r1']), await k(['--run-id', 'r1']));
     assert.notEqual(await k(['--run-id', 'r1']), await k(['--run-id', 'r2']));
-    const long = await k(['--run-id', `${'x'.repeat(200)}!!`]);
+    const long = await k(['--run-id', 'x'.repeat(64)]); // the longest id the CLI accepts
     assert.match(long, /^[A-Za-z0-9._-]{1,80}$/);
+    assert.ok(long.length < `fp-${rep.verdicts[0].fingerprint}-${'x'.repeat(64)}`.length, 'shortened');
   });
 
   test('without --run-id a UTC timestamp id is used', async () => {
@@ -379,5 +380,114 @@ describe('plan CLI', () => {
     const bad = path.join(dir, 'bad.json'); fs.writeFileSync(bad, '{"hello":1}');
     assert.match((await cli(['--report', bad])).json.error.message, /no "verdicts" array/);
     for (const argv of [[], ['--bogus'], ['--report'], ['--report', 'x', '--run-id', '!!!']]) assert.equal((await cli(argv)).code, 2, argv.join(' '));
+  });
+});
+
+describe('plan: what the third review of PR #9 found', () => {
+  const key = (rep, runId) => stepOf(rep).idempotencyKey;
+  const keyFor = async (runId) => stepOf(await plan('github', report(productBug()), { args: ['--run-id', runId] })).idempotencyKey;
+
+  test('the idempotency key tells run ids apart however long or odd they are (it used to keep 40 characters and fold every other character to "-")', async () => {
+    const long1 = 'ci-build-1234567890-abcdefghijklmnopqrstuvwxyz-1';
+    const long2 = 'ci-build-1234567890-abcdefghijklmnopqrstuvwxyz-2';
+    assert.notEqual(await keyFor(long1), await keyFor(long2), 'ids that differ only after character 40');
+    assert.equal(await keyFor(long1), await keyFor(long1), 'the same id gives the same key every time (that is what makes a retry safe)');
+    assert.equal(await keyFor('run42'), `fp-${report(productBug()).verdicts[0].fingerprint}-run42`, 'a plain short id is used as it is');
+  });
+  test('keys stay valid (at most 80 characters of the allowed alphabet) for the longest ids, including the comment form', async () => {
+    const rep = report(productBug());
+    const id = 'x'.repeat(64);
+    const mock = MOCKS.github();
+    const bug = await seedBug('github', mock, tokenOf(rep));
+    const a = stepOf(await plan('github', rep, { mock, args: ['--run-id', id] }));
+    assert.equal(a.step, 'comment-existing');
+    assert.match(a.commentInput.idempotencyKey, /^[A-Za-z0-9._-]{1,80}$/);
+    assertValidInput('comment', a.commentInput);
+    assert.ok(bug);
+  });
+  test('--run-id is the same safe set orchestrate.js accepts: anything else is refused (exit 2)', async () => {
+    for (const bad of ['!!!', 'a b', 'a/b', '../x', 'a'.repeat(65)]) {
+      const r = await plan('github', report(productBug()), { args: ['--run-id', bad] });
+      assert.equal(r.code, 2, `--run-id ${bad}`);
+    }
+  });
+
+  describe('the tracker lookup', () => {
+    // wrap a mock's fetch so that GET of one specific issue fails for good (a 500 on every try)
+    const breakIssue = (mock, id) => async (url, init) => (new RegExp(`/issues/${id}$`).test(String(url)) && (!init || !init.method || init.method === 'GET')
+      ? new Response('{"message":"boom"}', { status: 500 }) : mock.fetch(url, init));
+    test('one candidate that cannot be read does not discard the others: an open report that WAS read still gets the comment, and the skip is reported', async () => {
+      const mock = MOCKS.github();
+      const rep = report(productBug());
+      const first = await seedBug('github', mock, tokenOf(rep), { title: '[BUG] Unreadable' });
+      const second = await seedBug('github', mock, tokenOf(rep), { title: '[BUG] Readable' });
+      const r = await plan('github', rep, { mock, fetch: breakIssue(mock, first.id) });
+      const a = stepOf(r);
+      assert.equal(a.step, 'comment-existing');
+      assert.equal(a.existing.id, second.id);
+      assert.ok(r.json.data.warnings.some((w) => /could not be read/.test(w) && new RegExp(`#?${first.id}\\b`).test(w)), JSON.stringify(r.json.data.warnings));
+      assert.ok(a.lookup.partial, 'the step says the lookup was partial');
+    });
+    test('when the only candidate cannot be read, filing is still the step but it SAYS an existing report may exist', async () => {
+      const mock = MOCKS.github();
+      const rep = report(productBug());
+      const only = await seedBug('github', mock, tokenOf(rep));
+      const r = await plan('github', rep, { mock, fetch: breakIssue(mock, only.id) });
+      const a = stepOf(r);
+      assert.equal(a.step, 'file-bug');
+      assert.match(a.note, /could not be read/);
+      assert.ok(r.json.data.warnings.some((w) => /could not be read/.test(w)));
+    });
+    test('hitting the candidate limit is reported: a report ranked below it could not have been seen', async () => {
+      const mock = MOCKS.github();
+      const rep = report(productBug());
+      for (let i = 0; i < 6; i += 1) await seedBug('github', mock, tokenOf(rep), { title: `[BUG] copy ${i}`, close: true });
+      const r = await plan('github', rep, { mock });
+      assert.ok(r.json.data.warnings.some((w) => /only the first 5/.test(w)), JSON.stringify(r.json.data.warnings));
+      assert.ok(stepOf(r).lookup.truncated);
+    });
+    test('fewer candidates than the limit: no warning and no partial flag', async () => {
+      const mock = MOCKS.github();
+      const rep = report(productBug());
+      await seedBug('github', mock, tokenOf(rep));
+      const r = await plan('github', rep, { mock });
+      assert.deepEqual(r.json.data.warnings, []);
+      assert.equal(stepOf(r).lookup.partial, undefined);
+      assert.equal(stepOf(r).lookup.truncated, undefined);
+    });
+  });
+
+  describe('what a comment says', () => {
+    test('secrets in the recorded error text are masked in the comment body (and the comment still carries the marker)', async () => {
+      const mock = MOCKS.github();
+      const leaky = E('request failed: Authorization: Bearer abc123def456ghi789jkl token=ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA https://deploy:hunter2secret@staging.example.test/x');
+      const rep = report(productBug(5, leaky));
+      await seedBug('github', mock, tokenOf(rep));
+      const a = stepOf(await plan('github', rep, { mock }));
+      assert.equal(a.step, 'comment-existing');
+      for (const secret of ['abc123def456ghi789jkl', 'ghp_AAAA', 'hunter2secret']) assert.ok(!a.commentInput.body.includes(secret), secret);
+      assert.match(a.commentInput.body, new RegExp(`qa-harness-fingerprint: ${tokenOf(rep)}`));
+    });
+    test('a hand-edited report with a secret in it is masked too (the plan does not trust the report to have been cleaned)', async () => {
+      const mock = MOCKS.github();
+      const rep = report(productBug());
+      await seedBug('github', mock, tokenOf(rep));
+      rep.verdicts[0].error = { kind: 'failure', message: 'password=correcthorsebattery in the form' };
+      const a = stepOf(await plan('github', rep, { mock }));
+      assert.ok(!a.commentInput.body.includes('correcthorsebattery'));
+    });
+  });
+
+  test('a verdict whose token is not a fingerprint token is refused before anything is written: it names a FILE (comments/<token>.json)', async () => {
+    const mock = MOCKS.github();
+    const rep = report(productBug());
+    await seedBug('github', mock, tokenOf(rep));
+    rep.verdicts[0].token = '../../evil';
+    const outDir = fs.mkdtempSync(path.join(dir, 'out-'));
+    const r = await plan('github', rep, { mock, args: ['--out', path.join(outDir, 'plan.json')] });
+    assert.equal(r.code, 2);
+    assert.match(r.err, /token/);
+    assert.equal(fs.existsSync(path.join(outDir, 'plan.json')), false);
+    assert.equal(fs.existsSync(path.join(outDir, '..', 'evil.json')), false);
   });
 });

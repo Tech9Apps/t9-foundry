@@ -16,7 +16,7 @@
 const fs = require('fs');
 const path = require('path');
 const { fingerprint, identity, pathTail } = require('./fingerprint');
-const { signatureOf, evidenceText, infraSignal, infraStrong, authSignal, errorPageSignal, isLocatorError, extractTestId, testCrash, baseName } = require('./lib/text');
+const { signatureOf, evidenceText, infraSignal, infraStrong, authSignal, errorPageSignal, isLocatorError, extractTestId, testCrash, redactSecrets, baseName } = require('./lib/text');
 
 const DEFAULT_THRESHOLD = 0.8;
 // The raw formats scripts/results/normalize.js produces. Only formats whose classification has been checked against REAL failure
@@ -47,7 +47,8 @@ const CLASSES = ['product-bug', 'test-bug', 'flaky', 'environment', 'undetermine
 
 const usage = (message) => Object.assign(new Error(message), { isUsage: true });
 const short = (s, n = 140) => (String(s).length > n ? `${String(s).slice(0, n)}…` : String(s));
-const msgOf = (a) => (a.error && a.error.message) || '';
+// (redacted: this is what is copied into the report, the evidence lines, a comment and a bug; the rules themselves read textOf, the original)
+const msgOf = (a) => redactSecrets((a.error && a.error.message) || '');
 // what the failure SAYS: message + the reporter's diagnostics (see lib/text.js evidenceText) — every signal reads this, not just the first line
 const textOf = (a) => evidenceText(a.error);
 
@@ -187,7 +188,7 @@ function evaluate({ key, attempts }, { runCount, preflight, blast, evidence, roo
 }
 
 // the details kept in a report: enough for a later step (locators.js, the Bug-reporter) to see the diagnosis, not a whole stack trace
-const evidenceDetails = (error) => evidenceText({ message: '', details: error.details }).trim().slice(0, 1000);
+const evidenceDetails = (error) => redactSecrets(evidenceText({ message: '', details: error.details }).trim().slice(0, 1000));
 
 function classify({ runs, preflight = 'unknown', evidence = {}, threshold = DEFAULT_THRESHOLD, trustedFormats = DEFAULT_TRUSTED_FORMATS, root = process.cwd() }) {
   if (!runs.length) throw usage('at least one run is required');
@@ -219,7 +220,7 @@ function classify({ runs, preflight = 'unknown', evidence = {}, threshold = DEFA
       ...(rest.length ? { alternatives: rest.map((m) => ({ class: m.class, rule: m.rule, confidence: m.confidence })) } : {}),
       attempts: entry.attempts.map((a) => ({ run: a.run, status: a.status })),
       ...(failing.length ? { error: { kind: failing[0].error && failing[0].error.kind, message: msgOf(failing[0]), ...(failing[0].error && failing[0].error.details ? { details: evidenceDetails(failing[0].error) } : {}) } } : {}),
-      fingerprint: fp.fingerprint, token: fp.token, signature: fp.signature,
+      fingerprint: fp.fingerprint, token: fp.token, signature: redactSecrets(fp.signature), // the hash was taken from the original; only the text shown is masked
     });
   }
   const byClass = Object.fromEntries(CLASSES.map((c) => [c, verdicts.filter((v) => v.class === c).length]));

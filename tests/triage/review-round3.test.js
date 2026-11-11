@@ -123,3 +123,50 @@ describe('inputs cannot make the text rules quadratic (they are capped before th
     assert.ok(ms(() => firstSourceFrame('x'.repeat(40000))) < 300);
   });
 });
+
+describe('redactSecrets: what a test failure may have printed must not be copied into a bug or a comment', () => {
+  const { redactSecrets } = require('../../scripts/triage/lib/text');
+  const gone = (input, ...secrets) => { const out = redactSecrets(input); for (const s of secrets) assert.ok(!out.includes(s), `${JSON.stringify(s)} survived in: ${out}`); return out; };
+  test('authorization headers and bearer / basic credentials', () => {
+    gone('Authorization: Bearer abc123def456ghi789jkl', 'abc123def456ghi789jkl');
+    gone('got header authorization=Basic dXNlcjpwYXNzd29yZA==', 'dXNlcjpwYXNzd29yZA==');
+    gone('sent Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghijk', 'eyJhbGci', 'abcdefghijk');
+  });
+  test('key=value and key: value secrets, any case', () => {
+    gone('password=correcthorsebattery&user=x', 'correcthorsebattery');
+    gone('API_KEY: sk_live_abcdefghijklmnop', 'sk_live_abcdefghijklmnop');
+    gone('"client_secret":"s3cr3t-value-here"', 's3cr3t-value-here');
+    gone('Cookie: sid=abcdef123456; theme=dark', 'abcdef123456');
+  });
+  test('well-known token shapes', () => {
+    gone('using ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', 'ghp_AAAA');
+    gone('glpat-abcdefghij1234567890', 'glpat-abcdefghij');
+    gone('xoxb-1234-5678-abcdefghij', 'xoxb-1234');
+    gone('AKIAABCDEFGHIJKLMNOP is the key', 'AKIAABCDEFGHIJKLMNOP');
+  });
+  test('credentials embedded in a URL', () => {
+    const out = gone('GET https://deploy:hunter2secret@staging.example.test/x failed', 'hunter2secret', 'deploy:');
+    assert.match(out, /staging\.example\.test/, 'the host stays: it is the evidence');
+  });
+  test('ordinary failure text is left alone: assertions, paths, numbers, short words', () => {
+    for (const t of ['expected 200 but received 503', 'Cannot read properties of undefined (reading \'total\')', 'at /work/tests/a.test.js:3:3', 'token expired for the session', 'locator getByTestId(\'add-to-cart\') not found', 'password field is required']) {
+      assert.equal(redactSecrets(t), t, t);
+    }
+  });
+  test('non-strings and empty input are safe', () => {
+    assert.equal(redactSecrets(undefined), '');
+    assert.equal(redactSecrets(null), '');
+    assert.equal(redactSecrets(''), '');
+  });
+});
+
+describe('the triage report carries redacted failure text', () => {
+  test('error message, details and the evidence lines are masked; the fingerprint is computed from the original, so it does not change', () => {
+    const leaky = err('request failed: Authorization: Bearer abc123def456ghi789jkl', 'failure', 'Received: password=correcthorsebattery');
+    const plain = err('request failed: Authorization: Bearer abc123def456ghi789jkl', 'failure', 'Received: password=correcthorsebattery');
+    const v = twice(leaky);
+    const text = JSON.stringify(v);
+    for (const s of ['abc123def456ghi789jkl', 'correcthorsebattery']) assert.ok(!text.includes(s), s);
+    assert.equal(twice(plain).fingerprint, v.fingerprint);
+  });
+});

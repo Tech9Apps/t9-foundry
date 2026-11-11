@@ -28,9 +28,11 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { run } = require('../tracker/adapters');
 const { connect } = require('../tracker/lib/connect');
 const { TrackerError } = require('../tracker/lib/errors');
+const { redactSecrets } = require('./lib/text');
 
 // Every step a plan can contain. The prose that tells a model what to do for each one is checked against this list
 // (tests/helpers/orchestrator-drift-check.js), so a step cannot be added here without telling the model about it.
@@ -40,6 +42,15 @@ const usage = (message) => Object.assign(new Error(message), { isUsage: true });
 const MAX_CANDIDATES = 5;
 const CAP_REASON = 'held at propose: classification of this runner format has not been verified on real failures (a person widens the trusted formats with --trusted-formats), so a person decides';
 const sanitize = (s) => String(s).replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+// The run's part of an idempotency key. A short id made of safe characters is used as it is (readable, and what an operator would type). Anything else
+// (long, or with characters that would fold together: "a/b" and "a-b") keeps a readable prefix and adds a hash of the WHOLE id, so two different run
+// ids never share a key, which would silently deduplicate the second run's bug into the first. At most 24 + 1 + 8 characters, so the key stays under 80.
+const runPart = (runId) => {
+  const id = String(runId);
+  return /^[A-Za-z0-9._-]{1,40}$/.test(id) ? id : `${sanitize(id).slice(0, 24)}-${crypto.createHash('sha256').update(id).digest('hex').slice(0, 8)}`;
+};
+const RUN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+const TOKEN = /^qafp[0-9a-f]{12}$/;
 
 function parseArgs(argv) {
   const opts = {};
@@ -58,7 +69,7 @@ function parseArgs(argv) {
     else throw usage(`unknown option ${flag}`);
   }
   if (!opts.report) throw usage('--report <triage report json> is required');
-  if (opts.runId !== undefined && !sanitize(opts.runId)) throw usage('--run-id must contain letters or digits');
+  if (opts.runId !== undefined && !RUN_ID.test(opts.runId)) throw usage('--run-id must be 1-64 characters: letters, digits, ".", "_" or "-", starting with a letter or digit');
   return opts;
 }
 
@@ -66,14 +77,23 @@ function parseArgs(argv) {
 // "could not check" and says so.
 async function lookup(adapter, token) {
   const { items } = await run(adapter, 'search', { query: token, kind: 'bug', limit: MAX_CANDIDATES });
+  // A search that returns as many as it was allowed to may have more behind them; a candidate that cannot be read is skipped (not allowed to hide the
+  // ones that could be), and both are reported so "nothing found" is never taken for "nothing exists".
+  const truncated = items.length >= MAX_CANDIDATES;
+  const unread = [];
   // open: still being worked · closed: closed because it was FIXED · dismissed: closed WITHOUT a fix (won't fix, not planned, duplicate…)
   const open = []; const closed = []; const dismissed = [];
   for (const item of items.slice(0, MAX_CANDIDATES)) {
-    const ticket = await run(adapter, 'fetch', { id: item.id }); // confirm the token is really in it — search is fuzzy
+    let ticket;
+    try { ticket = await run(adapter, 'fetch', { id: item.id }); } catch (err) { // confirm the token is really in it — search is fuzzy
+      if (!(err instanceof TrackerError)) throw err;
+      unread.push({ id: item.id, code: err.code });
+      continue;
+    }
     if (!String(ticket.description || '').includes(token)) continue;
     (item.open ? open : item.dismissed ? dismissed : closed).push({ id: item.id, url: item.url, title: item.title, status: item.status, ...(item.createdAt ? { createdAt: item.createdAt } : {}) });
   }
-  return { open, closed, dismissed };
+  return { open, closed, dismissed, unread, truncated };
 }
 
 // When a defect matches BOTH a report closed as fixed and one closed WITHOUT a fix, the later one is the team's last word. Fixed, then back,
@@ -86,13 +106,16 @@ function commentBody(v, runId) {
   return [
     `Run ${runId}: this failure occurred again.`, '',
     `Test: ${v.test.name}${v.test.file ? ` (${path.basename(v.test.file)})` : ''}`,
-    `Error: ${(v.error && v.error.message) || '(none recorded)'}`,
+    `Error: ${redactSecrets((v.error && v.error.message) || '') || '(none recorded)'}`, // masked again here: the report may have been edited or come from elsewhere
     `Triage: ${v.class} by rule ${v.rule}, confidence ${v.confidence} — ${v.attempts.length} attempt(s), ${v.attempts.filter((a) => a.status === 'failed').length} failed`,
     '', `qa-harness-fingerprint: ${v.token}`,
   ].join('\n');
 }
 
 async function plan({ report, runId, adapter, trackerWarning, commentsDir }) {
+  // the token names a FILE (comments/<token>.json): a report with anything else in it is not one of ours, and nothing is written for it
+  const badToken = report.verdicts.find((v) => !TOKEN.test(String(v.token)));
+  if (badToken) throw usage(`a verdict has a token that is not a fingerprint token (qafp + 12 hex digits): ${JSON.stringify(String(badToken.token).slice(0, 40))}`);
   const warnings = trackerWarning ? [trackerWarning] : [];
   const actions = [];
   const seen = new Map(); // fingerprint -> first test key, for same-run dedupe
@@ -116,8 +139,10 @@ async function plan({ report, runId, adapter, trackerWarning, commentsDir }) {
         warnings.push(`tracker search failed for ${v.key} (${err.code}: ${err.message}) — an existing report could not be ruled out`);
       }
     }
-    const key = `fp-${v.fingerprint}-${sanitize(runId)}`;
-    const lookupInfo = found ? { open: found.open, closed: found.closed, dismissed: found.dismissed } : { skipped: lookupNote };
+    const key = `fp-${v.fingerprint}-${runPart(runId)}`;
+    const lookupInfo = found ? { open: found.open, closed: found.closed, dismissed: found.dismissed, ...(found.unread.length ? { partial: found.unread } : {}), ...(found.truncated ? { truncated: true } : {}) } : { skipped: lookupNote };
+    if (found && found.unread.length) warnings.push(`${v.key}: ${found.unread.length} report(s) with a matching search result could not be read (${found.unread.map((u) => `#${u.id}: ${u.code}`).join(', ')}), so the lookup is partial — an existing report may exist`);
+    if (found && found.truncated) warnings.push(`${v.key}: the search returned ${MAX_CANDIDATES} results, the most it is asked for: only the first ${MAX_CANDIDATES} were checked, so an older matching report may exist`);
     if (v.action === 'propose') { actions.push({ ...base, step: 'propose', reason: v.cap ? CAP_REASON : 'low confidence: shown to the human, not acted on', evidence: v.evidence, lookup: lookupInfo }); continue; }
     if (found && found.open.length) {
       const existing = found.open[0];
@@ -133,7 +158,7 @@ async function plan({ report, runId, adapter, trackerWarning, commentsDir }) {
         reason: `report #${found.dismissed[0].id} with this fingerprint was closed WITHOUT a fix (${found.dismissed[0].status}): nothing is filed or commented. If that decision should be revisited, re-open it yourself` });
     } else {
       actions.push({ ...base, step: 'file-bug', lookup: lookupInfo, idempotencyKey: key, marker: `qa-harness-fingerprint: ${v.token}`,
-        ...(lookupNote ? { note: `existing reports were not checked (${lookupNote})` } : {}) });
+        ...(lookupNote || (found && found.unread.length) ? { note: lookupNote ? `existing reports were not checked (${lookupNote})` : `report(s) ${found.unread.map((u) => `#${u.id}`).join(', ')} could not be read, so an existing report may exist: check before filing` } : {}) });
     }
   }
   const flaky = report.verdicts.filter((v) => v.class === 'flaky').map((v) => ({ key: v.key, test: v.test.name, rule: v.rule, confidence: v.confidence, attempts: v.attempts }));
