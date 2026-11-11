@@ -526,3 +526,54 @@ describe('plan: what the third review of PR #9 found', () => {
     assert.equal(fs.existsSync(path.join(outDir, '..', 'evil.json')), false);
   });
 });
+
+describe('plan: the ordering and tie decisions, with dates and search order under the test\'s control', () => {
+  const { plan: planCore } = require('../../scripts/triage/plan');
+  // a stand-in tracker: search returns exactly `items` in that order; every candidate's body carries the token
+  const stub = (rep, items) => ({
+    async search() { return { items }; },
+    async fetchTicket() { return { description: `qa-harness-fingerprint: ${tokenOf(rep)}` }; },
+  });
+  const it = (id, kind, createdAt) => ({ id, title: `t${id}`, status: kind, url: `u${id}`, open: kind === 'open', ...(kind === 'dismissed' ? { dismissed: true } : {}), ...(createdAt ? { createdAt } : {}) });
+  const decide = async (items) => { const rep = report(productBug()); return (await planCore({ report: rep, runId: 'r1', adapter: stub(rep, items) })).actions[0]; };
+  const day = (n) => `2026-01-0${n}T00:00:00Z`;
+
+  test('the LATEST report on each side decides which side is the last word (not the earliest)', async () => {
+    // fixed on day 1 and day 3, dismissed on day 2: the day-3 fix is newer than the dismissal, so a recurrence IS a regression
+    const a = await decide([it('1', 'closed', day(1)), it('2', 'dismissed', day(2)), it('3', 'closed', day(3))]);
+    assert.equal(a.step, 'file-regression');
+    // fixed on days 1 and 2, dismissed on days 0 and 3: the day-3 dismissal is the last word
+    const b = await decide([it('1', 'closed', day(1)), it('2', 'closed', day(2)), it('0', 'dismissed', '2025-12-31T00:00:00Z'), it('4', 'dismissed', day(3))]);
+    assert.equal(b.step, 'report-dismissed');
+  });
+  test('the same moment on both sides is not "dismissed after the fix": it stays a regression, with the check-a-person note', async () => {
+    const a = await decide([it('1', 'closed', day(2)), it('2', 'dismissed', day(2))]);
+    assert.equal(a.step, 'file-regression');
+    assert.match(a.note, /not newer than the fixed one|no dates/);
+  });
+  test('no date on either side: the order is unknown, so a regression (never "dismissed")', async () => {
+    assert.equal((await decide([it('1', 'closed'), it('2', 'dismissed')])).step, 'file-regression');
+    assert.equal((await decide([it('1', 'closed', day(1)), it('2', 'dismissed')])).step, 'file-regression');
+  });
+  test('with several matches the FIRST the tracker ranked is the one commented on / linked / reported', async () => {
+    const open = await decide([it('7', 'open'), it('8', 'open')]);
+    assert.equal(open.step, 'comment-existing');
+    assert.equal(open.existing.id, '7');
+    const closed = await decide([it('5', 'closed', day(1)), it('6', 'closed', day(2))]);
+    assert.equal(closed.step, 'file-regression');
+    assert.equal(closed.regressionOf.id, '5');
+    const dismissed = await decide([it('3', 'dismissed', day(1)), it('4', 'dismissed', day(2))]);
+    assert.equal(dismissed.step, 'report-dismissed');
+    assert.equal(dismissed.dismissedAs.id, '3');
+  });
+  test('flaky and environment verdicts are reported only when they ACT: raise the threshold and they are proposals', async () => {
+    const flakyRuns = [R(failing('f', ASSERT)), R(T('f', 'passed'))];
+    const envRuns = [R(failing('e', E('connect ECONNREFUSED 127.0.0.1:1', 'error'))), R(failing('e', E('connect ECONNREFUSED 127.0.0.1:1', 'error')))];
+    for (const [runs, step] of [[flakyRuns, 'report-flaky'], [envRuns, 'report-environment']]) {
+      const lax = (await planCore({ report: classify({ runs }), runId: 'r1', adapter: null })).actions[0];
+      assert.equal(lax.step, step);
+      const strict = (await planCore({ report: classify({ runs, threshold: 0.95 }), runId: 'r1', adapter: null })).actions[0];
+      assert.equal(strict.step, 'propose', `${step} at threshold 0.95`);
+    }
+  });
+});

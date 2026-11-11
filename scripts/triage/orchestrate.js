@@ -92,7 +92,9 @@ function clearStale(out, warnings) {
       if (e.isSymbolicLink()) { fs.unlinkSync(p); warnings.push(`${e.name} in ${out} was a symlink: the link was removed (its target was not touched), so an earlier run's file cannot stand in for this one`); } // eslint-disable-line max-len
       else if (e.isFile() && OWNED_FILES[e.name](readJson(p))) rm(p);
     } else if (e.isDirectory() && /^rerun-\d+$/.test(e.name)) {
-      if (fs.existsSync(path.join(p, 'result.json')) || fs.existsSync(path.join(p, 'raw'))) rm(p); // what run.js writes into an --out directory
+      // only what run.js writes into an --out directory (result.json, raw/); a user's file in the same directory stays, and so does the directory
+      for (const name of ['result.json', 'raw']) if (fs.existsSync(path.join(p, name))) rm(path.join(p, name));
+      if (!fs.readdirSync(p).length) fs.rmdirSync(p);
     } else if (e.isDirectory() && (e.name === 'snapshots' || e.name === 'comments')) {
       const mine = e.name === 'snapshots' ? /^qafp[0-9a-f]{12}\.html$/ : /^qafp[0-9a-f]{12}\.json$/;
       for (const f of fs.readdirSync(p, { withFileTypes: true })) if (f.isFile() && mine.test(f.name)) rm(path.join(p, f.name));

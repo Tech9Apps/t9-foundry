@@ -293,7 +293,11 @@ describe('orchestrate: what the second review of PR #9 found', () => {
       put(out, 'comments/notes.md', '# notes'); put(out, 'comments/qafp0123456789ab.json', '{}');
       put(out, 'plan.json', '{"my":"own plan"}'); put(out, 'triage.json', 'not json at all'); put(out, 'flaky.json', '[1,2,3]'); put(out, 'evidence.json', '["not", "ours"]');
       put(out, 'rerun-2/notes.txt', 'mine');
+      put(out, 'rerun-3/result.json', '{}'); put(out, 'rerun-3/my-notes.md', 'mine'); put(out, 'rerun-3/raw/results-0.tap', 'tap');
       await go({ framework: 'node', out, noPlan: true }, { runResults: scripted({ main: { doc: result(passing()) } }).runResults });
+      assert.equal(has(out, 'rerun-3/my-notes.md'), true, 'a user file inside a rerun-N directory survives');
+      assert.equal(has(out, 'rerun-3/result.json'), false, 'what run.js wrote there is cleared');
+      assert.equal(has(out, 'rerun-3/raw'), false);
       for (const rel of ['snapshots/visual.png', 'comments/notes.md', 'plan.json', 'triage.json', 'flaky.json', 'evidence.json', 'rerun-2/notes.txt']) assert.equal(has(out, rel), true, `${rel} is the user's and must survive`);
       assert.equal(fs.readFileSync(path.join(out, 'plan.json'), 'utf8'), '{"my":"own plan"}');
       assert.equal(has(out, 'snapshots/qafp0123456789ab.html'), false, 'our own snapshot in the same directory is still cleared');

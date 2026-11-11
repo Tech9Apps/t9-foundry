@@ -80,6 +80,14 @@ describe('clickup: statuses are whatever the workspace named them (type "custom"
   for (const status of ['Rejected - needs rework', 'Rejected by QA', 'QA rejected', 'Failed QA - rejected', 'Reopened - was duplicate', 'Needs retest after reject', 'Closed as duplicate? needs check', 'Declined, pending QA', 'Rejected, pending decision', 'Duplicate - pending confirmation']) {
     test(`"${status}" is OPEN: it says work remains`, () => expectState(createClickupMock, setStatus(status), OPEN));
   }
+  for (const status of ["Won't be fixed", 'Will not be fixed', 'Not going to fix', "Won't implement", 'Not an issue', 'Dup', 'Closed - Dup', 'Dupe']) {
+    test(`"${status}" is dismissed`, () => expectState(createClickupMock, setStatus(status), DISMISSED));
+  }
+  // deferrals and statuses that still have a decision or rework in front of them are not dismissals
+  for (const status of ['Rejected by code review', 'Rejected (back to dev)', 'Rejected by design review', "Proposed - won't fix", "Candidate: won't fix", "Awaiting customer decision: won't fix?",
+    'Out of scope for this sprint', 'Blocked - out of scope for sprint', 'Not planned for this release', 'Deferred - not planned', 'Maybe duplicate']) {
+    test(`"${status}" is OPEN: a decision or rework is still ahead`, () => expectState(createClickupMock, setStatus(status), OPEN));
+  }
   for (const status of ['to do', 'In progress', 'In review', 'Blocked', 'Will do']) {
     test(`"${status}" is open`, () => expectState(createClickupMock, setStatus(status), OPEN));
   }
