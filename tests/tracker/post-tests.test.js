@@ -238,3 +238,94 @@ describe('post-tests: invocation', () => {
     assert.ok(!fs.readFileSync(w.keysFile, 'utf8').includes(w.mock.token));
   });
 });
+
+// A cases file that cannot be read IN FULL must be refused before anything is created. Posting "the cases it could read" reports ok:true while a case
+// is silently missing, and a repeated id made the second case come back as "already existed" (both pointing at the first one's issue).
+const os = require('node:os');
+const { lintTestCases, parseTestCases } = require('../../scripts/tracker/lib/test-cases');
+const caseBlock = (id, title = 'A title') => `### ${id}: ${title}\n- **Priority:** High\n- **Steps:** 1. do it\n- **Expected Result:** done\n\n`;
+const casesFile = (text) => { const f = path.join(fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), 'qa-cases-')), 'cases.md'); fs.writeFileSync(f, text); return f; };
+
+describe('lintTestCases', () => {
+  test('a well-formed file has no problems', () => {
+    assert.deepEqual(lintTestCases(caseBlock('TC-001') + caseBlock('TC-002') + caseBlock('TC-010')), []);
+    assert.deepEqual(lintTestCases('# Title\n\nSome prose that mentions TC-001 and "### TC-002: not a header" inline.\n\n#### TC-003: a sub-heading, not a case\n'), []);
+  });
+  test('a repeated id is a problem, naming the id and both lines', () => {
+    const problems = lintTestCases(caseBlock('TC-001') + caseBlock('TC-002') + caseBlock('TC-001', 'again'));
+    assert.equal(problems.length, 1);
+    assert.match(problems[0], /TC-001/);
+    assert.match(problems[0], /lines 1 and 11/);
+  });
+  test('a header that looks like a case but does not match "### TC-001: Title" is a problem, with its line', () => {
+    for (const header of ['### TC-002 - dash instead of a colon', '### TC-003:no space after the colon', '###TC-004: no space after the hashes', '### tc-005: lower case', '### TC-6 missing colon', '### TC_007: underscore', '### TC-008:', '### TC-009: ']) {
+      const problems = lintTestCases(caseBlock('TC-001') + `${header}\n- **Priority:** Low\n`);
+      assert.equal(problems.length, 1, header);
+      assert.match(problems[0], /line 6/);
+      assert.ok(problems[0].includes(header.trim()), header);
+    }
+  });
+  test('every problem is listed, not just the first', () => {
+    assert.equal(lintTestCases(caseBlock('TC-001') + caseBlock('TC-001') + '### TC-002 - x\n' + '### TC-003:y\n').length, 3);
+  });
+  test('parseTestCases no longer throws on a header it cannot read: lint reports it, parse skips it', () => {
+    assert.doesNotThrow(() => parseTestCases(caseBlock('TC-001') + '### TC-002:no space\n- **Priority:** Low\n'));
+    assert.deepEqual(parseTestCases(caseBlock('TC-001') + '### TC-002:no space\n').map((c) => c.tcId), ['TC-001']);
+  });
+});
+
+describe('post-tests refuses a cases file it cannot read in full (nothing is created)', () => {
+  const BAD = caseBlock('TC-001') + caseBlock('TC-001', 'the same id again') + '### TC-002 - dash instead of a colon\n- **Priority:** Low\n';
+  test('a repeated id and an unreadable header: exit 1, VALIDATION, both named, no request made', async () => {
+    const w = makeWorkspace('github', { casesFile: casesFile(BAD) });
+    const r = await w.post();
+    assert.equal(r.code, 1);
+    assert.equal(r.json.ok, false);
+    assert.equal(r.json.error.code, 'VALIDATION');
+    assert.match(r.json.error.message, /TC-001.*twice|twice.*TC-001/);
+    assert.match(r.json.error.message, /TC-002 - dash instead of a colon/);
+    assert.equal(w.mock.calls.length, 0, 'no request was made');
+    assert.equal(w.mock.createdItems().length, 0);
+  });
+  test('--dry-run refuses it too (it would otherwise show a plan that is not what is in the file)', async () => {
+    const w = makeWorkspace('github', { casesFile: casesFile(BAD) });
+    const r = await w.post(['--dry-run']);
+    assert.equal(r.code, 1);
+    assert.equal(r.json.error.code, 'VALIDATION');
+  });
+  test('--only does not hide it: the file as a whole is wrong', async () => {
+    const w = makeWorkspace('github', { casesFile: casesFile(BAD) });
+    const r = await w.post(['--only', 'TC-001']);
+    assert.equal(r.code, 1);
+    assert.equal(w.mock.calls.length, 0);
+  });
+  test('a file that reads cleanly is posted exactly as before', async () => {
+    const w = makeWorkspace('github', { casesFile: casesFile(caseBlock('TC-001') + caseBlock('TC-002')) });
+    const r = await w.post();
+    assert.equal(r.code, 0);
+    assert.deepEqual([r.json.total, r.json.created], [2, 2]);
+  });
+});
+
+describe('a cases file written with Windows line endings', () => {
+  const crlf = (s) => s.replace(/\n/g, '\r\n');
+  test('is read in full: every case, with its priority and steps (it used to lose the headers: "." does not match a carriage return)', () => {
+    const md = crlf(caseBlock('TC-001', 'First') + caseBlock('TC-002', 'Second'));
+    assert.deepEqual(lintTestCases(md), []);
+    const cases = parseTestCases(md);
+    assert.deepEqual(cases.map((c) => [c.tcId, c.title, c.priority, c.steps.length]), [['TC-001', 'First', 'High', 1], ['TC-002', 'Second', 'High', 1]]);
+    assert.equal(cases[0].steps[0].expected, 'done');
+  });
+  test('and the problems in it are still found, on the right lines', () => {
+    const problems = lintTestCases(crlf(caseBlock('TC-001') + caseBlock('TC-001') + '### TC-002 - x\n'));
+    assert.equal(problems.length, 2);
+    assert.match(problems.join(' '), /lines 1 and 6/);
+    assert.match(problems.join(' '), /line 11/);
+  });
+  test('post-tests posts it', async () => {
+    const w = makeWorkspace('github', { casesFile: casesFile(crlf(caseBlock('TC-001') + caseBlock('TC-002'))) });
+    const r = await w.post();
+    assert.equal(r.code, 0);
+    assert.deepEqual([r.json.total, r.json.created], [2, 2]);
+  });
+});

@@ -56,7 +56,13 @@ function describeTarget(type, settings) {
   const pick = {
     github: ['repo'], clickup: ['listId'], azure: ['organization', 'project'], gitlab: ['host', 'projectId'], bitbucket: ['workspace', 'repo'],
   }[type] || [];
-  return pick.map((k) => `${k}=${settings[k] === undefined ? '(unset)' : settings[k]}`).join(' ');
+  // a host is shown as scheme://host only: a URL in the config may carry user:password@, and this text goes to the terminal and into the result JSON
+  const show = (k, v) => {
+    if (v === undefined) return '(unset)';
+    if (k !== 'host') return v;
+    try { const u = new URL(String(v)); return `${u.protocol}//${u.host}`; } catch { return '(not a valid URL)'; }
+  };
+  return pick.map((k) => `${k}=${show(k, settings[k])}`).join(' ');
 }
 
 async function main({

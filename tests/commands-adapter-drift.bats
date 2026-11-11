@@ -178,3 +178,36 @@ corrupt() { # <file under the copy's .claude/commands> <from> <to>
   [ "$status" -eq 1 ]
   [[ "$output" =~ "switch-project.md:".*"never states an anchored allow-list" ]]
 }
+
+@test "drift: an idempotency key in the prose that the key rules would REJECT is caught (an ISO timestamp has colons; the agent wrote one)" {
+  sed -i.bak 's|results-\$ARGUMENTS-<YYYYMMDDTHHMMSSZ[^>]*>|results-$ARGUMENTS-<UTC timestamp, generated once for this run>|' "$TEST_TMP/.claude/agents/Manual-Automation-test-generator.md"
+  run env DRIFT_ROOT="$TEST_TMP" node "$CHECK"
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "idempotencyKey" ]]
+}
+
+@test "drift: a key template whose filled-in value is too long or has characters a key cannot hold is caught" {
+  sed -i.bak 's|results-\$ARGUMENTS-<YYYYMMDDTHHMMSSZ[^>]*>|results $ARGUMENTS <YYYYMMDDTHHMMSSZ>|' "$TEST_TMP/.claude/agents/Manual-Automation-test-generator.md"
+  run env DRIFT_ROOT="$TEST_TMP" node "$CHECK"
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "idempotencyKey" ]]
+}
+
+@test "drift: a slug length that lets the key pass 80 characters is caught, and so is a slug length that is not stated" {
+  sed -i.bak 's|at most 50 characters|at most 90 characters|' "$TEST_TMP/.claude/commands/file-bug.md"
+  run env DRIFT_ROOT="$TEST_TMP" node "$CHECK"
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "idempotencyKey" ]]
+  cp "$REPO_ROOT/.claude/commands/file-bug.md" "$TEST_TMP/.claude/commands/file-bug.md"
+  sed -i.bak 's|, at most 50 characters||' "$TEST_TMP/.claude/commands/file-bug.md"
+  run env DRIFT_ROOT="$TEST_TMP" node "$CHECK"
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "never says how long a slug may be" ]]
+}
+
+@test "drift: a key template with a placeholder the checker does not know is caught (it cannot prove the key is valid)" {
+  sed -i.bak 's|"bug-<slug>"|"bug-<whatever>"|' "$TEST_TMP/.claude/commands/file-bug.md"
+  run env DRIFT_ROOT="$TEST_TMP" node "$CHECK"
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "holds a placeholder this check cannot fill in" ]]
+}

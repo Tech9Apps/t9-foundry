@@ -334,3 +334,124 @@ test('recipes honour specs, config path and headed — and pass each as its own 
   assert.ok(nd.indexOf('--test-reporter=tap') < nd.indexOf('a.test.js'));
   assert.deepEqual(plan({ framework: 'webdriverio', outDir: 'o', configPath: 'wdio.conf.js', specs: ['a', 'b'] }).args, ['wdio', 'wdio.conf.js', '--spec', 'a', 'b']);
 });
+
+// --- the previous run must never stand in for this one ---------------------------------------------------
+const resultFile = (dir) => path.join(dir, 'qa', 'result.json');
+
+test('a run that produces no report leaves NO result.json: the previous run\'s is removed first (the commands tell a model to read it)', async () => {
+  const dir = tmp();
+  const first = await run(base(dir), { code: 1, report: 'playwright.json' });
+  assert.equal(first.code, 1);
+  assert.ok(fs.existsSync(resultFile(dir)), 'the first run wrote its result');
+  const exitedZeroWroteNothing = await run(base(dir), { code: 0 });
+  assert.equal(exitedZeroWroteNothing.code, 3);
+  assert.equal(exitedZeroWroteNothing.json.error.code, 'NO_REPORT');
+  assert.equal(fs.existsSync(resultFile(dir)), false, 'run 1\'s result.json must not survive as run 2\'s');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('the same for a run that timed out and for one that could not start', async () => {
+  for (const [name, fake, extra] of [
+    ['timed out', { hang: true }, ['--timeout-ms', '30']],
+    ['could not start', { spawnError: { code: 'ENOENT' } }, []],
+  ]) {
+    const dir = tmp();
+    await run(base(dir), { code: 1, report: 'playwright.json' });
+    assert.ok(fs.existsSync(resultFile(dir)));
+    const r = await run(base(dir, extra), fake);
+    assert.equal(r.code, 3, name);
+    assert.equal(fs.existsSync(resultFile(dir)), false, `${name}: the old result.json is gone`);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('--dry-run only previews: it does not delete a previous result', async () => {
+  const dir = tmp();
+  await run(base(dir), { code: 1, report: 'playwright.json' });
+  const r = await run(base(dir, ['--dry-run']));
+  assert.equal(r.code, 0);
+  assert.ok(fs.existsSync(resultFile(dir)));
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// --- a value from qa-config.json is a runner argument too ------------------------------------------------
+test('testDir and configPath from qa-config.json that start with "-" are refused, like the same values from the command line', async () => {
+  for (const [framework, key, value] of [['pytest', 'testDir', '-pevil_plugin'], ['playwright', 'configPath', '--require=./x.js'], ['webdriverio', 'configPath', '-r=./x.js']]) {
+    const dir = tmp();
+    const cfg = path.join(dir, 'qa-config.json');
+    fs.writeFileSync(cfg, JSON.stringify({ testFramework: { type: framework, [key]: value } }));
+    const r = await run(['--out', path.join(dir, 'qa'), '--config', cfg]);
+    assert.equal(r.code, 2, `${framework} ${key}`);
+    assert.match(r.err, /starts with "-"/);
+    assert.match(r.err, /testFramework\.(testDir|configPath)/);
+    assert.equal(r.calls.length, 0, 'nothing was started');
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  // an ordinary relative value is fine, and so is one written ./-name
+  const dir = tmp();
+  const cfg = path.join(dir, 'qa-config.json');
+  fs.writeFileSync(cfg, JSON.stringify({ testFramework: { type: 'pytest', testDir: './-odd-name' } }));
+  const ok = await run(['--out', path.join(dir, 'qa'), '--config', cfg, '--dry-run']);
+  assert.equal(ok.code, 0);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// --- a timeout (or Ctrl-C, or SIGTERM) stops the whole run, not just the process this tool started ---------
+// `npx playwright test` is a launcher: killing only it leaves the workers and browsers running, writing into a folder the next run clears.
+function realProject(dir, marker, startedMarker) {
+  const proj = path.join(dir, 'proj');
+  fs.mkdirSync(proj, { recursive: true });
+  fs.writeFileSync(path.join(proj, 'hang.test.js'), `
+const { spawn } = require('child_process');
+const fs = require('fs');
+// a worker that outlives its parent unless the whole group is killed, and writes ${JSON.stringify(path.basename(marker))} if it gets to finish
+spawn(process.execPath, ['-e', ${JSON.stringify(`setTimeout(() => require('fs').writeFileSync(${JSON.stringify(marker)}, 'survived'), 1500)`)}], { stdio: 'ignore' }).unref();
+fs.writeFileSync(${JSON.stringify(startedMarker)}, 'started');
+require('node:test')('hangs', () => new Promise(() => setTimeout(() => {}, 60000)));
+setTimeout(() => {}, 60000);
+`);
+  return proj;
+}
+const cleanEnv = () => { const e = { ...process.env }; delete e.NODE_TEST_CONTEXT; return e; };
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+async function until(fn, ms) { const end = Date.now() + ms; while (Date.now() < end) { if (fn()) return true; await sleep(50); } return false; }
+
+test('REAL run: a timeout kills the runner\'s own workers too (a background process it started does not survive)', async () => {
+  const dir = tmp();
+  const marker = path.join(dir, 'survivor.txt');
+  const proj = realProject(dir, marker, path.join(dir, 'started.txt'));
+  let out = '';
+  const code = await main({ argv: ['--framework', 'node', '--cwd', proj, '--spec', 'hang.test.js', '--out', path.join(dir, 'qa'), '--timeout-ms', '900', '--quiet'], env: cleanEnv(), stdout: { write: (s) => { out += s; } }, stderr: { write: () => {} } });
+  assert.equal(code, 3);
+  assert.match(JSON.parse(out).error.message, /killed after 900ms/);
+  await sleep(2200); // long enough for the worker to have finished, had it survived
+  assert.equal(fs.existsSync(marker), false, 'the worker was still running after the timeout');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('REAL run: SIGTERM to run.js (a killed agent, a CI cancel) stops the runner and its workers before run.js exits', async () => {
+  const dir = tmp();
+  const marker = path.join(dir, 'survivor.txt');
+  const started = path.join(dir, 'started.txt');
+  const proj = realProject(dir, marker, started);
+  const script = path.join(__dirname, '..', '..', 'scripts', 'results', 'run.js');
+  const child = require('child_process').spawn(process.execPath, [script, '--framework', 'node', '--cwd', proj, '--spec', 'hang.test.js', '--out', path.join(dir, 'qa'), '--quiet', '--timeout-ms', '60000'], { env: cleanEnv(), stdio: ['ignore', 'pipe', 'pipe'] });
+  const exited = new Promise((resolve) => child.on('exit', (code, signal) => resolve({ code, signal })));
+  assert.ok(await until(() => fs.existsSync(started), 15000), 'the runner never started');
+  child.kill('SIGTERM');
+  const { code, signal } = await Promise.race([exited, sleep(10000).then(() => ({ code: 'still running' }))]);
+  assert.ok(code === 143 || signal === 'SIGTERM', `run.js should exit as terminated, got ${code}/${signal}`);
+  await sleep(2200);
+  assert.equal(fs.existsSync(marker), false, 'the worker was still running after run.js was terminated');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('the signal handlers a run installs are removed when it ends (a caller that runs it twice must not pile them up)', async () => {
+  const before = ['SIGINT', 'SIGTERM', 'SIGHUP'].map((s) => process.listenerCount(s));
+  const dir = tmp();
+  await run(base(dir), { code: 1, report: 'playwright.json' });
+  await run(base(dir, ['--timeout-ms', '20']), { hang: true });
+  await run(base(dir), { spawnError: { code: 'ENOENT' } });
+  assert.deepEqual(['SIGINT', 'SIGTERM', 'SIGHUP'].map((s) => process.listenerCount(s)), before);
+  fs.rmSync(dir, { recursive: true, force: true });
+});

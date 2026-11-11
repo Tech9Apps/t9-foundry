@@ -47,8 +47,11 @@ function fromStatus(status, bodyText, what) {
     return new TrackerError(/rate limit/i.test(bodyText || '') ? 'RATE_LIMITED' : 'FORBIDDEN', message, { status });
   }
   if (status === 404) return new TrackerError('NOT_FOUND', message, { status });
-  if (status === 429) return new TrackerError('RATE_LIMITED', message, { status });
-  if (status === 400 || status === 409 || status === 422) return new TrackerError('VALIDATION', message, { status });
+  if (status === 429 || status === 425) return new TrackerError('RATE_LIMITED', message, { status });
+  if (status === 408) return new TrackerError('TIMEOUT', message, { status });
+  // Every other 4xx (405, 410 "issues are disabled", 413 body too large, 451, ...) is a refusal that repeating the request cannot change: it is not
+  // retriable. Only a 5xx (or anything outside 4xx) is the tracker's own trouble, which a retry may get past.
+  if (status >= 400 && status < 500) return new TrackerError('VALIDATION', message, { status });
   return new TrackerError('UPSTREAM_ERROR', message, { status });
 }
 

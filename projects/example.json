@@ -70,10 +70,10 @@
   },
   "productionProtection": {
     "prodUrlPatterns": [
-      "myapp\\.com$",
-      "app\\.myapp\\.com",
-      "production\\.myapp\\.com",
-      "prod-api\\.myapp\\.com"
+      "://myapp\\.com(/|:|$)",
+      "://app\\.myapp\\.com(/|:|$)",
+      "://production\\.myapp\\.com(/|:|$)",
+      "://prod-api\\.myapp\\.com(/|:|$)"
     ],
     "prodEnvVarValues": ["production", "prod"],
     "blockOnSuspiciousUrls": true

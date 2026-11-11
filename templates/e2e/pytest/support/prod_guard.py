@@ -154,6 +154,12 @@ def _compile(pattern: str, flags: int = 0):
         return None
 
 
+def _starts_at_host(rx, form: str, end: int) -> bool:
+    """Does `rx` first match INSIDE "scheme://host[:port]", the first `end` characters of `form`? (A match that begins at the first character of the path is not inside it.)"""
+    m = rx.search(form)
+    return m is not None and m.start() < end
+
+
 def decide_url(url: str, cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Optional[str]]:
     """decide_url(url, {mode, prodUrlPatterns, allowedUrlPatterns, blockOnSuspiciousUrls, testEnvironmentBaseUrl})
     -> {decision: 'allow' | 'warn' | 'block', reason, detail}"""
@@ -182,10 +188,14 @@ def decide_url(url: str, cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Opti
     if any(_on_label_boundary(u.host, d) for d in _BUILTIN_EXEMPT_HOSTS):
         return {"decision": "allow", "reason": "EXEMPT_HOST", "detail": None}
     shown = "[" + u.host + "]" if u.v6 else u.host
-    stripped = u.scheme + "://" + shown + (":" + u.port if u.port else "") + u.path  # no userinfo, query or fragment
+    authority = u.scheme + "://" + shown + (":" + u.port if u.port else "")
+    stripped = authority + u.path  # no userinfo, query or fragment
+    plain_authority = u.scheme + "://" + u.host
+    # An allow pattern has to START matching within "scheme://host[:port]". It may go on into the path ("://partner\\.io/guide" allows what is under
+    # /guide), but text that merely appears later, inside the path of some other host ("https://evil.com/go/https://partner.io/guide"), allows nothing.
     for pattern in cfg.get("allowedUrlPatterns") or []:
         rx = _compile(pattern) if pattern else None  # an invalid allow-pattern never exempts anything
-        if rx and (rx.search(stripped) or rx.search(u.scheme + "://" + u.host + u.path)):
+        if rx and (_starts_at_host(rx, stripped, len(authority)) or _starts_at_host(rx, plain_authority + u.path, len(plain_authority))):
             return {"decision": "allow", "reason": "ALLOWED_PATTERN", "detail": pattern}
     test_env = _parse_url(cfg["testEnvironmentBaseUrl"]) if cfg.get("testEnvironmentBaseUrl") else None
     if test_env and test_env.verifiable and test_env.host == u.host:

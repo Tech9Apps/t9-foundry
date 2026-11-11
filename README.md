@@ -202,7 +202,7 @@ Most of these are `.claude/skills/`. Two (`/file-bug`, `/generate-regression-pac
 This harness uses **5 independent layers** to prevent tests from running against production:
 
 1. **CLAUDE.md behavioral rule** — Claude refuses to target production
-2. **Session startup hook** — validates your staging URL is not production on every session start
+2. **Session startup notice** — tells you at every session start if your staging URL is production or the config is unsafe (the Bash hook then refuses commands until it is fixed)
 3. **Bash hook** — scans every shell command for production env vars and URL patterns
 4. **File write hook** — scans every file being written for hardcoded production URLs
 5. **Framework runtime guard** — e2e framework templates abort at startup if `BASE_URL` matches a production pattern

@@ -120,6 +120,19 @@ function candidates(url, u) {
 }
 
 const compile = (p, flags) => { try { return new RegExp(p, flags); } catch { return null; } };
+// Does `re` first match INSIDE "scheme://host[:port]", the first `end` characters of `form`? (A match that begins at the first character of the path is not inside it.)
+const startsAtHost = (re, form, end) => { const m = re.exec(form); return !!m && m.index < end; };
+
+// A configured production pattern matching any normalized form of the URL (and any extra spelling given), or null.
+function prodPatternHit(url, cfg, extraForms = []) {
+  const u = parseUrl(url);
+  const forms = [...(u && u.verifiable ? candidates(url, u) : [String(url)]), ...extraForms];
+  for (const pattern of cfg.prodUrlPatterns || []) {
+    const re = pattern ? compile(pattern, 'i') : null; // case-insensitive: hosts are
+    if (re && forms.some((f) => re.test(f))) return { decision: 'block', reason: 'PROD_PATTERN', detail: pattern };
+  }
+  return null;
+}
 
 // ── the decision ───────────────────────────────────────────────────────────────────────────────
 function decide(url, cfg = {}) {
@@ -128,11 +141,8 @@ function decide(url, cfg = {}) {
   const u = parseUrl(url);
 
   // 1. configured production patterns win over everything, in both modes, even for a URL we could not otherwise parse
-  const forms = u && u.verifiable ? candidates(url, u) : [String(url)];
-  for (const pattern of cfg.prodUrlPatterns || []) {
-    const re = pattern ? compile(pattern, 'i') : null; // case-insensitive: hosts are
-    if (re && forms.some((f) => re.test(f))) return { decision: 'block', reason: 'PROD_PATTERN', detail: pattern };
-  }
+  const hit = prodPatternHit(url, cfg);
+  if (hit) return hit;
 
   // 2. the heuristic can be switched off, explicitly: enforce mode never overrides that opt-out (patterns above still apply)
   if (cfg.blockOnSuspiciousUrls === false) return { decision: 'allow', reason: 'HEURISTIC_DISABLED' };
@@ -143,10 +153,14 @@ function decide(url, cfg = {}) {
 
   // 4. known-good
   if (BUILTIN_EXEMPT_HOSTS.some((d) => onLabelBoundary(u.host, d))) return { decision: 'allow', reason: 'EXEMPT_HOST' };
-  const stripped = `${u.scheme}://${u.v6 ? `[${u.host}]` : u.host}${u.port ? `:${u.port}` : ''}${u.path}`; // no userinfo, query or fragment
+  const authority = `${u.scheme}://${u.v6 ? `[${u.host}]` : u.host}${u.port ? `:${u.port}` : ''}`;
+  const stripped = `${authority}${u.path}`; // no userinfo, query or fragment
+  const plainAuthority = `${u.scheme}://${u.host}`;
+  // An allow pattern has to START matching within "scheme://host[:port]". It may go on into the path ("://partner\\.io/guide" allows what is under /guide), but
+  // text that merely appears later, inside the path of some other host ("https://evil.com/go/https://partner.io/guide"), allows nothing.
   for (const pattern of cfg.allowedUrlPatterns || []) {
     const re = pattern ? compile(pattern) : null; // an invalid allow-pattern never exempts anything
-    if (re && (re.test(stripped) || re.test(`${u.scheme}://${u.host}${u.path}`))) return { decision: 'allow', reason: 'ALLOWED_PATTERN', detail: pattern };
+    if (re && (startsAtHost(re, stripped, authority.length) || startsAtHost(re, `${plainAuthority}${u.path}`, plainAuthority.length))) return { decision: 'allow', reason: 'ALLOWED_PATTERN', detail: pattern };
   }
   const testEnv = cfg.testEnvironmentBaseUrl ? parseUrl(cfg.testEnvironmentBaseUrl) : null;
   if (testEnv && testEnv.verifiable && testEnv.host === u.host) return { decision: 'allow', reason: 'TEST_ENV_HOST' };
@@ -159,35 +173,163 @@ function decide(url, cfg = {}) {
 }
 
 // ── finding URLs in text ───────────────────────────────────────────────────────────────────────
-const extractUrls = (text) => [...new Set((String(text).match(/https?:\/\/[^\s'"`<>)]+/gi) || []))];
+// One character of a URL as it appears in a command or a file. A URL ends at whitespace, a quote, and shell punctuation ( ; | & , { } ), so
+// "curl https://host;echo" and "https://host/x|jq" are the URL "https://host", not an unverifiable host "host;echo". A backslash belongs to the URL
+// (decide() calls a backslash in the host unverifiable) unless it only escapes a quote: bash -c "curl \"https://host\"".
+const URLCHAR = '(?:[^\\s\'"`<>);|&,{}\\\\]|\\\\(?![\'"]))';
+const extractUrls = (text) => [...new Set((String(text).match(new RegExp(`https?://${URLCHAR}+`, 'gi')) || []))];
+
+// Everything in the text that curl, a browser or a library would read as a URL, however it is spelled. Each is judged one of two ways:
+//   'full'     decide(): production patterns, then the "is this recognizably a test environment?" rules. For anything that is plainly an
+//              http(s) URL: "https://host", "https:/host", "http:///host", "https:host", "//host", and a spelling with a backslash (which
+//              decide() refuses to guess at: unverifiable).
+//   'patterns' production patterns only. For a scheme that is not http(s) ("ftp://host", "sftp://user@host", "postgresql://host") and for
+//              a bare "host/path" or "user@host": a bare token cannot be told from a file name ("out.json", "app.config.js"), so judging it
+//              as an unrecognized host would block ordinary commands. A production host that is configured is still caught.
+const TAIL = URLCHAR;
+const HOSTISH = /^(?:[^/?#@]*@)?(?:\[|localhost\b|[^/?#]*\.|[^/?#]*:\d)/i; // has a dot, a port, brackets, or is localhost: not a bare word
+const BARE_HOST = new RegExp(`^((?:[A-Za-z0-9._-]+@)?(?:[A-Za-z0-9-]+\\.)+[A-Za-z]{2,}\\.?(?::\\d{1,5})?(?:[/?#]${TAIL}*)?)$`);
+function findUrls(text) {
+  const s = String(text);
+  const found = new Map(); // raw spelling -> { raw, url, mode }
+  const add = (raw, url, mode) => { const had = found.get(raw); if (!had || (had.mode === 'patterns' && mode === 'full')) found.set(raw, { raw, url, mode }); };
+
+  // ("http:///host" starts like the normal spelling but has three slashes: it is read below, with the other odd ones)
+  for (const raw of extractUrls(s)) if (!/^https?:\/\/\//i.test(raw)) add(raw, raw, 'full');
+
+  // http(s) with the slashes wrong: "https:/host", "https:///host", "https:host", "https:\\host"
+  for (const m of s.matchAll(new RegExp(`\\b(https?):([/\\\\]*)(${TAIL}*)`, 'gi'))) {
+    const [raw, scheme, slashes, rest] = m;
+    if (!rest) continue;
+    if (slashes.includes('\\')) { add(raw, raw, 'full'); continue; } // decide() will call it unverifiable
+    if (slashes === '' && !(/^[A-Za-z0-9[%_-]/.test(rest) && HOSTISH.test(rest))) continue; // "https: for details" is prose
+    add(raw, `${scheme.toLowerCase()}://${rest}`, 'full');
+  }
+
+  // The cut above is right for punctuation AFTER the host, and wrong when the host part itself holds something that decides WHICH host it is:
+  //   an "@"      curl reads userinfo up to the LAST "@", so "https://staging.x.com,@prod.com/" is host prod.com
+  //   { ... }     bash expands a brace group: "https://{prod,x}.com/" is two URLs
+  //   a backtick  command substitution builds the host
+  // For those the whole token is judged as well (the host part is everything up to the first / ? #). A brace group or a backtick has no verifiable host.
+  for (const m of s.matchAll(/\b(https?):([/\\]*)([^\s'"<>)]+)/gi)) {
+    const [raw, scheme, slashes, rest] = m;
+    // (backticks and separators at the very END of the token are not in the host: a backtick there closes a command substitution around the URL,
+    // as in `curl http://localhost:3000`; or X=`curl http://localhost:3000`; echo $X. Braces are not stripped: "{a,b}" is a real brace group.)
+    if (!/@|\{[^}]*\}|`/.test(rest.split(/[/?#]/)[0].replace(/[`;|&,]+$/, ''))) continue;
+    add(raw, `${scheme.toLowerCase()}://${rest}`, 'full');
+  }
+  // a URL the shell joins from quoted pieces: "https://staging.x.com"@prod.com/ is https://staging.x.com@prod.com/, host prod.com. (The host part is
+  // bounded to the longest a host can be: unbounded, this rescanned the rest of the input from every "http:" in it, which is quadratic.)
+  for (const m of s.matchAll(new RegExp(`\\b(https?):[/\\\\]*([^\\s'"\`<>)/?#]{0,253})['"]+@(${URLCHAR}*)`, 'gi'))) {
+    add(m[0], `${m[1].toLowerCase()}://${m[2]}@${m[3]}`, 'full');
+  }
+
+  // any other scheme://host: production patterns only
+  for (const m of s.matchAll(new RegExp(`\\b([a-z][a-z0-9+.-]{0,31})://(${TAIL}+)`, 'gi'))) {
+    if (/^https?$/i.test(m[1])) continue;
+    add(m[0], `https://${m[2]}`, 'patterns');
+  }
+
+  // protocol-relative "//host/path" (as in "--url=//host", fetch("//host/api")): the host must look like one, so "ls //tmp/x" is left alone
+  for (const m of s.matchAll(new RegExp(`(^|[\\s'"\`=(,;|&<>])(//[A-Za-z0-9[%_-]${TAIL}*)`, 'g'))) {
+    if (HOSTISH.test(m[2].slice(2))) add(m[2], `https:${m[2]}`, 'full');
+  }
+
+  // a bare "host/path" or "user@host": production patterns only (see above). Read token by token, each token matched against an ANCHORED pattern:
+  // searching for the pattern at every position of one very long run of "a-a-a-" took quadratic time (100 KB took seconds, longer than the hook is given).
+  for (const token of s.split(/[\s'"`=(),;|&<>{}]+/)) {
+    const m = BARE_HOST.exec(token);
+    if (m) add(m[1], `https://${m[1]}`, 'patterns');
+  }
+  return [...found.values()];
+}
+
+// A backslash can hide the host from decide() (it refuses to guess), but not from curl or a browser, and they read it differently: a browser takes
+// "\\" for "/" ("https://host\\path" is host "host"), curl takes userinfo to run to the LAST "@" ("https://good.com\\@bad.com/" is host "bad.com").
+// So a production pattern is tried against both readings. This is done here, for the hooks, not in decide(): that is what the runtime guards port.
+function backslashReadings(url) {
+  const m = /^(https?):[/\\]*([\s\S]*)$/i.exec(String(url));
+  if (!m || !String(url).includes('\\')) return [];
+  const scheme = m[1].toLowerCase();
+  const rest = m[2];
+  const readings = [`${scheme}://${rest.replace(/\\/g, '/')}`];
+  const end = rest.search(/[/?#]/);
+  const authority = end < 0 ? rest : rest.slice(0, end);
+  const at = authority.lastIndexOf('@');
+  if (at >= 0) readings.push(`${scheme}://${authority.slice(at + 1)}${end < 0 ? '' : rest.slice(end)}`);
+  return readings;
+}
 
 function scan(text, cfg) {
-  return extractUrls(text).map((url) => ({ url, ...decide(url, cfg) })).filter((f) => f.decision !== 'allow');
+  const findings = [];
+  for (const f of findUrls(text)) {
+    let d = f.mode === 'full' ? decide(f.url, cfg) : (prodPatternHit(f.url, cfg, [f.raw]) || { decision: 'allow' });
+    if (f.mode === 'full' && d.reason !== 'PROD_PATTERN') {
+      for (const reading of backslashReadings(f.url)) { const hit = prodPatternHit(reading, cfg); if (hit) { d = hit; break; } }
+    }
+    if (d.decision !== 'allow') findings.push({ url: f.raw, ...d });
+  }
+  return findings;
 }
 
 // ── config, and the CLI the shell hooks call ───────────────────────────────────────────────────
 function loadConfig(file) {
-  if (!file || !fs.existsSync(file)) return { cfg: {}, error: null };
+  if (!file || !fs.existsSync(file)) return { cfg: {}, error: null, found: false };
   let doc;
-  try { doc = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { return { cfg: {}, error: `${file} is not valid JSON: ${e.message}` }; }
+  try { doc = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { return { cfg: {}, error: `${file} is not valid JSON: ${e.message}`, found: true }; }
+  return { cfg: configFromDoc(doc), error: null, found: true };
+}
+
+// The guard's view of a parsed qa-config.json.
+function configFromDoc(doc) {
   const pp = (doc && doc.productionProtection) || {};
   return {
-    cfg: {
-      prodUrlPatterns: Array.isArray(pp.prodUrlPatterns) ? pp.prodUrlPatterns : [],
-      allowedUrlPatterns: Array.isArray(pp.allowedUrlPatterns) ? pp.allowedUrlPatterns : [],
-      blockOnSuspiciousUrls: pp.blockOnSuspiciousUrls,
-      testEnvironmentBaseUrl: doc && doc.environments && doc.environments.testEnvironmentBaseUrl,
-    },
-    error: null,
+    prodUrlPatterns: Array.isArray(pp.prodUrlPatterns) ? pp.prodUrlPatterns : [],
+    allowedUrlPatterns: Array.isArray(pp.allowedUrlPatterns) ? pp.allowedUrlPatterns : [],
+    blockOnSuspiciousUrls: pp.blockOnSuspiciousUrls,
+    testEnvironmentBaseUrl: doc && doc.environments && doc.environments.testEnvironmentBaseUrl,
   };
+}
+
+// For a qa-config.json that is about to be WRITTEN (env-detector.sh): is the text valid JSON, and would the config it makes be safe? It is judged as
+// enforce if the current mode is enforce or the new text turns enforce on itself. Returns { valid, error?, mode, configProblems }.
+function judgeConfigText(text, currentMode) {
+  let doc;
+  try { doc = JSON.parse(text); } catch (e) { return { valid: false, error: e.message, mode: currentMode, configProblems: [] }; }
+  const mode = currentMode === 'enforce' || (doc && doc.productionProtection && doc.productionProtection.mode === 'enforce') ? 'enforce' : 'warn';
+  return { valid: true, mode, configProblems: configProblems(configFromDoc(doc), mode, { found: true }) };
+}
+
+// What is wrong with the configuration itself, as [{ code, message }]. A run whose configuration is unsafe must not go on: the per-command hook
+// (prod-guard.sh) refuses every command while this is non-empty, and the session-start hook tells the user.
+//   NO_CONFIG, NO_PROD_PATTERNS, NO_TEST_ENV_URL   enforce mode only: with nothing configured, nothing proves a target is safe
+//   TEST_ENV_IS_PROD                               any mode: the configured test environment IS a production URL, in any spelling
+function configProblems(cfg, mode, { found = true } = {}) {
+  const problems = [];
+  if (!found) {
+    if (mode === 'enforce') problems.push({ code: 'NO_CONFIG', message: 'qa-config.json was not found, and guard mode is enforce (QA_AUTONOMOUS=1 or productionProtection.mode): an unattended run needs a configured workspace' });
+    return problems;
+  }
+  const patterns = (cfg.prodUrlPatterns || []).filter(Boolean);
+  if (mode === 'enforce' && !patterns.length) problems.push({ code: 'NO_PROD_PATTERNS', message: 'productionProtection.prodUrlPatterns is empty, and guard mode is enforce: an unattended run must have production URL patterns configured' });
+  if (mode === 'enforce' && !cfg.testEnvironmentBaseUrl) problems.push({ code: 'NO_TEST_ENV_URL', message: 'environments.testEnvironmentBaseUrl is not set, and guard mode is enforce: set your staging URL' });
+  if (cfg.testEnvironmentBaseUrl) {
+    const hit = prodPatternHit(cfg.testEnvironmentBaseUrl, cfg);
+    if (hit) problems.push({ code: 'TEST_ENV_IS_PROD', message: `environments.testEnvironmentBaseUrl (${cfg.testEnvironmentBaseUrl}) matches the production pattern ${hit.detail}: qa-config.json points the tests at PRODUCTION`, detail: hit.detail });
+  }
+  return problems;
 }
 
 function main(argv = process.argv.slice(2)) {
   const opt = (name) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : undefined; };
   const mode = opt('--mode') === 'enforce' ? 'enforce' : 'warn';
-  const { cfg, error } = loadConfig(opt('--config'));
+  if (argv.includes('--judge-config')) {
+    process.stdout.write(`${JSON.stringify(judgeConfigText(fs.readFileSync(0, 'utf8'), mode))}\n`);
+    return 0;
+  }
+  const { cfg, error, found } = loadConfig(opt('--config'));
   const text = fs.readFileSync(0, 'utf8');
-  process.stdout.write(`${JSON.stringify({ configError: error, mode, findings: scan(text, { ...cfg, mode }) })}\n`);
+  process.stdout.write(`${JSON.stringify({ configError: error, mode, configProblems: error ? [] : configProblems(cfg, mode, { found }), findings: scan(text, { ...cfg, mode }) })}\n`);
   return 0;
 }
 
@@ -195,4 +337,4 @@ if (require.main === module) {
   try { process.exitCode = main(); } catch (e) { process.stderr.write(`url-guard: ${e.message}\n`); process.exitCode = 1; }
 }
 
-module.exports = { decide, scan, extractUrls, parseUrl, toIPv4, loadConfig, NONPROD_TOKENS, PROD_TOKENS };
+module.exports = { decide, scan, extractUrls, findUrls, configProblems, judgeConfigText, prodPatternHit, parseUrl, toIPv4, loadConfig, NONPROD_TOKENS, PROD_TOKENS };

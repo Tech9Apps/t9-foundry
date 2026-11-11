@@ -64,7 +64,10 @@ describe('every adapter refuses an unsafe base URL BEFORE making any request', (
     throwsCode(() => make('clickup', { baseUrl: null, settings: { apiBaseUrl: 'http://attacker.example/api/v2' } }), 'CONFIG');
     throwsCode(() => make('gitlab', { baseUrl: null, settings: { host: 'http://git.attacker.example' } }), 'CONFIG');
     throwsCode(() => make('azure', { baseUrl: null, settings: { host: 'http://devops.attacker.example' } }), 'CONFIG');
-    assert.doesNotThrow(() => make('gitlab', { baseUrl: null, settings: { host: 'https://git.corp.example' } }));
+    // a self-hosted server over https is no longer enough on its own: the person has to allow the host (see "every adapter sends its token only to a host it may")
+    throwsCode(() => make('gitlab', { baseUrl: null, settings: { host: 'https://git.corp.example' } }), 'CONFIG');
+    const allowed = createAdapter('gitlab', { settings: { projectId: '1', host: 'https://git.corp.example' }, env: { GITLAB_TOKEN: 'x', QA_TRACKER_ALLOW_HOSTS: 'git.corp.example' }, fetch: spyFetch() });
+    assert.ok(allowed);
   });
 
   test('the CLI: --base-url and $QA_TRACKER_BASE_URL are refused too, and the token is never sent', async () => {
@@ -172,5 +175,113 @@ describe('error messages never contain the credential, even when the response bo
   test('very short header values are not redacted (they would mangle ordinary words), real tokens are', async () => {
     const { adapter } = make('clickup', { token: 'abc', fetch: async () => new Response('abc is a common prefix', { status: 500 }) });
     await assert.rejects(run(adapter, 'fetch', { id: '1' }), (e) => /abc is a common prefix/.test(e.message));
+  });
+});
+
+// ── Where a token may be sent ───────────────────────────────────────────────────────────────────────────
+// checkBaseUrl above only demanded https. But the base URL (and the host, and the variable the token is read from) come from qa-config.json, including
+// the committed profiles /switch-project copies in, and from --base-url / $QA_TRACKER_BASE_URL, which a prompt-injected model can set. So "https" alone sent
+// `Authorization: Bearer <any env var the config names>` to any https host the config named. Now an adapter sends its token only to its own tracker's host,
+// to a host the PERSON allowed in their own shell ($QA_TRACKER_ALLOW_HOSTS), or to a reserved test host / loopback (the mocks).
+const DEFAULT_HOST = { github: 'api.github.com', gitlab: 'gitlab.com', azure: 'dev.azure.com', clickup: 'api.clickup.com', bitbucket: 'api.bitbucket.org' };
+const TOKEN_ENV = { github: 'GITHUB_TOKEN', gitlab: 'GITLAB_TOKEN', azure: 'AZURE_DEVOPS_PAT', clickup: 'CLICKUP_TOKEN', bitbucket: 'BITBUCKET_TOKEN' };
+// the setting that names a host, per adapter (Bitbucket has none: only the --base-url override)
+const HOST_SETTING = { github: (u) => ({ apiBaseUrl: u }), gitlab: (u) => ({ host: u }), azure: (u) => ({ host: u }), clickup: (u) => ({ apiBaseUrl: u }), bitbucket: null };
+const SETTINGS = { github: { repo: 'o/r' }, gitlab: { projectId: '1' }, azure: { organization: 'o', project: 'p' }, clickup: { listId: '1' }, bitbucket: { workspace: 'w', repo: 'r', username: 'u' } };
+const direct = (type, { settings = {}, env = {}, baseUrl, fetch } = {}) => createAdapter(type, { settings: { ...SETTINGS[type], ...settings }, env: { [TOKEN_ENV[type]]: 'sekret-token-value', ...env }, baseUrl, fetch: fetch || spyFetch(), retryDelayMs: 0 });
+
+describe('checkBaseUrl with an allowlist of hosts', () => {
+  const opts = { hosts: ['api.github.com'], env: {} };
+  test('the adapter\'s own host is accepted: any case, a trailing dot, a port, a path', () => {
+    for (const ok of ['https://api.github.com', 'https://API.GITHUB.COM', 'https://api.github.com.', 'https://api.github.com:8443/x', 'https://api.github.com/api/v3']) {
+      assert.doesNotThrow(() => checkBaseUrl(ok, 'x', opts), ok);
+    }
+  });
+  test('any other host is refused, naming the host and how a person allows it (and never echoing credentials)', () => {
+    for (const bad of ['https://evil.example/x', 'https://api.github.com.evil.example', 'https://evil.example/api.github.com', 'https://notapi.github.com', 'https://api.github.com.evil.test.example.org', 'https://github.com']) {
+      assert.throws(() => checkBaseUrl(bad, 'the GitHub API base URL', opts), (e) => e.code === 'CONFIG' && e.message.includes(new URL(bad).hostname) && /QA_TRACKER_ALLOW_HOSTS/.test(e.message), bad);
+    }
+  });
+  test('loopback and the reserved .test domain (what the mocks use) are accepted: nothing public can be reached', () => {
+    for (const ok of ['http://localhost:3000', 'https://api.github.test', 'https://mock.test/api', 'http://127.0.0.1:9', 'https://x.localhost']) assert.doesNotThrow(() => checkBaseUrl(ok, 'x', opts), ok);
+  });
+  test('.example, .invalid and .local are NOT blanket-allowed (an internal DNS could resolve them)', () => {
+    for (const bad of ['https://evil.example', 'https://x.invalid', 'https://x.local']) assert.throws(() => checkBaseUrl(bad, 'x', opts), (e) => e.code === 'CONFIG', bad);
+  });
+  test('a host in $QA_TRACKER_ALLOW_HOSTS is accepted: exact, or *.suffix with at least two labels; junk entries are ignored', () => {
+    const env = { QA_TRACKER_ALLOW_HOSTS: ' ghe.corp.example.com , *.git.corp.example.com, *.com, *, bad host!, ,https://x.example.org' };
+    assert.doesNotThrow(() => checkBaseUrl('https://ghe.corp.example.com/api/v3', 'x', { hosts: [], env }));
+    assert.doesNotThrow(() => checkBaseUrl('https://eu.git.corp.example.com', 'x', { hosts: [], env }));
+    for (const bad of ['https://git.corp.example.com', 'https://evil.com', 'https://x.org', 'https://x.example.org', 'https://ghe.corp.example.com.evil.net', 'https://notghe.corp.example.com']) {
+      assert.throws(() => checkBaseUrl(bad, 'x', { hosts: [], env }), (e) => e.code === 'CONFIG', bad);
+    }
+  });
+  test('without the option the old behaviour is unchanged (https, no userinfo): the other checks still apply', () => {
+    assert.doesNotThrow(() => checkBaseUrl('https://ghe.example.com/api/v3', 'x'));
+    assert.throws(() => checkBaseUrl('http://evil.example', 'x', opts), (e) => e.code === 'CONFIG');
+    assert.throws(() => checkBaseUrl('https://user:pw@api.github.com', 'x', opts), (e) => e.code === 'CONFIG' && !/pw/.test(e.message));
+  });
+});
+
+describe('every adapter sends its token only to a host it may', () => {
+  for (const type of TYPES) {
+    describe(type, () => {
+      test('its own default host is accepted with no base URL given', () => {
+        assert.doesNotThrow(() => direct(type));
+      });
+      test('a --base-url / QA_TRACKER_BASE_URL override to any other https host is refused before a request is made', () => {
+        const fetch = spyFetch();
+        throwsCode(() => direct(type, { baseUrl: 'https://evil.example/x', fetch }), 'CONFIG');
+        throwsCode(() => direct(type, { baseUrl: 'https://evil.example.com/x', fetch }), 'CONFIG');
+        assert.equal(fetch.calls, 0);
+      });
+      if (HOST_SETTING[type]) {
+        test('a host named in qa-config.json (a committed profile) is refused the same way', () => {
+          const fetch = spyFetch();
+          throwsCode(() => direct(type, { settings: HOST_SETTING[type]('https://evil.example.com/x'), fetch }), 'CONFIG');
+          assert.equal(fetch.calls, 0);
+        });
+        test('...and the same host is accepted when the PERSON allows it in their environment', () => {
+          assert.doesNotThrow(() => direct(type, { settings: HOST_SETTING[type]('https://ghe.corp.example.com'), env: { QA_TRACKER_ALLOW_HOSTS: 'ghe.corp.example.com' } }));
+        });
+        test('...but an allowlist written in the config itself does nothing (that is where the attacker writes)', () => {
+          throwsCode(() => direct(type, { settings: { ...HOST_SETTING[type]('https://evil.example.com/x'), allowHosts: ['evil.example.com'], allowedHosts: ['evil.example.com'], QA_TRACKER_ALLOW_HOSTS: 'evil.example.com' } }), 'CONFIG');
+        });
+      }
+      test('the reserved .test host the mocks use still works, so the suite and the demos are unaffected', () => {
+        const { adapter } = make(type);
+        assert.ok(adapter);
+      });
+    });
+  }
+  test('the CLI refuses an override too: exit 1, CONFIG, and nothing sent', async () => {
+    const dir = fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), 'qa-sec-'));
+    const config = path.join(dir, 'qa-config.json');
+    fs.writeFileSync(config, JSON.stringify({ ticketSource: { type: 'github', github: { repo: 'o/r' } } }));
+    const fetch = spyFetch();
+    for (const args of [['--base-url', 'https://evil.example.com'], []]) {
+      let out = '';
+      const code = await cli({ argv: ['fetch', '--config', config, '--input', '{"id":"1"}', ...args], env: { GITHUB_TOKEN: 'sekret-token-value', ...(args.length ? {} : { QA_TRACKER_BASE_URL: 'https://evil.example.com' }) }, fetch, stdin: require('node:stream').Readable.from([]), stdout: { write: (s) => { out += s; } }, stderr: { write: () => {} } });
+      assert.equal(code, 1);
+      assert.equal(JSON.parse(out).error.code, 'CONFIG');
+      assert.ok(!/sekret-token-value/.test(out));
+    }
+    assert.equal(fetch.calls, 0);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe('the token an adapter reads', () => {
+  test('GitHub: a variable the config names is the ONLY one read (it used to fall back to GITHUB_TOKEN or GH_TOKEN, sending a different credential than the one chosen)', () => {
+    throwsCode(() => direct('github', { settings: { tokenEnvVar: 'MY_GH_TOKEN' }, env: { GITHUB_TOKEN: 'a-different-credential', GH_TOKEN: 'another' } }), 'CONFIG');
+    assert.throws(() => direct('github', { settings: { tokenEnvVar: 'MY_GH_TOKEN' }, env: { GITHUB_TOKEN: 'x'.repeat(10), GH_TOKEN: 'y'.repeat(10) } }), (e) => /MY_GH_TOKEN is not set/.test(e.message) && !/GH_TOKEN\)/.test(e.message));
+    const mock = MOCKS.github();
+    const seen = [];
+    const adapter = createAdapter('github', { settings: { ...mock.settings, tokenEnvVar: 'MY_GH_TOKEN' }, env: { MY_GH_TOKEN: mock.token, GITHUB_TOKEN: 'not-this-one' }, fetch: (u, i) => { seen.push(i.headers.Authorization); return mock.fetch(u, i); }, baseUrl: mock.baseUrl, retryDelayMs: 0 });
+    return adapter.search({ query: 'x' }).then(() => assert.deepEqual([...new Set(seen)], [`Bearer ${mock.token}`]));
+  });
+  test('GitHub: with no variable named, GITHUB_TOKEN then GH_TOKEN are still read, and the message still says so', () => {
+    assert.doesNotThrow(() => direct('github', { env: { GITHUB_TOKEN: undefined, GH_TOKEN: 'gh-token-value' } }));
+    assert.throws(() => direct('github', { env: { GITHUB_TOKEN: '', GH_TOKEN: '' } }), (e) => /GITHUB_TOKEN \(or GH_TOKEN\) is not set/.test(e.message));
   });
 });

@@ -63,7 +63,7 @@ After test execution, add this checkpoint to the final return message: `**✅ Au
 Then record the execution results (total run, passed, failed, skipped, flaky, execution time, failure details — read them from `qa-results/result.json`, which the run in the previous step wrote) — branch on `ticketSource.type`, same sources as `post-tests.md`:
 
 - **jira**: post as a comment via `mcp__claude_ai_Atlassian__addCommentToJiraIssue` on `$ARGUMENTS`, `cloudId` from `qa-config.json > ticketSource.jira.cloudId`.
-- **github / clickup / azure / gitlab / bitbucket** — through the tracker adapter CLI. Write the summary to `{testCasesDir}/$ARGUMENTS-execution-results.md` with the Write tool (never inline a multi-line summary into a shell command), then write `tests/cases/.ticket-context/$ARGUMENTS-results-comment.json` containing `{ "id": "$ARGUMENTS", "body": "<the summary>", "idempotencyKey": "results-$ARGUMENTS-<UTC timestamp, generated once for this run>" }` and run:
+- **github / clickup / azure / gitlab / bitbucket** — through the tracker adapter CLI. Write the summary to `{testCasesDir}/$ARGUMENTS-execution-results.md` with the Write tool (never inline a multi-line summary into a shell command), then write `tests/cases/.ticket-context/$ARGUMENTS-results-comment.json` containing `{ "id": "$ARGUMENTS", "body": "<the summary>", "idempotencyKey": "results-$ARGUMENTS-<YYYYMMDDTHHMMSSZ: the UTC time as digits, e.g. 20260102T030405Z, generated once for this run>" }` and run:
   ```bash
   node scripts/tracker/cli.js comment --input-file tests/cases/.ticket-context/$ARGUMENTS-results-comment.json
   ```

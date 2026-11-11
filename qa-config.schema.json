@@ -52,7 +52,7 @@
             "repo": { "type": "string", "description": "owner/repo format" },
             "testLabelName": { "type": "string", "default": "test-case" },
             "tokenEnvVar": { "type": "string", "default": "GITHUB_TOKEN", "description": "Env var holding a GitHub token for the REST adapter (GH_TOKEN is also accepted)" },
-            "apiBaseUrl": { "type": "string", "description": "Override the API base URL (GitHub Enterprise Server, or a mock for tests)" }
+            "apiBaseUrl": { "type": "string", "description": "Override the API base URL (GitHub Enterprise Server, or a mock for tests). A host other than api.github.com must also be allowed in your shell: QA_TRACKER_ALLOW_HOSTS" }
           }
         },
         "gitlab": {
@@ -152,12 +152,12 @@
           "type": "string",
           "enum": ["warn", "enforce"],
           "default": "warn",
-          "description": "warn: heuristic URL matches only print a warning (a human is watching). enforce: heuristic matches block, empty prodUrlPatterns blocks the session, a missing config blocks. QA_AUTONOMOUS=1 forces enforce regardless of this value."
+          "description": "warn: heuristic URL matches only print a warning (a human is watching). enforce: heuristic matches block, and every shell command is refused while prodUrlPatterns is empty, testEnvironmentBaseUrl is unset or qa-config.json is missing. In either mode every shell command is refused while testEnvironmentBaseUrl matches a production pattern. QA_AUTONOMOUS=1 forces enforce regardless of this value."
         },
         "allowedUrlPatterns": {
           "type": "array",
           "items": { "type": "string" },
-          "description": "Regex patterns for URLs that are known-safe and exempt from the unrecognized-host check (e.g. docs or CDN links). Matched against the URL without its query string and fragment, so write them anchored (^https://partner\\.io/guide). Never override prodUrlPatterns. Tracker/code-host/registry URLs (github.com, dev.azure.com, api.clickup.com, registry.npmjs.org, ...) and the host of environments.testEnvironmentBaseUrl are already exempt."
+          "description": "Regex patterns for URLs that are known-safe and exempt from the unrecognized-host check (e.g. docs or CDN links). Matched against the URL without its query string and fragment, and a pattern has to START matching inside the scheme and host (^https://partner\\.io/ or ://partner\\.io/guide): text that only appears later, in the path of another host, does not allow the URL, and a pattern that is only a path (/guide) allows nothing. Do not start a pattern with .* . Never override prodUrlPatterns. Tracker/code-host/registry URLs (github.com, dev.azure.com, api.clickup.com, registry.npmjs.org, ...) and the host of environments.testEnvironmentBaseUrl are already exempt."
         }
       }
     },

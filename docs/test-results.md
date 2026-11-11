@@ -50,14 +50,20 @@ One JSON document ([`schemas/run-result.schema.json`](../schemas/run-result.sche
 | 3 | **no trustworthy report** — the runner could not start, was killed at `--timeout-ms`, wrote nothing, listed **zero tests**, **skipped every test** (nothing was verified; pass `--allow-all-skipped` if that is intended), or its exit code contradicts its report (e.g. exit 137 but no failures listed = it crashed after a partial report) |
 
 Exit 3 exists because "I could not tell" must never read as "all green". A stale report from a previous run cannot stand
-in either: `run.js` clears its own `qa-results/raw/` before every run.
+in either: `run.js` clears its own `qa-results/raw/` **and deletes the previous `qa-results/result.json`** before every
+run (a `--dry-run` only previews and deletes nothing), so after any run that ends in exit 3 there is no `result.json`
+to be mistaken for this run's.
+
+The runner is started in its own process group. On a timeout, and when `run.js` is stopped (Ctrl-C, SIGTERM, SIGHUP),
+the whole group is killed: `npx playwright test` is a launcher, and killing only it would leave the workers and browsers
+running into a folder the next run clears.
 
 Two guards protect the caller, because `--out` and the spec/dir/config arguments are caller-controlled:
 
 - **It only clears a directory it can show is its own.** `raw/` is cleared when it is empty, holds only test reports, or
   carries the `.qa-results-raw` marker that `run.js` writes when it creates it. Any other file in there (`precious.txt`)
   makes it refuse with exit 2 instead of deleting somebody's files — choose another `--out`.
-- **`--spec`, `--test-dir` and `--config-file` cannot smuggle an option to the test runner.** A value that starts with
+- **`--spec`, `--test-dir` and `--config-file` — and `testFramework.testDir` / `.configPath` in `qa-config.json` — cannot smuggle an option to the test runner.** A value that starts with
   `-` (a spec of `--import=./x.js` would make node load that file) is exit 2; write `./-name` for a path that really
   starts with a dash.
 
@@ -93,6 +99,16 @@ runner (12); the ones that survived the first round each exposed a missing test,
 
 ## Known limits
 
+- **A suite whose own hook throws is invisible to `run.js --framework node`.** For a `describe` whose `after` hook throws and
+  whose tests pass, Node 22.17 itself exits 0 and every reporter (JUnit, spec and TAP's own summary) counts it as a pass;
+  only the TAP stream carries the `not ok … failureType: 'hookFailed'` line, and the node recipe reads JUnit. The TAP parser
+  does report such a suite as a failed test (use `normalize.js` on a TAP file, or run `node --test --test-reporter=tap`
+  yourself), but through `run.js` there is nothing in the report or the exit code to notice.
+- **A directory of reports** (WebdriverIO, Cypress) is read file by file. A file that is not a test report at all (a
+  `package.json`) is left out and listed under `warnings`; a file that is a report but cannot be parsed, or is empty,
+  fails the run with that file's name rather than being dropped. That includes a `.json` that does not parse at all (a runner killed
+  mid-write leaves one): it is a damaged report, not "some other file". The cost is that a config with comments (JSONC) sitting in the
+  report directory now fails the run too, loudly, which is the safe way round; keep other files out of the report directory.
 - JUnit from `node --test` drops the newline inside the `message` attribute, so messages read run-together
   ("…rejected200 !== 400"); the full text is in `error.details`.
 - Tests that fail to *load* (a syntax error, a bad import) are reported by Jest JSON as a failed file and appear as one
