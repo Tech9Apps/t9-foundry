@@ -64,7 +64,10 @@ const expectedActualLines = (e) => [e.expected !== undefined && `Expected: ${e.e
 // defects. Those lines are pulled out of the message and the details alike and kept AFTER the (capped) prose, so a long message cannot push
 // them out of the signature, and a reporter that repeats them in both places does not change the hash.
 function signatureOf(error, max = 500) {
-  const e = error || {};
+  // Masked FIRST: a secret that is different on every run (a rotating bearer token, a session id) would otherwise give the same defect a new signature, and so a
+  // new fingerprint and a new bug, each run, and make two attempts of one failure look like two different errors.
+  const raw = error || {};
+  const e = { ...raw, message: redactSecrets(raw.message), details: redactSecrets(raw.details), ...(raw.expected !== undefined ? { expected: redactSecrets(raw.expected) } : {}), ...(raw.actual !== undefined ? { actual: redactSecrets(raw.actual) } : {}) };
   const message = stripAnsi(e.message || '');
   const diag = [...new Set([...diagnosticLines(message, { lines: 99 }), ...diagnosticLines(e.details, { lines: 99 }), ...expectedActualLines(e)])].slice(0, 6);
   const parts = [normalizeSignature(message, 300), ...diag.map((l) => normalizeSignature(l, 120, { minDigits: 10 }))].filter(Boolean);
@@ -195,7 +198,7 @@ function testCrash(error, { root = process.cwd() } = {}) {
 //   - shapes that are secrets wherever they appear (PEM keys, provider tokens, webhook URLs, credentials in a URL, a long bearer token);
 //   - assignment syntax (key=value, "key":"value"): always masked, whatever the value;
 //   - prose ("key: value"): masked only when the value looks like a secret and not like a message about one.
-const WORDS = 'passw(?:or)?d|passphrase|pwd|secret|token|api[_-]?key|apikey|access[_-]?key|private[ _-]?key|session[_-]?id|sessionid|csrf|xsrf|signature|credentials?';
+const WORDS = 'passw(?:or)?d|passphrase|pwd|secret|token|api[_-]?key|apikey|access[_-]?key|private[ _-]?key|session[_-]?id|sessionid|csrf|xsrf|signature|credentials?|secret[_-]?key|signing[_-]?key|encryption[_-]?key|master[_-]?key|app[_-]?secret';
 const KEY = '[\\w-]{0,40}?(?:' + WORDS + ')'; // a prefix of up to 40 characters: aws_secret_access_key, csrf_token, apiToken, my-service-password (unbounded, a long dashed run is quadratic)
 const VALUE = '"[^"\\n]*"|\'[^\'\\n]*\'|[^\\s"\'&;,]+';
 const SCHEME = '(?:Bearer|Basic|Digest|Token|Negotiate|AWS4-HMAC-SHA256)';
@@ -205,6 +208,7 @@ const maskProse = (match, key, sep, value) => {
   const quoted = /^(["'])(.*)\1$/.exec(value);
   const raw = (quoted ? quoted[2] : value).trim();
   if (!raw || BENIGN.test(raw)) return match;
+  if (/^[\d.]{1,8}$/.test(raw.split(/\s+/)[0]) || /\s(?:!==?|===?)\s/.test(raw)) return match; // a number or a comparison of values ("secret: 42 !== 43") is evidence, not a secret
   if (/passw|passphrase|pwd|secret|private/i.test(key)) return key + sep + (quoted ? quoted[1] + '<redacted>' + quoted[1] : '<redacted>'); // a passphrase can be several words
   const first = raw.split(/\s+/)[0].replace(/[.,;:!?]+$/, '');
   if (!(first.length >= 8 || /[\d_\-/+=.]/.test(first))) return match; // a short plain word is a status ("token: expired"), not a token
@@ -212,13 +216,15 @@ const maskProse = (match, key, sep, value) => {
 };
 const SECRET_RULES = [
   [/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g, '<redacted private key>'],
-  [new RegExp('\\b(authorization|proxy-authorization)(["\']?\\s*[:=]\\s*["\']?)(?=' + SCHEME + '\\s+\\S|\\S*\\d|\\S{20,})[^\\n"\']+', 'gi'), '$1$2<redacted>'],
+  [new RegExp('\\b(authorization|proxy-authorization)(["\']?\\s*[:=]\\s*["\']?)(?=' + SCHEME + '\\s+\\S|\\S*\\d|\\S{20,})(?:' + SCHEME + '\\s+)?[^\\s"\']+', 'gi'), '$1$2<redacted>'], // the scheme and ONE token: whatever follows on the line ("expected 1 to equal 2") is evidence
   [/\b(cookie|set-cookie)(["']?\s*[:=]\s*["']?)(?=[^\n"']*=)[^\n"']+/gi, '$1$2<redacted>'],
-  [/\b(Bearer)\s+[A-Za-z0-9._~+/=-]{20,}/g, '$1 <redacted>'],
-  [/\b(Bearer|Basic)\s+(?=[A-Za-z0-9._~+/=-]*[0-9=.])[A-Za-z0-9._~+/=-]{8,}/g, '$1 <redacted>'],
+  [/\b(Bearer)\s+[A-Za-z0-9._~+/=-]{20,}/gi, '$1 <redacted>'],
+  [/\b(Bearer|Basic)\s+(?=[A-Za-z0-9._~+/=-]*[0-9=.])[A-Za-z0-9._~+/=-]{8,}/gi, '$1 <redacted>'],
   [new RegExp('(["\']\\b' + KEY + '\\b["\']\\s*:\\s*)(?:"[^"\\n]*"|\'[^\'\\n]*\')', 'gi'), '$1"<redacted>"'],
-  [new RegExp('\\b(' + KEY + ')(["\']?\\s*=\\s*)(?:' + VALUE + ')', 'gi'), '$1$2<redacted>'],
-  [new RegExp('\\b(' + KEY + ')(\\s*:\\s+)("[^"\\n]*"|\'[^\'\\n]*\'|[^\\n]*)', 'gi'), maskProse],
+  [new RegExp('\\b(' + KEY + ')(["\']?\\s*=\\s*)(' + VALUE + ')', 'gi'), (m, key, sep, value) => (/^["']?(?:undefined|null|nil|true|false|none|<redacted>)["']?$/i.test(value) ? m : key + sep + '<redacted>')],
+  [new RegExp('\\b(' + KEY + ')(\\s*:\\s+)("[^"\\n]*"|\'[^\'\\n]*\'|[^\\n"]*)', 'gi'), maskProse],
+  // "label value" with no separator, when the value is token-shaped (a digit and 16+ characters): "using api key abcd1234efgh5678", "token 8f14e45f..."
+  [/\b(api[ _-]?key|secret(?: access)? key|access[ _-]?key|token|secret)(\s+)(?=[A-Za-z0-9+/=_-]*\d)[A-Za-z0-9+/=_-]{16,}\b/gi, '$1$2<redacted>'],
   [/([?&]key=)[^&\s"']+/gi, '$1<redacted>'],
   [/\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{10,}|xox[abprs]-[A-Za-z0-9-]{8,}|(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{8,}|sk-[A-Za-z0-9_-]{16,}|npm_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{20,})/g, '<redacted>'],
   [/(https:\/\/hooks\.slack\.com\/services\/)[A-Za-z0-9/_-]+/g, '$1<redacted>'],

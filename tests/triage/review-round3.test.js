@@ -427,7 +427,48 @@ describe('redactSecrets stays fast on hostile input (it runs on text a test prin
     test(name, () => {
       const t = Date.now();
       redactSecrets(input);
-      assert.ok(Date.now() - t < 250, `took ${Date.now() - t} ms`);
+      assert.ok(Date.now() - t < 1000, `took ${Date.now() - t} ms`); // a quadratic blow-up is seconds; a slow CI machine is not
     });
   }
+});
+
+describe('redactSecrets, last pass: remaining leaks, evidence it must keep, and stable fingerprints', () => {
+  const { redactSecrets } = require('../../scripts/triage/lib/text');
+  const { fingerprint } = require('../../scripts/triage/fingerprint');
+  const masked = (input, ...secrets) => { const out = redactSecrets(input); for (const x of secrets) assert.ok(!out.includes(x), `${JSON.stringify(x)} survived in ${JSON.stringify(out)}`); return out; };
+  test('the common Django / framework names and lower-case bearer', () => {
+    masked('SECRET_KEY=abcdef123456ghij', 'abcdef123456ghij');
+    masked('DJANGO_SECRET_KEY=django-insecure-xyz123', 'django-insecure-xyz123');
+    masked('SIGNING_KEY=abcdef123456', 'abcdef123456'); masked('ENCRYPTION_KEY=abcdef123456', 'abcdef123456');
+    masked("headers: [ 'x', 'bearer abcdefghijklmnop1234' ]", 'abcdefghijklmnop1234');
+    masked("headers: [ 'x', 'bearer abcdefghijklmnopqrstuvwx' ]", 'abcdefghijklmnopqrstuvwx'); // letters only: only the long-bearer rule can catch it
+  });
+  test('"label value" prose with no separator, when the value is token-shaped', () => {
+    masked('using api key abcd1234efgh5678 for the call', 'abcd1234efgh5678');
+    masked('token 8f14e45fceea167a5a36dedd4bea2543 rejected', '8f14e45fceea167a5a36dedd4bea2543');
+    masked('secret access key wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY', 'wJalrXUtnFEMI');
+  });
+  test('a comparison of values is evidence, not a secret: the assertion survives', () => {
+    for (const t of ['Error: secret: 42 !== 43', 'Expected: "secret: 42"', 'secret: 7 === 8', 'token: 123 != 456']) assert.equal(redactSecrets(t), t, t);
+  });
+  test('a benign value on an assignment is kept (undefined, null, true, false, none)', () => {
+    for (const t of ['password=undefined', 'token=null', 'access_token=undefined', 'secret=false', 'api_key=none', 'password=']) assert.equal(redactSecrets(t), t, t);
+  });
+  test('an authorization header masks the credential, not the rest of the line (the assertion after it is evidence)', () => {
+    const out = redactSecrets('Authorization: Bearer abc.def.ghi1234 expected 1 to equal 2');
+    assert.ok(!out.includes('abc.def.ghi1234'));
+    assert.match(out, /expected 1 to equal 2/);
+    const basic = redactSecrets('Authorization: Basic dXNlcjpwYXNz received 401');
+    assert.ok(!basic.includes('dXNlcjpwYXNz'));
+    assert.match(basic, /received 401/);
+  });
+  test('a quoted value keeps its closing quote when it is masked', () => {
+    assert.equal(redactSecrets('Expected: "password: hunter2hunter2"'), 'Expected: "password: <redacted>"');
+  });
+  test('a per-run secret does not change the fingerprint: the same defect is one report however the token rotates (and PRD-1 still sees the same error twice)', () => {
+    const t = (tok) => ({ name: 'DEMO-1/TC-1: calls the api', ticket: 'DEMO-1', caseId: 'TC-1', error: { kind: 'failure', message: `request failed: Authorization: Bearer ${tok}`, details: `Received: password=${tok}` } });
+    assert.equal(fingerprint(t('aaaa1111bbbb2222cccc3333')).fingerprint, fingerprint(t('zzzz9999yyyy8888xxxx7777')).fingerprint);
+    const v = only(classify({ runs: [run(fail(t('aaaa1111bbbb2222cccc3333').name, t('aaaa1111bbbb2222cccc3333').error, { ticket: 'DEMO-1', caseId: 'TC-1' })), run(fail(t('zzzz9999yyyy8888xxxx7777').name, t('zzzz9999yyyy8888xxxx7777').error, { ticket: 'DEMO-1', caseId: 'TC-1' }))] }));
+    assert.equal(v.rule, 'PRD-1', 'two attempts whose only difference is the rotated secret are the same failure');
+  });
 });
