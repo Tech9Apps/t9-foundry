@@ -299,3 +299,38 @@ were places where a real product bug could be reported as something else at a co
   section that contradicts a gate; the hash can. The price is that editing those files means re-pinning them, on purpose.)
 - **Accepted, documented:** results of a re-run repeat whole spec files (side effects included); trust is keyed on the format name, not the runner, so
   a TAP report from another producer fed straight to `classify.js` inherits TAP's privilege (the orchestrator only produces TAP from `node`).
+
+## What the review of self-heal changed (#10)
+
+An independent review of the self-heal branch (about 60 real-git scenarios, 100 timed signals, a 40000-case differential of `classify` against `main`, 77 mutants)
+found no blocker: nothing loses uncommitted work, pushes, or acts without a yes. It found stated guarantees that were false in narrow windows, and these are fixed:
+
+- **An interrupt during the failure-path revert** killed the process half way (the handlers were removed before the revert ran). They now stay armed until it finishes;
+  the signal waits (the revert is synchronous) and the process exits with 128 + the signal afterwards.
+- **A runner that ignores SIGTERM** survived the revert and wrote into the project afterwards. The interrupt path now sends SIGKILL to the run's whole process group.
+- **A hard-linked test file** was written in place, which edits every other path to the same file (an application file, or one outside the repository), and
+  the revert did not know about them. Files with more than one link are reported under `notScanned` and never edited.
+- **A shell-unsafe base branch name** (`x$(…)`, which git allows, and a fork's pull request can carry) went onto the `review` command and the push steps the agent is
+  told to run. A base branch with anything but letters, digits and `. _ - /` is refused.
+- **The report's specs** must be inside the configured test directories, not just inside the repository (a forged `scripts/build.js` would have been run by the validation), and
+  a report with **no `format`** is refused for `--apply` instead of skipping the project's trust setting.
+- **`--paths`** may narrow the configured test directories, never name one the config does not.
+- **The heal's branch** is deleted on a revert only when it is at the base or at the heal's own commit, so a commit anyone else made there is never thrown away; and
+  `--heal --no-heal` (either order) is a usage error instead of "the last one wins".
+- The **flaky SIGTERM test** waited a fixed 6 s; the slow spec now writes a sentinel file when it starts, and the test waits for that.
+
+**Accepted, documented, not fixed:**
+- **Nothing recovers from SIGKILL, SIGQUIT or a crash of the process itself.** The repository is left on the heal branch with the edit; the next run says "uncommitted changes".
+  A journal in `.git/` and a `--recover` would fix it; until then `git switch <base> && git checkout -- <file> && git branch -D qa/heal-<id>` is the manual recovery.
+- **A report is not authenticated.** A hand-edited report whose `proposal.to` is another existing id on the page (with evidence rewritten to match) heals: the guards check
+  the report is consistent with itself and with the classifier's rules, the edit is confined to the id, and the re-run must pass, but nothing proves the *right* id was chosen.
+  An HMAC over the report would be the fix; a human reads the diff before anything is merged.
+- **The config decides the scope.** `triage.selfHeal.paths` may name `src` (only the repository root is refused), and the config is found from the process's directory
+  (`CLAUDE_PROJECT_DIR`, then `./`, `../`, `../../`), not `--cwd`. A prompt-injected edit of `qa-config.json` can turn self-heal on or widen it; the PR's prose does not
+  forbid editing it beyond "you edit nothing".
+- **A global `--snapshot` is page-agnostic:** evidence is tied to the id, not the page, so a wrong-page snapshot can produce a TST-1 `act`; only the validation re-run stops it.
+- **The user's working tree is on the heal branch for the whole validation** (up to the 30-minute run timeout), and two heals in one repository are not guarded against each other.
+  A `git worktree` would isolate it.
+- A Ctrl-C landing between two of the heal's own git calls left `qa/heal-*` behind in 2 of about 40 attempts; the result still said `restored: true` for the files.
+- **`Bash(gh api *)` in `.claude/settings.json` predates this PR**, and lets the agent call write endpoints (refs, commits, PRs) without a prompt, which bypasses the push gate this PR describes.
+  Removing it is a decision for the owner of that file.

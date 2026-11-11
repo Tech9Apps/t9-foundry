@@ -57,8 +57,11 @@ function parseArgs(argv) {
     else if (flag === '--trusted-formats') opts.trustedFormats = parseTrustedFormats(value());
     else if (flag === '--timeout-ms') opts.timeoutMs = Number(value());
     else if (flag === '--no-plan') opts.noPlan = true;
-    else if (flag === '--heal') opts.heal = true;
-    else if (flag === '--no-heal') opts.heal = false;
+    else if (flag === '--heal' || flag === '--no-heal') {
+      // the last one used to win silently, so `--no-heal --heal` healed; two opposite instructions are a mistake, not a preference
+      if (opts.heal !== undefined && opts.heal !== (flag === '--heal')) throw usage('--heal and --no-heal contradict each other; give one');
+      opts.heal = flag === '--heal';
+    }
     else if (flag === '--config') opts.config = value();
     else if (flag === '--source') opts.source = value();
     else if (flag === '--base-url') opts.baseUrl = value();

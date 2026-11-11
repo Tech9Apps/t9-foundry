@@ -18,6 +18,10 @@
 //   - files it did not scan (a symlink, one over 1 MB) and lines that still mention the old id are reported, even when there is nothing to edit
 //   - the specs to re-run come from the report, so each must be inside the repository: a report cannot make the runner execute a file elsewhere
 //   - the report is not taken on trust: a verdict must be consistent with what classify.js would have produced
+//   - the specs to re-run must be inside the configured test directories, and a report with no runner format is refused (--apply)
+//   - a hard-linked file is never edited (it would edit every other path to it); a base branch name that is not plain (letters, digits, . _ - /) is refused
+//   - --paths may only narrow the configured test directories; an interrupt that arrives during the failure-path revert waits for it
+//   - NOT covered: a crash or SIGKILL of this process leaves the heal branch behind (docs/phase-2-design.md, "What the review of self-heal changed")
 //
 //   node scripts/triage/heal.js --report triage.json --main main/result.json --framework F [--cwd D] [--paths a,b]
 //        [--spec S]... [--apply [--enable]] [--run-id ID] [--max-files N] [--max-lines N] [--out heal.json] [--config qa-config.json]
@@ -158,14 +162,22 @@ async function heal({ report, cwd, runId, paths, maxFiles = 5, maxLines = 20, br
   const real = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
   const realRoot = real(root);
   const failingSpecs = healed.map((v) => v.test.file).filter(Boolean).map((f) => real(path.resolve(cwd, f)));
-  const strays = failingSpecs.filter((f) => f !== realRoot && !f.startsWith(`${realRoot}${path.sep}`));
+  const inside = (f, dir) => f === dir || f.startsWith(`${dir}${path.sep}`);
+  const strays = failingSpecs.filter((f) => !inside(f, realRoot));
   if (strays.length) return { status: 'refused', reason: `the report names a spec outside the repository (${strays[0].slice(0, 120)}); a heal only re-runs tests inside it` };
+  // …and inside the test directories: a path in the repository that is not a test (a build script) would otherwise be run by the validation
+  const testDirs = (paths || []).map((d) => real(path.resolve(cwd, d)));
+  const offside = failingSpecs.filter((f) => !testDirs.some((d) => inside(f, d)));
+  if (offside.length) return { status: 'refused', reason: `the report names a spec outside the test directories (${path.relative(root, offside[0]).slice(0, 120)}; the heal paths are ${paths.join(', ')}); a heal only re-runs tests it is allowed to edit` };
   let base; let baseSha; const branch = `${branchPrefix}${sanitize(runId)}`;
   try {
     if (git(root, ['status', '--porcelain', '--untracked-files=no'])) return { status: 'refused', reason: 'the working tree has uncommitted changes to tracked files; a heal never mixes its edits with yours' };
     // --show-current, not rev-parse --abbrev-ref: with a TAG named like the branch, the latter prints "heads/main", and switching back to that fails
     base = git(root, ['branch', '--show-current']);
     if (!base) return { status: 'refused', reason: 'HEAD is detached; check out a named branch first' };
+    // the branch name ends up on command lines (the review command in the result, the steps a model is told to run), and git allows $ ( ) ; and
+    // spaces in one: a branch from a fork's pull request can be named to run something
+    if (!/^[A-Za-z0-9._\/-]+$/.test(base)) return { status: 'refused', reason: `the current branch name (${JSON.stringify(base).slice(0, 80)}) has characters that are not safe on a command line; check out a plainly named branch (letters, digits, . _ - /) first` };
     baseSha = git(root, ['rev-parse', 'HEAD']);
     let exists = true;
     try { git(root, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]); } catch { exists = false; }
@@ -178,6 +190,7 @@ async function heal({ report, cwd, runId, paths, maxFiles = 5, maxLines = 20, br
   // in a good state, and the end of it is CHECKED rather than assumed.
   const originals = planned.files.map((f) => ({ path: f.path, rel: f.rel, bytes: f.bytes }));
   let finished = false;
+  let ownCommit = null; // set once the heal has committed: a branch at that commit is the heal's own, and goes with it
 
   // Put everything back exactly as found. Synchronous on purpose: it also runs from a signal handler, where nothing can be awaited.
   const revert = () => {
@@ -189,16 +202,21 @@ async function heal({ report, cwd, runId, paths, maxFiles = 5, maxLines = 20, br
       try { if (!fs.readFileSync(o.path).equals(o.bytes)) fs.writeFileSync(o.path, o.bytes); } catch (e) { problems.push(`${o.rel}: ${e.message}`); }
     }
     try { git(root, ['switch', base]); } catch (e) { problems.push(e.message); }
-    try { if (git(root, ['rev-parse', `refs/heads/${branch}`]) === baseSha) git(root, ['branch', '-D', branch]); } catch (e) { problems.push(e.message); }
+    // only a branch that holds nothing but the heal's own work goes: at the base (nothing was committed) or at the heal's own commit. A commit
+    // anyone else made on it stays reachable.
+    try { const tip = git(root, ['rev-parse', `refs/heads/${branch}`]); if (tip === baseSha || tip === ownCommit) git(root, ['branch', '-D', branch]); } catch (e) { problems.push(e.message); }
     try { if (git(root, ['status', '--porcelain', '--untracked-files=no'])) problems.push('the working tree is not clean after the restore'); } catch (e) { problems.push(e.message); }
     return problems;
   };
 
   // An interrupt mid-heal (a killed agent, a CI timeout) used to leave the user on the heal branch with edited files. Now it reverts first.
+  let interrupted = null; // a signal that arrived while the failure-path revert was already running
   const handlers = ['SIGINT', 'SIGTERM', 'SIGHUP'].map((sig) => [sig, () => {
-    if (finished) return;
+    if (finished) { interrupted = interrupted || sig; return; }
     finished = true;
-    try { killActive(); } catch { /* nothing running */ } // first: a runner left going would write into the project after it has been put back
+    // first: a runner left going would write into the project after it has been put back. SIGKILL, not SIGTERM: the run's result is being thrown
+    // away, and a runner that traps SIGTERM would otherwise outlive the revert
+    try { killActive('SIGKILL'); } catch { /* nothing running */ }
     const problems = revert();
     try { (proc.stderr || process.stderr).write(`heal: interrupted by ${sig}; ${problems.length ? `the repository could NOT be fully restored (${problems.join('; ')})` : 'the repository was restored exactly as found'}\n`); } catch { /* nobody to tell */ }
     proc.exit(128 + ((os.constants.signals || {})[sig] || 0));
@@ -241,13 +259,23 @@ async function heal({ report, cwd, runId, paths, maxFiles = 5, maxLines = 20, br
     git(root, ['add', '--', ...planned.files.map((f) => f.rel)]);
     git(root, ['commit', '-q', '-F', '-'], message);
     const commit = git(root, ['rev-parse', 'HEAD']);
+    ownCommit = commit;
     git(root, ['switch', base]);
     finished = true; disarm();
     return { status: 'healed', base, branch, commit, ...summary, validated, review: `git diff ${base}..${branch}` };
   } catch (err) {
-    // ANY failure: put everything back exactly as found
-    finished = true; disarm();
+    // ANY failure: put everything back exactly as found. The handlers stay armed through the revert: with none, an interrupt during it would
+    // kill the process with the repository half restored. The revert is synchronous, so such a signal waits and is delivered right after.
+    finished = true;
     const problems = revert();
+    // two turns of the event loop: a signal that arrived during the blocking revert is read in the poll phase of the NEXT turn, and one setImmediate
+    // would resolve (check phase) before that
+    await new Promise((resolve) => setImmediate(() => setImmediate(resolve)));
+    disarm();
+    if (interrupted) {
+      try { (proc.stderr || process.stderr).write(`heal: interrupted by ${interrupted}; ${problems.length ? `the repository could NOT be fully restored (${problems.join('; ')})` : 'the repository was restored exactly as found'}\n`); } catch { /* nobody to tell */ }
+      proc.exit(128 + ((os.constants.signals || {})[interrupted] || 0));
+    }
     return { status: 'reverted', reason: err.message, restored: problems.length === 0, ...(problems.length ? { problems } : {}) };
   }
 }
@@ -285,10 +313,22 @@ function parseArgs(argv) {
 // What the project's config says a heal may rest on: the runner formats it trusts, and the confidence it demands. A flag given to the
 // orchestrator that loosened these does not carry over to a later heal.js run.
 function configFloorProblem(report, cfg) {
-  if (report.format && !cfg.trustedFormats.includes(report.format)) return `the report is from ${report.format} output, which this project's config does not trust (triage.trustedFormats: ${cfg.trustedFormats.join(', ') || 'none'}); a heal only acts on formats the project has verified`;
+  // a report with no format at all is refused too: deleting the field must not be a way past the project's trust setting
+  if (!report.format) return 'the report does not say which runner format it came from, so the project\'s trust setting (triage.trustedFormats) cannot be applied; a heal only acts on a report classify.js wrote';
+  if (!cfg.trustedFormats.includes(report.format)) return `the report is from ${report.format} output, which this project's config does not trust (triage.trustedFormats: ${cfg.trustedFormats.join(', ') || 'none'}); a heal only acts on formats the project has verified`;
   const low = eligible(report).filter((v) => v.confidence < cfg.confidenceThreshold);
   if (low.length) return `${low.map((v) => v.key).join(', ')} is at confidence ${low[0].confidence}, below the configured triage.confidenceThreshold of ${cfg.confidenceThreshold}`;
   return null;
+}
+
+// Where the config names test directories, --paths may only narrow them (the same rule as the caps: a flag tightens, never lifts). With none
+// configured the flag is what names them, as it always was.
+function narrowPaths(flagPaths, configured, cwd) {
+  if (!configured || !configured.length) return flagPaths;
+  const abs = (d) => path.resolve(cwd, d);
+  const within = (f, dir) => f === dir || f.startsWith(`${dir}${path.sep}`);
+  for (const f of flagPaths) if (!configured.some((c) => within(abs(f), abs(c)))) throw usage(`--paths ${f} is not inside the test directories the config names (${configured.join(', ')}); a flag may narrow them, not widen them`);
+  return flagPaths;
 }
 
 const readJson = (file) => {
@@ -334,8 +374,9 @@ async function main({ argv = process.argv.slice(2), env = process.env, stdout = 
       out(doc);
       return 1;
     }
+    const paths = opts.paths ? narrowPaths(opts.paths, cfg.selfHeal.paths, cwd) : cfg.selfHeal.paths;
     const data = await heal({
-      report, cwd, runId, paths: opts.paths || cfg.selfHeal.paths, maxFiles: Math.min(opts.maxFiles || cfg.selfHeal.maxFiles, cfg.selfHeal.maxFiles), maxLines: Math.min(opts.maxLines || cfg.selfHeal.maxLines, cfg.selfHeal.maxLines),
+      report, cwd, runId, paths, maxFiles: Math.min(opts.maxFiles || cfg.selfHeal.maxFiles, cfg.selfHeal.maxFiles), maxLines: Math.min(opts.maxLines || cfg.selfHeal.maxLines, cfg.selfHeal.maxLines),
       branchPrefix: cfg.selfHeal.branchPrefix, mainRun, validate, apply: !!opts.apply,
     });
     const doc = { ok: data.status === 'healed' || data.status === 'preview' || data.status === 'nothing-to-heal', data };
