@@ -152,3 +152,65 @@ describe('locators CLI: by fingerprint token (the form an agent uses, so no fail
     assert.deepEqual([second.verdicts[0].class, second.verdicts[0].rule, second.verdicts[0].action], ['test-bug', 'TST-1', 'act']);
   });
 });
+
+describe('analyzeLocator reads the page like a parser, not a regex: "not on the page" must never be said of an element that is', () => {
+  // A wrong "present: false" next to a similar id is a TST-1 verdict (test-bug 0.85, act). The third review found these shapes read as absent.
+  const sel = "getByTestId('add-to-cart')";
+  const at = (html, selector = sel) => analyzeLocator({ html, selector });
+  const present = (html, selector) => at(html, selector).present;
+
+  test('an unquoted attribute value', () => {
+    assert.equal(present('<button data-testid=add-to-cart>Add</button><button data-testid="add-to-cart-all">All</button>'), true);
+    assert.equal(present('<button class=b data-testid=add-to-cart class=c>Add</button>'), true);
+  });
+  test('a ">" inside an EARLIER quoted attribute value', () => {
+    assert.equal(present('<button title="a>b" data-testid="add-to-cart">Add</button>'), true);
+    assert.equal(present("<button title='x > y' data-testid='add-to-cart'>Add</button>"), true);
+  });
+  test('attribute names in any case', () => {
+    assert.equal(present('<BUTTON DATA-TESTID="add-to-cart">Add</BUTTON>'), true);
+    assert.equal(present('<button Data-TestId="add-to-cart">Add</button>'), true);
+  });
+  test('data-test is read, because extractTestId accepts it from the error ([data-test="x"])', () => {
+    assert.equal(present('<i data-test="x"></i>', '[data-test="x"]'), true);
+    assert.equal(present('<i data-test-id="x"></i>', '[data-test-id="x"]'), true);
+  });
+  test('whitespace around "=", newlines between attributes, self-closing tags', () => {
+    assert.equal(present('<input\n  type="text"\n  data-testid = "add-to-cart"\n/>'), true);
+    assert.equal(at('<input data-testid="add-to-cart"/>').candidates.length, 0);
+  });
+  test('a comment, a script and a style are not the page', () => {
+    assert.equal(present('<!-- <button data-testid="add-to-cart">old</button> -->'), false);
+    assert.equal(present('<script>const html = \'<button data-testid="add-to-cart">\'</script>'), false);
+    assert.equal(present('<style>/* <b data-testid="add-to-cart"> */</style><p>x</p>'), false);
+    assert.equal(present('<!-- <b data-testid="add-to-cart"> --><i data-testid="add-to-cart"></i>'), true, 'but the real one after the comment is');
+  });
+  test('what it already did still works: candidates, text and tag, exact match only', () => {
+    const r = at('<main><button data-testid="add-to-basket">  Add   to basket </button><a data-cy="add-to-cart-all">x</a></main>');
+    assert.equal(r.present, false);
+    assert.deepEqual(r.candidates.map((c) => [c.testid, c.tag, c.text]), [['add-to-cart-all', 'a', 'x'], ['add-to-basket', 'button', 'Add to basket']]);
+  });
+  test('a repeated attribute: the FIRST one counts, as in a browser', () => {
+    assert.equal(present('<i data-testid="add-to-cart" data-testid="other"></i>'), true);
+    assert.equal(present('<i data-testid="other" data-testid="add-to-cart"></i>'), false);
+    assert.equal(present('<i data-cy="other" data-testid="add-to-cart"></i>'), false, 'the first test-id-like attribute of any spelling');
+  });
+  test('malformed HTML does not throw and does not hang', () => {
+    for (const html of ['<', '<a', '<a data-testid="x', '<a data-testid=', '<<<>>>', '</>', '<!--', '<a "x" data-testid="add-to-cart">']) assert.doesNotThrow(() => at(html), html);
+  });
+  test('the scan is linear: a page of unterminated tags does not take seconds', () => {
+    const t = Date.now();
+    at('<a '.repeat(60000));
+    at(`<div ${'x '.repeat(60000)}`);
+    assert.ok(Date.now() - t < 500, `took ${Date.now() - t} ms`);
+  });
+});
+
+describe('analyzeLocator: a page with thousands of script tags is still one linear pass', () => {
+  test('60000 <script> blocks', () => {
+    const html = `${'<script>var a = 1</script>'.repeat(60000)}<i data-testid="add-to-cart"></i>`;
+    const t = Date.now();
+    assert.equal(analyzeLocator({ html, selector: "getByTestId('add-to-cart')" }).present, true);
+    assert.ok(Date.now() - t < 1000, `took ${Date.now() - t} ms`);
+  });
+});

@@ -43,10 +43,50 @@ function similarity(a, b) {
   return Math.round(((2 * hit) / (ta.length + tb.length)) * 100) / 100; // Dice coefficient
 }
 
+// The test ids on a page. A scanner, not a regex: a regex that looks for "<tag ... data-testid=..." mishandles what real markup does (an unquoted value, a
+// ">" inside an earlier quoted attribute, upper-case names, a tag in a comment or a script) and "not on the page" is the claim that turns into a
+// test-bug verdict, so it must never be said of an element that is. One pass, no backtracking, so a page of unterminated tags cannot make it slow.
+const TEST_ATTR = /^data-(?:testid|test-id|test|cy|qa)$/i;
+const MAX_HTML = 5 * 1024 * 1024;
+const TAG_OPEN = /<([A-Za-z][A-Za-z0-9:-]*)/y;
+const ATTR = /[\s/]*([^\s"'<>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/y;
+const TAG_END = /[\s/]*>/y;
+const CLOSE_SCRIPT = /<\/script/gi; // searched from a given position, case-insensitively, without lower-casing the whole page each time
+const CLOSE_STYLE = /<\/style/gi;
 function testIdsIn(html) {
+  const s = String(html).slice(0, MAX_HTML);
   const out = [];
-  const re = /<([a-zA-Z][\w-]*)\b([^>]*?)\bdata-(?:testid|test-id|cy|qa)\s*=\s*(?:"([^"]*)"|'([^']*)')([^>]*)>([^<]*)/g;
-  for (const m of String(html).matchAll(re)) out.push({ testid: m[3] !== undefined ? m[3] : m[4], tag: m[1].toLowerCase(), text: m[6].replace(/\s+/g, ' ').trim().slice(0, 60) });
+  let i = 0;
+  while ((i = s.indexOf('<', i)) !== -1) {
+    if (s.startsWith('<!--', i)) { const end = s.indexOf('-->', i + 4); if (end === -1) break; i = end + 3; continue; }
+    TAG_OPEN.lastIndex = i;
+    const open = TAG_OPEN.exec(s);
+    if (!open) { i += 1; continue; }
+    const tag = open[1].toLowerCase();
+    let pos = TAG_OPEN.lastIndex;
+    let testid;
+    for (;;) { // attributes, up to the ">" that is OUTSIDE any quote
+      TAG_END.lastIndex = pos;
+      if (TAG_END.exec(s)) { pos = TAG_END.lastIndex; break; }
+      ATTR.lastIndex = pos;
+      const a = ATTR.exec(s);
+      if (!a || ATTR.lastIndex === pos) break; // malformed (an unterminated quote, a stray character): give up on this tag
+      pos = ATTR.lastIndex;
+      if (testid === undefined && TEST_ATTR.test(a[1])) testid = a[2] !== undefined ? a[2] : a[3] !== undefined ? a[3] : a[4];
+    }
+    if (tag === 'script' || tag === 'style') { // raw text up to the closing tag: nothing in it is the page
+      const closer = tag === 'script' ? CLOSE_SCRIPT : CLOSE_STYLE;
+      closer.lastIndex = pos;
+      const close = closer.exec(s);
+      i = close ? close.index : s.length;
+      continue;
+    }
+    if (testid !== undefined) {
+      const next = s.indexOf('<', pos);
+      out.push({ testid, tag, text: s.slice(pos, next === -1 ? s.length : next).replace(/\s+/g, ' ').trim().slice(0, 60) });
+    }
+    i = Math.max(pos, i + 1);
+  }
   return out;
 }
 
