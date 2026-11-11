@@ -63,6 +63,14 @@ describe('clickup: statuses are whatever the workspace named them (type "custom"
   for (const status of ['Rejected', "Won't do", 'Wont fix', 'Cancelled', 'Canceled', 'Declined', 'Invalid', 'Duplicate', 'Not a bug', 'By design', 'Obsolete', 'Dismissed']) {
     test(`"${status}" is dismissed — it used to read as OPEN, so a bug that came back was commented on forever`, () => expectState(createClickupMock, setStatus(status), DISMISSED));
   }
+  // Whole phrases, not words anywhere: these are ACTIVE statuses that merely contain one (a recurrence there is a comment, not a dismissal)
+  for (const status of ['QA Rejected - rework', 'Needs duplicate check', 'Invalid input handling', 'Fix rejected', 'Rejected by QA', 'Cancel pending', 'Not a bug yet?', 'Waiting on design', 'Duplicate review']) {
+    test(`"${status}" is OPEN: it only contains a dismissal word`, () => expectState(createClickupMock, setStatus(status), OPEN));
+  }
+  // ...while a dismissal phrase on its own, or as one part of a compound status, is still read
+  for (const status of ["Closed - Won't fix", "Won't fix (by design)", 'Will not fix', 'Not planned', 'Out of scope', 'Abandoned', 'Works as designed', 'WONTFIX', 'Won\u2019t do', 'Done / Duplicate', "Won't-fix", 'A duplicate']) {
+    test(`"${status}" is dismissed`, () => expectState(createClickupMock, setStatus(status), DISMISSED));
+  }
   for (const status of ['to do', 'In progress', 'In review', 'Blocked', 'Will do']) {
     test(`"${status}" is open`, () => expectState(createClickupMock, setStatus(status), OPEN));
   }
