@@ -1,0 +1,15 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "tracker-error.schema.json",
+  "title": "Normalized tracker error",
+  "type": "object",
+  "required": ["code", "message", "retriable"],
+  "additionalProperties": false,
+  "properties": {
+    "code": { "type": "string", "enum": ["NOT_FOUND", "UNAUTHENTICATED", "FORBIDDEN", "VALIDATION", "CONFIG", "RATE_LIMITED", "TIMEOUT", "NETWORK", "UPSTREAM_ERROR"] },
+    "message": { "type": "string" },
+    "status": { "type": ["integer", "null"] },
+    "retriable": { "type": "boolean" },
+    "details": { "type": "object", "description": "e.g. { partial: { id, completed } } when a multi-call create failed part-way through" }
+  }
+}

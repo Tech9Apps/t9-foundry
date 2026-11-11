@@ -41,14 +41,18 @@
           "properties": {
             "workspaceId": { "type": "string" },
             "listId": { "type": "string" },
-            "tokenEnvVar": { "type": "string", "default": "CLICKUP_TOKEN" }
+            "tokenEnvVar": { "type": "string", "default": "CLICKUP_TOKEN" },
+            "assignToSelf": { "type": "boolean", "default": true, "description": "Assign created test tasks to the user the token belongs to" },
+            "apiBaseUrl": { "type": "string", "description": "Override the API base URL (a mock for tests)" }
           }
         },
         "github": {
           "type": "object",
           "properties": {
             "repo": { "type": "string", "description": "owner/repo format" },
-            "testLabelName": { "type": "string", "default": "test-case" }
+            "testLabelName": { "type": "string", "default": "test-case" },
+            "tokenEnvVar": { "type": "string", "default": "GITHUB_TOKEN", "description": "Env var holding a GitHub token for the REST adapter (GH_TOKEN is also accepted)" },
+            "apiBaseUrl": { "type": "string", "description": "Override the API base URL (GitHub Enterprise Server, or a mock for tests). A host other than api.github.com must also be allowed in your shell: QA_TRACKER_ALLOW_HOSTS" }
           }
         },
         "gitlab": {
@@ -56,7 +60,8 @@
           "properties": {
             "projectId": { "type": "string" },
             "tokenEnvVar": { "type": "string", "default": "GITLAB_TOKEN" },
-            "host": { "type": "string", "default": "https://gitlab.com" }
+            "host": { "type": "string", "default": "https://gitlab.com" },
+            "testLabelName": { "type": "string", "default": "test-case", "description": "Label applied to test-case issues" }
           }
         },
         "bitbucket": {

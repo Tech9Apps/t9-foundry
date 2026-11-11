@@ -197,7 +197,80 @@ failing_ids() { grep '^not ok|' | cut -d'|' -f2 | tr '\n' ' ' | sed 's/ $//'; }
   [[ "$output" =~ "20 passed, 2 failed" ]]
   [[ "$output" =~ "BLOCKED (exit 2)" ]]
   [[ "$output" =~ "GO: no blocking issues" ]]
-  [[ "$output" =~ "# fail 0" ]]
+  [[ "$output" =~ "22 passed, 0 failed" ]]   # Act 7: the fixed copy, read through the structured runner
+}
+
+# ── The tracker half of the demo (in-memory tracker, real adapter CLI) ──────────
+
+@test "tracker-demo: the same flow works against all five trackers" {
+  for t in github clickup azure gitlab bitbucket; do
+    run node "$DEMO/tracker-demo.js" --tracker "$t"
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "26 created" ]]
+    [[ "$output" =~ "3 stories · 26 test cases · 2 bugs · 3 comments" ]]
+    [[ "$output" =~ "0 created, 31 already existed" ]]
+    [[ "$output" =~ "no duplicate" ]]
+    [[ ! "$output" =~ "DEMO INTEGRITY" ]]
+  done
+}
+
+@test "tracker-demo: rejects an unknown tracker" {
+  run node "$DEMO/tracker-demo.js" --tracker jira
+  [ "$status" -eq 2 ]
+}
+
+@test "tracker-demo: parses every sample test case with a priority, steps and an expected result" {
+  run node -e "
+    const fs = require('fs');
+    const { parseTestCases, parseTicket, parseBug } = require('$DEMO/tracker-demo.js');
+    let total = 0; const bad = [];
+    for (const t of ['DEMO-101', 'DEMO-102', 'DEMO-103']) {
+      for (const c of parseTestCases(fs.readFileSync('$DEMO/expected/' + t + '-test-cases.md', 'utf8'))) {
+        total += 1;
+        const last = c.steps[c.steps.length - 1];
+        if (!c.priority || !c.steps.length || !last.expected) bad.push(t + '/' + c.tcId);
+      }
+      const tk = parseTicket('$DEMO/tickets/' + t + '.md');
+      if (!tk.title || !tk.description || tk.acceptance.split('\n').filter((l) => /^\\s*\\d+\\./.test(l)).length < 5) bad.push(t + ' ticket');
+    }
+    for (const f of fs.readdirSync('$DEMO/expected').filter((x) => x.startsWith('bug-'))) {
+      const b = parseBug('$DEMO/expected/' + f);
+      if (!b.title || !b.body || !b.priority) bad.push(f);
+    }
+    console.log(total + ' cases; problems: ' + JSON.stringify(bad));
+  "
+  [ "$status" -eq 0 ]
+  [[ "$output" == "26 cases; problems: []" ]]
+}
+
+@test "run-demo.sh --tracker adds Act 8 and still exits 0" {
+  run bash "$DEMO/run-demo.sh" --no-pause --tracker azure
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "Act 8 · Step 1" ]]
+  [[ "$output" =~ "Azure DevOps" ]]
+  [[ "$output" =~ "no duplicate" ]]
+}
+
+@test "run-demo.sh --tracker defaults to github, and the plain tour has no Act 8" {
+  run bash "$DEMO/run-demo.sh" --no-pause --tracker
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "GitHub Issues" ]]
+  run bash "$DEMO/run-demo.sh" --no-pause
+  [[ ! "$output" =~ "Act 8" ]]
+  [[ "$output" =~ "--tracker" ]]   # the wrap-up points at it
+}
+
+@test "run-demo.sh --tracker rejects an unknown tracker name" {
+  run bash "$DEMO/run-demo.sh" --no-pause --tracker bogus
+  [ "$status" -eq 2 ]
+}
+
+@test "the tracker demo writes nothing into the working tree" {
+  before=$(cd "$REPO_ROOT" && git status --porcelain | sort)
+  run node "$DEMO/tracker-demo.js"
+  [ "$status" -eq 0 ]
+  after=$(cd "$REPO_ROOT" && git status --porcelain | sort)
+  [ "$before" = "$after" ]
 }
 
 @test "run-demo.sh does not modify the working tree" {

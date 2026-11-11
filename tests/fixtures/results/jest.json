@@ -1,0 +1,17 @@
+{
+  "numTotalTests": 4, "numPassedTests": 2, "numFailedTests": 1, "numPendingTests": 1, "success": false,
+  "_comment": "hand-written, `jest --json` shape",
+  "testResults": [
+    {
+      "name": "/work/src/cart.test.js", "status": "failed",
+      "assertionResults": [
+        { "ancestorTitles": ["cart"], "title": "DEMO-102/TC-001 sums line items", "fullName": "cart DEMO-102/TC-001 sums line items", "status": "passed", "duration": 3, "failureMessages": [] },
+        { "ancestorTitles": ["cart"], "title": "DEMO-102/TC-002 applies tax", "fullName": "cart DEMO-102/TC-002 applies tax", "status": "failed", "duration": 5,
+          "failureMessages": ["\u001b[31mError: expect(received).toBe(expected)\u001b[39m\n\nExpected: 108\nReceived: 100\n    at Object.<anonymous> (/work/src/cart.test.js:14:20)"] },
+        { "ancestorTitles": ["cart", "shipping"], "title": "DEMO-102/TC-003 free over 50", "fullName": "cart shipping DEMO-102/TC-003 free over 50", "status": "passed", "duration": 1, "failureMessages": [] },
+        { "ancestorTitles": ["cart"], "title": "DEMO-102/TC-004 later", "fullName": "cart DEMO-102/TC-004 later", "status": "pending", "failureMessages": [] }
+      ]
+    },
+    { "name": "/work/src/broken.test.js", "status": "failed", "assertionResults": [], "message": "  ● Test suite failed to run\n\n    Cannot find module './missing' from 'src/broken.test.js'" }
+  ]
+}

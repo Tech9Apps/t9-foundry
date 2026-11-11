@@ -1,0 +1,457 @@
+'use strict';
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const { EventEmitter } = require('events');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { main } = require('../../scripts/results/run');
+const { plan, SUPPORTED } = require('../../scripts/results/frameworks');
+
+const FIX = path.join(__dirname, '..', 'fixtures', 'results');
+const tmp = () => fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), 'qa-run.'));
+const read = (f) => fs.readFileSync(f, 'utf8');
+
+// A stand-in for child_process.spawn: records the call, optionally writes a report where the framework
+// recipe says it will go, then "exits".
+function fakeSpawn({ code = 0, report, writeTo = 'playwright', hang = false, spawnError } = {}) {
+  const calls = [];
+  const spawn = (command, args, options) => {
+    calls.push({ command, args, options });
+    const child = new EventEmitter();
+    child.killed = false;
+    child.kill = () => { child.killed = true; setImmediate(() => child.emit('close', null, 'SIGKILL')); };
+    setImmediate(() => {
+      if (spawnError) return child.emit('error', Object.assign(new Error(spawnError.message || 'spawn failed'), { code: spawnError.code }));
+      if (report) {
+        const target = writeTo === 'playwright' ? options.env.PLAYWRIGHT_JSON_OUTPUT_NAME : writeTo;
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.copyFileSync(path.resolve(FIX, report), target); // `report` is a fixture name or an absolute path
+      }
+      if (!hang) child.emit('close', code, null);
+      return undefined;
+    });
+    return child;
+  };
+  return { spawn, calls };
+}
+
+async function run(argv, { env = {}, ...fake } = {}) {
+  let out = '';
+  let err = '';
+  const f = fakeSpawn(fake);
+  const code = await main({ argv, env, spawn: f.spawn, stdout: { write: (s) => { out += s; } }, stderr: { write: (s) => { err += s; } } });
+  return { code, err, json: out ? JSON.parse(out) : null, calls: f.calls };
+}
+
+const base = (dir, extra = []) => ['--framework', 'playwright', '--out', path.join(dir, 'qa'), ...extra];
+
+test('a failing run: exit 1, runner output kept off stdout, result.json equals what was printed', async () => {
+  const dir = tmp();
+  const r = await run(base(dir), { code: 1, report: 'playwright.json' });
+  assert.equal(r.code, 1);
+  assert.equal(r.json.ok, false);
+  assert.equal(r.json.exitCode, 1);
+  assert.deepEqual(r.json.data.totals, { total: 5, passed: 2, failed: 2, skipped: 1, flaky: 1 });
+  assert.deepEqual(JSON.parse(read(path.join(dir, 'qa', 'result.json'))), r.json);
+  assert.deepEqual(r.calls[0].options.stdio, ['ignore', 2, 2]); // child output → stderr, so stdout stays one JSON document
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('--quiet discards the runner output instead of sending it to stderr', async () => {
+  const dir = tmp();
+  const r = await run(base(dir, ['--quiet']), { code: 1, report: 'playwright.json' });
+  assert.equal(r.calls[0].options.stdio, 'ignore');
+  assert.equal(r.code, 1);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('a passing run: exit 0 and ok', async () => {
+  const dir = tmp();
+  const pass = path.join(dir, 'pass.json');
+  const doc = JSON.parse(read(path.join(FIX, 'playwright.json')));
+  doc.suites[0].suites[0].specs = doc.suites[0].suites[0].specs.slice(0, 1); // only the passing spec
+  fs.writeFileSync(pass, JSON.stringify(doc));
+  const r = await run(base(dir), { code: 0, report: pass, writeTo: 'playwright' }).catch((e) => { throw e; });
+  assert.equal(r.code, 0);
+  assert.equal(r.json.ok, true);
+  assert.equal(r.json.warnings, undefined);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('exit code contradicts the report: nonzero exit but no failures reported is NOT trusted', async () => {
+  const dir = tmp();
+  const pass = path.join(dir, 'pass.json');
+  const doc = JSON.parse(read(path.join(FIX, 'playwright.json')));
+  doc.suites[0].suites[0].specs = doc.suites[0].suites[0].specs.slice(0, 1);
+  fs.writeFileSync(pass, JSON.stringify(doc));
+  const r = await run(base(dir), { code: 137, report: pass });
+  assert.equal(r.code, 3);
+  assert.equal(r.json.ok, false);
+  assert.match(r.json.warnings[0], /exited 137 but its report shows no failures/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('exit 0 but the report has failures: still a failing run, with a warning', async () => {
+  const dir = tmp();
+  const r = await run(base(dir), { code: 0, report: 'playwright.json' });
+  assert.equal(r.code, 1);
+  assert.equal(r.json.ok, false);
+  assert.match(r.json.warnings[0], /exited 0 but its report shows failures/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('the runner wrote no report: NO_REPORT (exit 3), with the exit code and the framework hint', async () => {
+  const dir = tmp();
+  const r = await run(['--framework', 'rspec', '--out', path.join(dir, 'qa')], { code: 1 });
+  assert.equal(r.code, 3);
+  assert.equal(r.json.error.code, 'NO_REPORT');
+  assert.match(r.json.error.message, /rspec exited 1 but wrote no usable report/);
+  assert.match(r.json.error.message, /rspec_junit_formatter/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('a stale report from an earlier run can never stand in for this one', async () => {
+  const dir = tmp();
+  const stale = path.join(dir, 'qa', 'raw');
+  fs.mkdirSync(stale, { recursive: true });
+  fs.copyFileSync(path.join(FIX, 'playwright.json'), path.join(stale, 'results.json'));
+  const r = await run(base(dir), { code: 0 }); // runner "succeeds" but writes nothing
+  assert.equal(r.code, 3);
+  assert.equal(r.json.error.code, 'NO_REPORT');
+  assert.equal(fs.existsSync(path.join(stale, 'results.json')), false);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('a report with zero tests is NO_REPORT, not a pass', async () => {
+  const dir = tmp();
+  const empty = path.join(dir, 'empty.json');
+  fs.writeFileSync(empty, JSON.stringify({ config: {}, suites: [], stats: {} }));
+  const r = await run(base(dir), { code: 0, report: empty });
+  assert.equal(r.code, 3);
+  assert.match(r.json.error.message, /zero tests/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('runner not installed: names the missing command', async () => {
+  const dir = tmp();
+  const r = await run(base(dir), { spawnError: { code: 'ENOENT' } });
+  assert.equal(r.code, 3);
+  assert.match(r.json.error.message, /npx is not installed or not on PATH/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('a hung run is killed at --timeout-ms and reported as incomplete', async () => {
+  const dir = tmp();
+  const r = await run(base(dir, ['--timeout-ms', '30']), { hang: true });
+  assert.equal(r.code, 3);
+  assert.match(r.json.error.message, /killed after 30ms/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// ── review findings ─────────────────────────────────────────────────────────────────────────────
+
+const skippedDoc = (n = 3) => {
+  const doc = { config: {}, stats: {}, suites: [{ title: 'a.spec.ts', specs: [], suites: [{ title: 's', specs: Array.from({ length: n }, (_, i) => ({ title: `skipped ${i}`, file: 'a.spec.ts', line: i + 1, tests: [{ projectName: 'chromium', status: 'skipped', results: [] }] })), suites: [] }] }] };
+  return doc;
+};
+
+test('a run in which EVERY test was skipped is exit 3, not a pass (nothing was verified)', async () => {
+  const dir = tmp();
+  const file = path.join(dir, 'skipped.json'); fs.writeFileSync(file, JSON.stringify(skippedDoc(3)));
+  const r = await run(base(dir), { code: 0, report: file });
+  assert.equal(r.code, 3);
+  assert.equal(r.json.ok, false);
+  assert.equal(r.json.error.code, 'NO_REPORT');
+  assert.match(r.json.error.message, /every one of the 3 test\(s\) was skipped, so nothing was verified/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('--allow-all-skipped lets an intentionally all-skipped run through; a mix of skipped and passed never needed it', async () => {
+  const dir = tmp();
+  const file = path.join(dir, 'skipped.json'); fs.writeFileSync(file, JSON.stringify(skippedDoc(2)));
+  const allowed = await run(base(dir, ['--allow-all-skipped']), { code: 0, report: file });
+  assert.equal(allowed.code, 0);
+  assert.equal(allowed.json.ok, true);
+  assert.deepEqual(allowed.json.data.totals, { total: 2, passed: 0, failed: 0, skipped: 2 });
+  const mixed = await run(base(dir), { code: 1, report: 'playwright.json' }); // has passed, failed and skipped tests
+  assert.equal(mixed.code, 1);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('a run in which every test FAILED is still a failure (exit 1) — the all-skipped guard must not relabel it', async () => {
+  const dir = tmp();
+  const doc = { config: {}, stats: {}, suites: [{ title: 'a.spec.ts', specs: [], suites: [{ title: 's', specs: [1, 2].map((i) => ({ title: `fails ${i}`, file: 'a.spec.ts', line: i, tests: [{ projectName: 'chromium', status: 'unexpected', results: [{ status: 'failed', error: { message: 'Error: expected 1 to be 2' } }] }] })), suites: [] }] }] };
+  const file = path.join(dir, 'failed.json'); fs.writeFileSync(file, JSON.stringify(doc));
+  const r = await run(base(dir), { code: 1, report: file });
+  assert.equal(r.code, 1);
+  assert.equal(r.json.ok, false, 'the suite did not pass');
+  assert.equal(r.json.error, undefined, 'but a real report was read: this is a failing run, not a NO_REPORT');
+  assert.deepEqual(r.json.data.totals, { total: 2, passed: 0, failed: 2, skipped: 0 });
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('a value that starts with "-" cannot reach the test runner as an option (a spec of --import=./x.js would make node load it)', async () => {
+  for (const flag of ['--spec', '--test-dir', '--config-file']) {
+    for (const value of ['--import=./evil.js', '-r evil', '--config=evil']) {
+      const r = await run(['--framework', 'node', flag, value, '--out', tmp()]);
+      assert.equal(r.code, 2, `${flag} ${value}`);
+      assert.match(r.err, /starts with "-"/);
+      assert.equal(r.calls.length, 0, 'the runner was never started');
+    }
+  }
+  const ok = await run(['--framework', 'node', '--spec', './-odd-name.test.js', '--spec', 'tests/a.test.js', '--out', tmp(), '--dry-run']);
+  assert.equal(ok.code, 0, 'a path that really starts with "-" is fine when written ./-name');
+  assert.match(ok.json.command, /\.\/-odd-name\.test\.js tests\/a\.test\.js/);
+});
+
+test('it will not clear a raw/ directory that holds files that are not test reports (--out is caller-controlled)', async () => {
+  const dir = tmp();
+  const raw = path.join(dir, 'qa', 'raw'); fs.mkdirSync(raw, { recursive: true });
+  fs.writeFileSync(path.join(raw, 'precious.txt'), 'somebody\'s file');
+  const r = await run(base(dir), { code: 0, report: 'playwright.json' });
+  assert.equal(r.code, 2);
+  assert.match(r.err, /refusing to clear .*raw: it holds files that are not test reports \(precious\.txt\)/);
+  assert.equal(r.calls.length, 0);
+  assert.equal(fs.readFileSync(path.join(raw, 'precious.txt'), 'utf8'), 'somebody\'s file', 'untouched');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('it still clears a raw/ directory that holds only reports, an empty one, or one it created itself (marker) — whatever the reports are named', async () => {
+  const dir = tmp();
+  const raw = path.join(dir, 'qa', 'raw'); fs.mkdirSync(raw, { recursive: true });
+  fs.copyFileSync(path.join(FIX, 'playwright.json'), path.join(raw, 'results.json'));   // a previous report
+  const first = await run(base(dir), { code: 1, report: 'playwright.json' });
+  assert.equal(first.code, 1);
+  assert.ok(fs.existsSync(path.join(raw, '.qa-results-raw')), 'the marker is written');
+  fs.writeFileSync(path.join(raw, 'wdio-0-0-reporter.log'), 'a framework chose its own file name');
+  const second = await run(base(dir), { code: 1, report: 'playwright.json' });
+  assert.equal(second.code, 1, 'a marked directory is ours, so it is cleared');
+  assert.ok(!fs.existsSync(path.join(raw, 'wdio-0-0-reporter.log')));
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('--dry-run prints the plan and runs nothing, creates nothing', async () => {
+  const dir = tmp();
+  const r = await run(base(dir, ['--spec', 'login.spec.ts', '--headed', '--dry-run']));
+  assert.equal(r.code, 0);
+  assert.equal(r.calls.length, 0);
+  assert.equal(fs.existsSync(path.join(dir, 'qa')), false);
+  assert.equal(r.json.dryRun, true);
+  assert.match(r.json.command, /^npx playwright test login\.spec\.ts --headed --reporter=list,json$/);
+  assert.deepEqual(r.json.env, ['PLAYWRIGHT_JSON_OUTPUT_NAME']);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('framework, test dir and config path default from qa-config.json (explicit flags win)', async () => {
+  const dir = tmp();
+  const cfg = path.join(dir, 'config.json');
+  fs.writeFileSync(cfg, JSON.stringify({ testFramework: { type: 'pytest', testDir: 'tests/e2e', configPath: 'x.ini' } }));
+  const r = await run(['--config', cfg, '--out', path.join(dir, 'qa'), '--dry-run']);
+  assert.match(r.json.command, /^python -m pytest tests\/e2e -v --junitxml=/);
+  const over = await run(['--config', cfg, '--framework', 'jest', '--test-dir', 'src', '--out', path.join(dir, 'qa'), '--dry-run']);
+  assert.match(over.json.command, /^npx jest src --verbose --json --outputFile=/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('usage errors: exit 2 with a reason on stderr and nothing on stdout', async () => {
+  const dir = tmp();
+  const cfgNoFramework = path.join(dir, 'empty-config.json');
+  fs.writeFileSync(cfgNoFramework, '{}');
+  const cases = [
+    [['--framework', 'selenium', '--out', dir], /no built-in structured-results recipe for "selenium"/],
+    [['--framework', 'other', '--out', dir], /normalize\.js/],
+    [['--out', dir, '--config', cfgNoFramework], /no framework/],
+    [['--out', dir, '--config', path.join(dir, 'none.json')], /cannot read .*none\.json/],
+    [['--bogus'], /unknown option --bogus/],
+    [['--framework', 'jest', '--timeout-ms', '0'], /positive number/],
+    [['--framework'], /needs a value/],
+  ];
+  for (const [argv, re] of cases) {
+    const r = await run(argv);
+    assert.equal(r.code, 2, argv.join(' '));
+    assert.match(r.err, re);
+    assert.equal(r.json, null);
+  }
+  assert.equal((await run([])).code, 2);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('REAL run: node --test on a throwaway project, failing then fixed', async () => {
+  const dir = tmp();
+  const proj = path.join(dir, 'proj');
+  fs.mkdirSync(proj);
+  fs.writeFileSync(path.join(proj, 'a.test.js'), "const t=require('node:test');const a=require('node:assert');\nt('DEMO-7/TC-001: adds',()=>a.equal(1+1,2));\nt('DEMO-7/TC-002: breaks',()=>a.equal(1+1,3));\nt('DEMO-7/TC-003: skipped',{skip:true},()=>{});\n");
+  // the inner `node --test` must not think it is a subprocess of THIS test run
+  const env = { ...process.env };
+  delete env.NODE_TEST_CONTEXT;
+  const go = (extra = []) => new Promise((resolve) => {
+    let out = '';
+    main({ argv: ['--framework', 'node', '--cwd', proj, '--spec', 'a.test.js', '--out', path.join(dir, 'qa'), ...extra], env, stdout: { write: (s) => { out += s; } }, stderr: { write: () => {} } })
+      .then((code) => resolve({ code, json: JSON.parse(out) }));
+  });
+  const first = await go();
+  assert.equal(first.code, 1);
+  assert.deepEqual(first.json.data.totals, { total: 3, passed: 1, failed: 1, skipped: 1 });
+  const bad = first.json.data.tests.find((t) => t.status === 'failed');
+  assert.equal(`${bad.ticket}/${bad.caseId}`, 'DEMO-7/TC-002');
+  assert.match(bad.error.details, /2 == 3/);
+
+  fs.writeFileSync(path.join(proj, 'a.test.js'), "const t=require('node:test');const a=require('node:assert');\nt('DEMO-7/TC-001: adds',()=>a.equal(1+1,2));\n");
+  const second = await go();
+  assert.equal(second.code, 0);
+  assert.equal(second.json.ok, true);
+  assert.deepEqual(second.json.data.totals, { total: 1, passed: 1, failed: 0, skipped: 0 });
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// --- recipes ---------------------------------------------------------------------------------------
+test('every supported framework asks for a structured report, and unknown ones have no recipe', () => {
+  for (const framework of SUPPORTED) {
+    const p = plan({ framework, outDir: 'out/raw' });
+    assert.ok(p, framework);
+    const everything = [p.command, ...p.args, ...Object.keys(p.env), ...Object.values(p.env)].join(' ');
+    assert.match(everything, /json|junit|Junit|JUnit|RspecJunitFormatter|QA_RESULTS_DIR/, `${framework} must request a structured report`);
+    assert.ok(path.isAbsolute(p.results), `${framework} results path is absolute`);
+    assert.ok(['junit', 'playwright-json', 'jest-json'].includes(p.format));
+  }
+  for (const framework of ['selenium', 'other', undefined, 'mocha; rm -rf /']) assert.equal(plan({ framework, outDir: 'o' }), null);
+});
+
+test('recipes honour specs, config path and headed — and pass each as its own argument (no shell)', () => {
+  const weird = 'my spec; echo hi.spec.ts';
+  const pw = plan({ framework: 'playwright', outDir: 'o', specs: [weird], configPath: 'pw.config.ts', headed: true });
+  assert.deepEqual(pw.args, ['playwright', 'test', weird, '--config', 'pw.config.ts', '--headed', '--reporter=list,json']);
+  const cy = plan({ framework: 'cypress', outDir: 'o', specs: ['a.cy.js', 'b.cy.js'], configPath: 'cy.json' });
+  assert.deepEqual(cy.args.slice(0, 6), ['cypress', 'run', '--config-file', 'cy.json', '--spec', 'a.cy.js,b.cy.js']);
+  assert.match(cy.args.join(' '), /mochaFile=.*results-\[hash\]\.xml/);
+  assert.equal(plan({ framework: 'pytest', outDir: 'o', testDir: 'tests' }).args[2], 'tests');
+  assert.equal(plan({ framework: 'pytest', outDir: 'o', testDir: 'tests', specs: ['t/x.py'] }).args[2], 't/x.py'); // specs beat the directory
+  // node: reporter options must come BEFORE the files, or node hands them to the test file and writes no report
+  const nd = plan({ framework: 'node', outDir: 'o', specs: ['a.test.js'] }).args;
+  assert.equal(nd[nd.length - 1], 'a.test.js');
+  assert.ok(nd.indexOf('--test-reporter=junit') < nd.indexOf('a.test.js'));
+  assert.deepEqual(plan({ framework: 'webdriverio', outDir: 'o', configPath: 'wdio.conf.js', specs: ['a', 'b'] }).args, ['wdio', 'wdio.conf.js', '--spec', 'a', 'b']);
+});
+
+// --- the previous run must never stand in for this one ---------------------------------------------------
+const resultFile = (dir) => path.join(dir, 'qa', 'result.json');
+
+test('a run that produces no report leaves NO result.json: the previous run\'s is removed first (the commands tell a model to read it)', async () => {
+  const dir = tmp();
+  const first = await run(base(dir), { code: 1, report: 'playwright.json' });
+  assert.equal(first.code, 1);
+  assert.ok(fs.existsSync(resultFile(dir)), 'the first run wrote its result');
+  const exitedZeroWroteNothing = await run(base(dir), { code: 0 });
+  assert.equal(exitedZeroWroteNothing.code, 3);
+  assert.equal(exitedZeroWroteNothing.json.error.code, 'NO_REPORT');
+  assert.equal(fs.existsSync(resultFile(dir)), false, 'run 1\'s result.json must not survive as run 2\'s');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('the same for a run that timed out and for one that could not start', async () => {
+  for (const [name, fake, extra] of [
+    ['timed out', { hang: true }, ['--timeout-ms', '30']],
+    ['could not start', { spawnError: { code: 'ENOENT' } }, []],
+  ]) {
+    const dir = tmp();
+    await run(base(dir), { code: 1, report: 'playwright.json' });
+    assert.ok(fs.existsSync(resultFile(dir)));
+    const r = await run(base(dir, extra), fake);
+    assert.equal(r.code, 3, name);
+    assert.equal(fs.existsSync(resultFile(dir)), false, `${name}: the old result.json is gone`);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('--dry-run only previews: it does not delete a previous result', async () => {
+  const dir = tmp();
+  await run(base(dir), { code: 1, report: 'playwright.json' });
+  const r = await run(base(dir, ['--dry-run']));
+  assert.equal(r.code, 0);
+  assert.ok(fs.existsSync(resultFile(dir)));
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// --- a value from qa-config.json is a runner argument too ------------------------------------------------
+test('testDir and configPath from qa-config.json that start with "-" are refused, like the same values from the command line', async () => {
+  for (const [framework, key, value] of [['pytest', 'testDir', '-pevil_plugin'], ['playwright', 'configPath', '--require=./x.js'], ['webdriverio', 'configPath', '-r=./x.js']]) {
+    const dir = tmp();
+    const cfg = path.join(dir, 'qa-config.json');
+    fs.writeFileSync(cfg, JSON.stringify({ testFramework: { type: framework, [key]: value } }));
+    const r = await run(['--out', path.join(dir, 'qa'), '--config', cfg]);
+    assert.equal(r.code, 2, `${framework} ${key}`);
+    assert.match(r.err, /starts with "-"/);
+    assert.match(r.err, /testFramework\.(testDir|configPath)/);
+    assert.equal(r.calls.length, 0, 'nothing was started');
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  // an ordinary relative value is fine, and so is one written ./-name
+  const dir = tmp();
+  const cfg = path.join(dir, 'qa-config.json');
+  fs.writeFileSync(cfg, JSON.stringify({ testFramework: { type: 'pytest', testDir: './-odd-name' } }));
+  const ok = await run(['--out', path.join(dir, 'qa'), '--config', cfg, '--dry-run']);
+  assert.equal(ok.code, 0);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// --- a timeout (or Ctrl-C, or SIGTERM) stops the whole run, not just the process this tool started ---------
+// `npx playwright test` is a launcher: killing only it leaves the workers and browsers running, writing into a folder the next run clears.
+function realProject(dir, marker, startedMarker) {
+  const proj = path.join(dir, 'proj');
+  fs.mkdirSync(proj, { recursive: true });
+  fs.writeFileSync(path.join(proj, 'hang.test.js'), `
+const { spawn } = require('child_process');
+const fs = require('fs');
+// a worker that outlives its parent unless the whole group is killed, and writes ${JSON.stringify(path.basename(marker))} if it gets to finish
+spawn(process.execPath, ['-e', ${JSON.stringify(`setTimeout(() => require('fs').writeFileSync(${JSON.stringify(marker)}, 'survived'), 1500)`)}], { stdio: 'ignore' }).unref();
+fs.writeFileSync(${JSON.stringify(startedMarker)}, 'started');
+require('node:test')('hangs', () => new Promise(() => setTimeout(() => {}, 60000)));
+setTimeout(() => {}, 60000);
+`);
+  return proj;
+}
+const cleanEnv = () => { const e = { ...process.env }; delete e.NODE_TEST_CONTEXT; return e; };
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+async function until(fn, ms) { const end = Date.now() + ms; while (Date.now() < end) { if (fn()) return true; await sleep(50); } return false; }
+
+test('REAL run: a timeout kills the runner\'s own workers too (a background process it started does not survive)', async () => {
+  const dir = tmp();
+  const marker = path.join(dir, 'survivor.txt');
+  const proj = realProject(dir, marker, path.join(dir, 'started.txt'));
+  let out = '';
+  const code = await main({ argv: ['--framework', 'node', '--cwd', proj, '--spec', 'hang.test.js', '--out', path.join(dir, 'qa'), '--timeout-ms', '900', '--quiet'], env: cleanEnv(), stdout: { write: (s) => { out += s; } }, stderr: { write: () => {} } });
+  assert.equal(code, 3);
+  assert.match(JSON.parse(out).error.message, /killed after 900ms/);
+  await sleep(2200); // long enough for the worker to have finished, had it survived
+  assert.equal(fs.existsSync(marker), false, 'the worker was still running after the timeout');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('REAL run: SIGTERM to run.js (a killed agent, a CI cancel) stops the runner and its workers before run.js exits', async () => {
+  const dir = tmp();
+  const marker = path.join(dir, 'survivor.txt');
+  const started = path.join(dir, 'started.txt');
+  const proj = realProject(dir, marker, started);
+  const script = path.join(__dirname, '..', '..', 'scripts', 'results', 'run.js');
+  const child = require('child_process').spawn(process.execPath, [script, '--framework', 'node', '--cwd', proj, '--spec', 'hang.test.js', '--out', path.join(dir, 'qa'), '--quiet', '--timeout-ms', '60000'], { env: cleanEnv(), stdio: ['ignore', 'pipe', 'pipe'] });
+  const exited = new Promise((resolve) => child.on('exit', (code, signal) => resolve({ code, signal })));
+  assert.ok(await until(() => fs.existsSync(started), 15000), 'the runner never started');
+  child.kill('SIGTERM');
+  const { code, signal } = await Promise.race([exited, sleep(10000).then(() => ({ code: 'still running' }))]);
+  assert.ok(code === 143 || signal === 'SIGTERM', `run.js should exit as terminated, got ${code}/${signal}`);
+  await sleep(2200);
+  assert.equal(fs.existsSync(marker), false, 'the worker was still running after run.js was terminated');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('the signal handlers a run installs are removed when it ends (a caller that runs it twice must not pile them up)', async () => {
+  const before = ['SIGINT', 'SIGTERM', 'SIGHUP'].map((s) => process.listenerCount(s));
+  const dir = tmp();
+  await run(base(dir), { code: 1, report: 'playwright.json' });
+  await run(base(dir, ['--timeout-ms', '20']), { hang: true });
+  await run(base(dir), { spawnError: { code: 'ENOENT' } });
+  assert.deepEqual(['SIGINT', 'SIGTERM', 'SIGHUP'].map((s) => process.listenerCount(s)), before);
+  fs.rmSync(dir, { recursive: true, force: true });
+});

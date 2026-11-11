@@ -114,6 +114,10 @@ bats tests/preflight.bats
 bats tests/layer5-guard.bats        # TS guards; needs Node >= 22.6 (type stripping)
 bats tests/layer5-guard-py-rb.bats  # pytest/selenium/rspec guards; needs python3 + ruby
 bats tests/demo.bats                # the embedded demo project must keep behaving as documented
+bats tests/tracker.bats             # tracker adapters (GitHub/ClickUp/Azure/GitLab/Bitbucket) + CLIs + smoke script, against in-process mocks
+bats tests/results.bats             # structured test results: parsers, framework recipes, runner
+bats tests/commands-adapter-drift.bats  # command prose vs the CLIs it tells a model to call
+bats tests/evals.bats               # golden scenario evals (3 demo tickets x 3 trackers x failure drills)
 ```
 
 **Run a single test by name pattern:**
@@ -130,6 +134,10 @@ npm install --prefix tests/
 ```bash
 bash scripts/check-prereqs.sh
 ```
+
+**Tracker adapters** (`scripts/tracker/`, documented in `docs/tracker-adapters.md`): one tested CLI/JSON contract (`fetch`, `search`, `create-test`, `link`, `comment`, `create-bug`) in front of GitHub, ClickUp, Azure DevOps, GitLab and Bitbucket, with normalized errors, read-only retries and `idempotencyKey` support. `fetch-ticket.md`, `post-tests.md`, `file-bug.md` and the automation agent's results step call it for those five sources (Jira stays on the MCP until headless auth is decided). `scripts/tracker/post-tests.js` posts a ticket's test cases in bulk, idempotently and resumably. `tests/commands-adapter-drift.bats` fails if the prose and the code disagree; `node evals/run.js` runs the golden scenario evals. **These are verified against mocks, not real trackers:** `scripts/tracker/smoke.js` (needs a token and a scratch project; `--yes` to actually write) is how to check a real one — see the verification table in `docs/tracker-adapters.md`.
+
+**Structured test results** (`scripts/results/`, documented in `docs/test-results.md`): `run.js --framework <f>` runs a suite so it also writes a JUnit/TAP/JSON report and normalizes it (`normalize.js` handles an existing report) into `schemas/run-result.schema.json`. `run-spec-tests.md` and the demo read results this way instead of scraping console output. Exit 3 means "no trustworthy report" (crash, hang, zero tests, or exit code contradicting the report) and is never a pass.
 
 **The embedded demo** (`demo/`): `bash demo/run-demo.sh` is the 2-minute tour; `/demo` is the guided version. `demo/app` has two *planted* bugs — `cd demo/app && npm test` is expected to show 2 failures (`DEMO-101/TC-005`, `DEMO-102/TC-006`), and `tests/demo.bats` pins exactly that. Don't "fix" them in `src/`; the fixes live in `demo/fixes.patch`.
 
@@ -152,7 +160,7 @@ To add a skill: create `.claude/skills/{name}.md` with a `## When to invoke` sec
 
 **`.claude/commands/*.md` + `.claude/agents/*.md`** — the ticket-driven fast path for Jira/Azure DevOps/ClickUp/GitHub Issues/no-ticket-system. Commands are formally-registered slash commands (visible via the `Skill` tool), each covering one pipeline step (`fetch-ticket`, `analyze-code`, `create-manual-test-cases`, `create-automated-test-cases`, `post-tests`, `run-spec-tests`). Subagents (`Manual-test-generator`, `Manual-Automation-test-generator`, `Bug-reporter`, `Regression-pack-generator`) compose these steps into a pipeline: each step is "read the command file, execute its instructions, carry a checkpoint forward." This path runs fetch-ticket and analyze-code as parallel agents and isolates heavy read work in subagent context, so it is the faster option for the sources it covers. Per-ticket-source branching lives *inside* `fetch-ticket.md`/`post-tests.md` (one file, branch on `ticketSource.type`) — do not reintroduce per-source files (`fetch-jira-ticket.md` etc.); that pattern was consolidated on 2026-07-17 because it triplicated ~90% identical boilerplate across sources.
 
-This path is intentionally narrower than `.claude/skills/*.md`, which remains authoritative for: initial workspace setup/scaffolding (`/init`, `/connect-tickets`, `/connect-repo`, `/setup-e2e-framework`, `/setup-ci`), the structured test-plan artifact stage (`/create-test-plan`), multi-format test-case output (Gherkin/Robot Framework/ClickUp-checklist via `/write-test-cases`), multi-framework e2e authoring/execution (Cypress/pytest/RSpec/Jest/WebDriverIO via `/write-e2e-tests`/`/run-tests`), and GitLab/Bitbucket ticket + code access. Adding a ticket source to the commands path means updating both `.claude/guides/integration-sources.md` and the branches in `fetch-ticket.md`/`post-tests.md`.
+This path is intentionally narrower than `.claude/skills/*.md`, which remains authoritative for: initial workspace setup/scaffolding (`/init`, `/connect-tickets`, `/connect-repo`, `/setup-e2e-framework`, `/setup-ci`), the structured test-plan artifact stage (`/create-test-plan`), multi-format test-case output (Gherkin/Robot Framework/ClickUp-checklist via `/write-test-cases`), multi-framework e2e authoring/execution (Cypress/pytest/RSpec/Jest/WebDriverIO via `/write-e2e-tests`/`/run-tests`), and code access for repos without a local clone (GitLab/Bitbucket APIs). Adding a ticket source to the commands path means updating `.claude/guides/integration-sources.md` and, for an adapter-backed source, registering the adapter and naming it in the adapter section of `fetch-ticket.md`/`post-tests.md`/`file-bug.md` (the drift test enforces this).
 
 **`.claude/guides/*.md`** — Reference content imported into `CLAUDE.md` at runtime via `@filename` syntax (e.g., `@.claude/guides/integration-sources.md`). Guides cover: ticket source APIs, e2e authoring standards, and output path conventions.
 

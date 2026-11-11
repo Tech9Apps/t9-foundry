@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # The 2-minute tour: no install, no AI, no network, nothing in your tree is modified.
 #
-#   bash demo/run-demo.sh               # paced — press Enter between acts
-#   bash demo/run-demo.sh --no-pause    # straight through (also automatic when not a terminal)
+#   bash demo/run-demo.sh                    # paced — press Enter between acts
+#   bash demo/run-demo.sh --no-pause         # straight through (also automatic when not a terminal)
+#   bash demo/run-demo.sh --tracker [name]   # add Act 8: post everything to an in-memory tracker
+#                                            #   (github | clickup | azure | gitlab | bitbucket; default github)
 #
 # What it shows (all real — the same hooks, scripts and tests the harness uses):
 #   1. a ticket and the acceptance criteria a tester starts from
@@ -23,12 +25,17 @@ APP="$HERE/app"
 EXPECTED_FAILS="DEMO-101/TC-005 DEMO-102/TC-006"
 
 PAUSE=1
-for arg in "$@"; do
-  case "$arg" in
+TRACKER=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
     --no-pause|--ci) PAUSE=0 ;;
-    -h|--help) sed -n '2,17p' "${BASH_SOURCE[0]}"; exit 0 ;;
-    *) echo "Unknown option: $arg" >&2; exit 2 ;;
+    --tracker)
+      TRACKER="github"
+      case "${2:-}" in github|clickup|azure|gitlab|bitbucket) TRACKER="$2"; shift ;; esac ;;
+    -h|--help) sed -n '2,20p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    *) echo "Unknown option: $1" >&2; exit 2 ;;
   esac
+  shift
 done
 [ -t 0 ] || PAUSE=0
 
@@ -61,7 +68,8 @@ echo "${D}Project: Brew & Co, a tiny coffee-shop checkout. Local only; nothing l
 act 1 "A ticket lands"
 say "Product hands QA a story. This is DEMO-101 — the acceptance criteria are where every test starts:"
 echo ""
-sed -n '/^### Acceptance Criteria/,/^## Technical Notes/p' "$HERE/tickets/DEMO-101.md" | sed '$d' | sed 's/^/   /'
+say "${B}Acceptance criteria${N}"
+sed -n '/^### Acceptance Criteria/,/^## Technical Notes/p' "$HERE/tickets/DEMO-101.md" | sed '1,2d;$d' | sed 's/\*\*//g; s/^/   /'
 say "${D}(There are two more tickets: DEMO-102 pricing, DEMO-103 sign-in lockout.)${N}"
 pause
 
@@ -80,11 +88,17 @@ act 3 "Run the automated checks against the app"
 say "Most of the cases are automated as plain Node API checks (no browser, no install; the few UI-only"
 say "cases stay manual). Running ${B}cd demo/app && npm test${N}:"
 echo ""
-TAP="$TMP/tap.txt"
-( cd "$APP" && node --test --test-reporter=tap >"$TAP" 2>&1 )
-PASS=0; FAIL=0; FAILED_NAMES=""
+# The structured way: run the suite, let the harness's normalizer read the report (no scraping console output).
 # "status|DEMO-101/TC-005: title", sorted by ticket then case (node runs files concurrently)
-RESULTS=$(grep -E '^\s*(not ok|ok) [0-9]+ - DEMO-' "$TAP" | sed -E 's/^[[:space:]]*(not ok|ok) [0-9]+ - /\1|/' | sort -t'|' -k2,2)
+node "$ROOT/scripts/results/run.js" --framework node --cwd "$APP" --out "$TMP/qa-run" --quiet >/dev/null 2>&1 || true
+[ -f "$TMP/qa-run/result.json" ] || problem "the test run produced no structured result"
+PASS=0; FAIL=0; FAILED_NAMES=""
+RESULTS=$(node -e '
+  const d = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).data;
+  d.tests.filter((t) => t.ticket)
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .forEach((t) => console.log((t.status === "failed" ? "not ok" : "ok") + "|" + t.name));
+' "$TMP/qa-run/result.json")
 while IFS='|' read -r status full; do
   [ -n "$full" ] || continue
   if [ "$status" = "not ok" ]; then
@@ -159,13 +173,24 @@ cp -R "$APP" "$TMP/app-fixed"
 if patch -p1 -d "$TMP/app-fixed" --silent < "$HERE/fixes.patch"; then
   grep -E '^[-+] ' "$HERE/fixes.patch" | sed 's/^/     /'
   echo ""
-  RESULT=$( cd "$TMP/app-fixed" && node --test --test-reporter=tap 2>&1 | grep -E '^# (pass|fail)' | tr '\n' ' ' )
+  node "$ROOT/scripts/results/run.js" --framework node --cwd "$TMP/app-fixed" --out "$TMP/qa-fixed" --quiet >/dev/null 2>&1 || true
+  RESULT=$( node -e 'const t = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).data.totals; console.log(t.passed + " passed, " + t.failed + " failed")' "$TMP/qa-fixed/result.json" 2>/dev/null )
   say "Re-running the same checks → ${B}${RESULT}${N}"
-  echo "$RESULT" | grep -q '# fail 0' && say "${G}✓ Green.${N} Those two checks are now regression tests that guard the fix." || problem "fixed app still has failures"
+  [ "${RESULT##*, }" = "0 failed" ] && say "${G}✓ Green.${N} Those two checks are now regression tests that guard the fix." || problem "fixed app still has failures"
 else
   problem "fixes.patch did not apply"
 fi
 pause
+
+# ── Act 8 (opt-in) ────────────────────────────────────────────────────────────
+if [ -n "$TRACKER" ]; then
+  say ""
+  say "${D}Connecting to an in-memory tracker (no network): the real adapter CLI, schemas and idempotency logic.${N}"
+  node "$HERE/tracker-demo.js" --embedded --tracker "$TRACKER"
+  rc=$?
+  [ "$rc" -eq 0 ] || problem "the tracker demo reported a problem (exit $rc)"
+  pause
+fi
 
 # ── Wrap ──────────────────────────────────────────────────────────────────────
 echo ""
@@ -174,6 +199,7 @@ say "ticket → test cases → automated run → triage → bug report, with pro
 say "Done by hand, that is a lot of reading, writing, running and write-up. The harness does the legwork;"
 say "people keep the judgment calls (is this release-blocking? is the requirement itself right?)."
 echo ""
+[ -n "$TRACKER" ] || say "${B}See it post to a tracker${N}:  bash demo/run-demo.sh --tracker   ${D}(github | clickup | azure | gitlab | bitbucket)${N}"
 say "${B}Try it for real${N} (about 15 minutes, needs Claude Code):  open this repo in Claude Code and run  ${B}/demo${N}"
 say "${B}Read more${N}: demo/README.md  ·  sample outputs: demo/expected/  ·  the app: demo/app/"
 echo ""

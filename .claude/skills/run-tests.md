@@ -43,7 +43,16 @@ Trigger phrases: "run tests", "run my tests", "execute tests", "run the test sui
    via their own config (see per-framework notes below). Never hardcode the URL in the
    command string itself.
 
-   Per-framework commands (run from `testFramework.testDir` or the repo root):
+   **Run it through the results runner.** It starts the framework with a structured reporter, so step 5 reads data
+   instead of scraping console text:
+
+   ```
+   BASE_URL="{testEnvironmentBaseUrl}" node scripts/results/run.js --framework {testFramework.type} --out qa-results
+   ```
+   (`--test-dir`, `--config-file` and `--spec` default from `qa-config.json`; `--dry-run` prints the exact command.)
+   Frameworks without a recipe (`selenium`, `other`) run with their own command below, and you then point
+   `node scripts/results/normalize.js <their report>` at the JUnit/TAP/JSON report they write.
+   The per-framework commands below are what the runner executes — useful for understanding a failure, not to run by hand:
 
    ### Playwright
    ```
@@ -80,13 +89,16 @@ Trigger phrases: "run tests", "run my tests", "execute tests", "run the test sui
    BASE_URL="{testEnvironmentBaseUrl}" npx wdio {testFramework.configPath}
    ```
 
-5. **Parse the output**
-   Extract pass/fail/skip counts from the command output:
-   - Playwright: look for `X passed`, `Y failed`, `Z skipped` in the summary line
-   - Cypress: look for `X passing`, `Y failing` in the run summary
-   - pytest: look for `X passed`, `Y failed`, `Z skipped` in the final line
-   - RSpec: look for `X examples, Y failures, Z pending`
-   - Jest: look for `Tests: X passed, Y failed, Z skipped`
+5. **Read the result**
+   `run.js` prints one JSON document (also saved as `qa-results/result.json`). Take everything from it — do not parse
+   console output:
+   - counts: `data.totals.total`, `passed`, `failed`, `skipped`, and `flaky` if present
+   - each failed test in `data.tests` (`status: "failed"`): `name`, `ticket` / `caseId` (when the test name carries
+     them), `error.kind` (`failure` | `error` | `timeout`), `error.message`, `error.details`
+   - exit code: **0** all passed · **1** some failed · **3** no trustworthy report (could not start, killed, wrote
+     nothing, zero tests, or the exit code contradicts the report — report `error.message` / `warnings`, and never call
+     it a pass)
+   - a test with `flaky: true` passed only after a retry: report it as passed, but flag it
 
    Collect the name and first error line of each failing test.
 

@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "tracker-create-result.schema.json",
+  "title": "Result of create-test / create-bug",
+  "type": "object",
+  "required": ["id", "deduplicated"],
+  "additionalProperties": false,
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "url": { "type": "string" },
+    "deduplicated": { "type": "boolean", "description": "true when an item carrying the same idempotencyKey already existed and was returned instead of creating a new one" },
+    "repaired": { "type": "boolean", "description": "true when that existing item was half-built by an earlier failed attempt and this call finished it" }
+  }
+}

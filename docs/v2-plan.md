@@ -51,12 +51,26 @@ Fix what is wrong today and make unattended runs *safe to attempt*.
 
 ## Phase 1 — Make the harness verifiable *(large; prerequisite for everything below)*
 
+> **Status — built and verified against mocks; not verified against real trackers.**
+>
+> | # | Item | State |
+> |---|---|---|
+> | 1 | Tracker adapters | **Done** for GitHub, ClickUp, Azure DevOps, GitLab, Bitbucket. **Jira is descoped:** it stays on the Atlassian MCP (interactive only) until the headless-auth approach is decided. |
+> | 2 | Mock trackers | **Done**, as in-process `fetch` mocks rather than HTTP servers (faster, deterministic, and the dev sandbox cannot bind ports), with failure injection. |
+> | 3 | Artifact schemas | **Done** for ticket, search/create/link/comment results, errors, tool inputs, test-keys, **bug receipt** and **run result**. The ledger record waits for Phase 3. |
+> | 4 | Structured test results | **Done**: `scripts/results/{normalize,run,frameworks}.js`, see [test-results.md](./test-results.md). Verified on real `node --test` output; the other frameworks' recipes are pinned by tests but **not yet run against the live tools**. |
+> | 5 | Evals | **Deterministic scenario evals done** (3 golden tickets × 5 trackers + failure drills, 145 checks). The **model-in-the-loop eval is deferred** (it costs money and needs a nightly job). |
+>
+> **Exit criteria:** every tracker branch exercised against a mock with injected failures — *met*; one golden ticket end-to-end per source — *met on mocks*; results normalize for every supported framework — *met for the formats, recipes unverified live*. **Not met, by decision:** anything against a real tracker. `scripts/tracker/smoke.js` is the tool for that; until someone with a token runs it, treat the adapters as "mock-verified" ([verification table](./tracker-adapters.md#verification-status)).
+>
+> The original text of each item follows, unedited apart from item 4's file names.
+
 1. **Tracker adapters (F5, F7).** Replace curl prose with `scripts/tracker/<source>` commands behind one JSON contract:
    `fetch <id>`, `search <query>`, `create-test`, `link`, `comment`, `create-bug`, each emitting/consuming JSON validated by schemas in `schemas/`.
    `.claude/commands/*.md` shrink to "call the adapter" (still branch-free). Sources: azure, clickup, github, gitlab, bitbucket (REST) and **jira via REST + `JIRA_API_TOKEN`** for headless; the MCP path stays for interactive Jira.
 2. **Mock trackers** in `tests/mocks/` (small Node HTTP servers, one per REST source) with failure injection: 404, 500, timeout, partial batch failure, duplicate create. Adapter bats tests run against them in CI.
 3. **Artifact schemas** (`schemas/*.schema.json`): ticket context, test-keys, bug receipt, run result, ledger record. Validate in tests and at runtime.
-4. **Structured test results.** `scripts/run-tests.sh <framework>` runs the suite with a JSON reporter (Playwright `json`, Cypress mochawesome/JUnit, pytest `--junitxml`, RSpec JSON formatter, WDIO JSON) and `scripts/normalize-results.js` emits one `run-result.schema.json` document. Replaces `--reporter=list` scraping and the Playwright-only restriction.
+4. **Structured test results.** `scripts/results/run.js --framework <f>` runs the suite with a structured reporter (Playwright `json`, Cypress/pytest/RSpec/WDIO JUnit, Jest `--json`) and `scripts/results/normalize.js` emits one `run-result.schema.json` document. Replaces `--reporter=list` scraping and the Playwright-only restriction.
 5. **Evals** (`evals/`): 3–5 golden tickets + a tiny sample app repo + expected-property assertions (TC count range, artifact schemas valid, correct adapter calls recorded by the mock, checkpoints present, prod-guard untouched). Runner `scripts/eval.sh` uses `claude -p … --output-format json` against mocks. Deterministic assertions run on every PR; the model-calling eval runs nightly and on demand (cost).
 - **Exit criteria:** every tracker branch exercised in CI against a mock with at least one injected failure; one golden ticket passes end-to-end per source; results normalize for all supported frameworks.
 
