@@ -212,5 +212,13 @@ were places where a real product bug could be reported as something else at a co
   a verdict token that is not a fingerprint token is refused (it names a file).
 - **The drift checks** pin the agent's exact tool allowlist and the human-gate sentences.
 - `triage.trustedFormats` never existed; the prose said it did. `--trusted-formats` is the only mechanism.
+- **Second pass over those fixes** (the re-review found the same mistakes in other forms, and one regression of mine): clearing earlier runs' files
+  is by ownership (name AND JSON shape), never by name alone, so a user's `snapshots/` or `plan.json` in `--out` survives; TST-2 "strong" excludes
+  everything the app can cause (a body that is not JSON, `page.evaluate`, "originated from your application", a missing module), and a project root of
+  `/` or empty turns directory patterns off; ENV-2 compares against status codes that exist; the locator scanner exposes every test attribute of an element,
+  ends comments as HTML does and refuses (rather than cuts) a page over 64 MB; `redactSecrets` masks assignment syntax always and prose only when the value
+  looks like a secret, and masks before it cuts; ClickUp reads "Closed as duplicate" and "Rejected by PM" as dismissed and "Rejected by QA" as active; the plan's
+  lookup caveat rides on every step; `--run-id` takes any 1-128 printable characters (odd ones are hashed into the key); and the drift checks pin the exact
+  LINE of every gate (tests/helpers/triage-prose-pins.json; `--write-pins` regenerates it after a deliberate change).
 - **Accepted, documented:** results of a re-run repeat whole spec files (side effects included); trust is keyed on the format name, not the runner, so
   a TAP report from another producer fed straight to `classify.js` inherits TAP's privilege (the orchestrator only produces TAP from `node`).

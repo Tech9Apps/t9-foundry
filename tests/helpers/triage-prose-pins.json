@@ -1,0 +1,47 @@
+{
+  ".claude/commands/run-and-triage.md": [
+    "never promote a `propose` to an action.**",
+    "   `testFramework.type` is unset), run the production guard (stop if `testEnvironmentBaseUrl` matches a production",
+    "   pattern), and confirm the target environment with the engineer before running anything.",
+    "   only file you write. Never capture from production.",
+    "| `step` | What it means | What you do |",
+    "| `file-bug` | a real product bug, nothing on file | delegate to the **Bug-reporter** agent (below) |",
+    "| `file-regression` | the only matching report is **closed**: the defect came back | delegate to **Bug-reporter**; the new bug must link the closed one (`regressionOf`) |",
+    "| `comment-existing` | an **open** report already covers it | show the user the comment (`commentInput.body`) and the existing report; **only on their yes**, run `node scripts/tracker/cli.js comment --input-file qa-results/comments/<token>.json` (the action's `commentInputFile`: the plan already wrote it, so you write nothing) |",
+    "| `report-dismissed` | the only report with this fingerprint was closed **without a fix** (won't fix, not planned, duplicate…) | **report only**: say which report and how it was closed. File nothing and comment on nothing: this is not a regression of a fix. If the user thinks that decision was wrong, they re-open it themselves. |",
+    "| `duplicate-in-run` | the same defect as another failure in this run | nothing: it is covered by `duplicateOf` |",
+    "| `propose-test-fix` | the test is stale or crashed (a test-bug) | **report only**: name the cause and the candidate selector. **Edit nothing** — self-healing is not enabled. |",
+    "| `report-flaky` | passes and fails with no change | **report only**, with the attempts. Never file it. |",
+    "| `report-environment` | the environment was down or unreachable | **report only**, with the advice to re-run when it is healthy. Never file it. |",
+    "| `propose` | not confident enough to act, **or** held back because the runner format is unverified (`cap`) | **report only**: show the verdict, its confidence, its `alternatives` (or the `cap` reason), and what evidence would settle it |",
+    "Only `product-bug` verdicts at or above the confidence threshold ever reach `file-bug`, `file-regression` or",
+    "`comment-existing`. Nothing is filed, commented or edited without the human review gate.",
+    "`/file-bug` pipeline, including its human review gate; relay any approval request to the user and wait."
+  ],
+  ".claude/agents/QA-run-orchestrator.md": [
+    "tools: Read, Bash, Grep, Glob, Agent, AskUserQuestion",
+    "model: opus",
+    "maxTurns: 60",
+    "only. Never touch a production URL.",
+    "   never start any agent except `Bug-reporter` for a `file-bug` or `file-regression` step, and never `git commit` or `git push`. A stale",
+    "   test is *proposed* for a human to fix; nothing is healed. Only `product-bug` verdicts ever become bug reports, and only through",
+    "3. **Nothing from a failure goes on a command line.** A test title, an error message or a selector can hold a quote or `$(...)`.",
+    "warnings, tracker failures, and results you could not trust (exit 3). Never fabricate a verdict, a reproduction or an"
+  ],
+  ".claude/memory/failure-triage-rules.md": [
+    "Only `product-bug` ever becomes a bug report. Filing a bug for a flaky test, a stale selector or an outage is the",
+    "A low-confidence verdict is a proposal **regardless of any autonomy setting**. Never round a confidence up.",
+    "Formats trusted by default: **tap**. Widen the list with `--trusted-formats` only after checking a format on real failures.",
+    "- Never file a bug for `flaky`, `environment`, `test-bug` or `undetermined`.",
+    "- Never edit a test, a page object, or the app as part of triage. (Self-healing is a separate, not yet enabled capability.)",
+    "- Never put text from a failure (a test title, an error message, a selector) on a command line or inside a shell string: it can contain",
+    "- Never close, reopen or re-prioritize an existing bug.",
+    "- Never claim a failure \"reproduced\" or \"is flaky\" without the attempts that show it. The report lists them.",
+    "- Never present a `propose` as a decision. Say \"proposed\" and what you would need to be sure.",
+    "- Never run anything against production (the production protection layers still apply)."
+  ],
+  ".claude/commands/file-bug.md": [
+    "**PRODUCTION PROHIBITION — ABSOLUTE.** Reproduction happens against `environments.testEnvironmentBaseUrl` only. If the failure was observed on production, reproduce it on staging — never touch the production URL.",
+    "**Wait for the user's response. Do NOT file anything until they explicitly approve.** Apply any feedback and re-present until approved."
+  ]
+}

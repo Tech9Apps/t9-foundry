@@ -133,5 +133,35 @@ if (!agent.includes('.claude/commands/run-and-triage.md')) bad(`${AGENT}: does n
 for (const c of [...cmd.matchAll(/`(\*\*✅ [^`]+\*\*)`/g)].map((m) => m[1])) if (!/^\*\*✅ .+\*\*$/.test(c)) bad(`${CMD}: malformed checkpoint ${c}`);
 if (![...cmd.matchAll(/`\*\*✅ [^`]+\*\*`/g)].length) bad(`${CMD}: no checkpoint lines`);
 
+// ── whole-line pins ──────────────────────────────────────────────────────────
+// The checks above look for a phrase being PRESENT, so a rule that is weakened by appending an exception ("…, or automatically when the user ran with
+// --yes") or reversed in place passes them. These pin the exact LINE of every rule that keeps a human in the loop: the whole step table, the gate and
+// production sentences, the agent's model/turn limit, and the rubric's "never" rules. The pins are in triage-prose-pins.json beside this file.
+// Changing one of these lines on purpose is a decision: edit the prose, run `node tests/helpers/orchestrator-drift-check.js --write-pins`, and review the diff.
+const FILEBUG = '.claude/commands/file-bug.md';
+const RUBRIC = '.claude/memory/failure-triage-rules.md';
+const PIN_SELECTORS = {
+  [CMD]: (l) => /^\| `[a-z-]+` \|/.test(l) || /never promote|run the production guard|confirm the target environment|Never capture from production|Only `product-bug` verdicts at or above|relay any approval request|Nothing is filed, commented or edited/.test(l),
+  [AGENT]: (l) => /^(?:model|maxTurns|tools):/.test(l) || /Never touch a production URL|Only `product-bug` verdicts ever become|Nothing from a failure goes on a command line|never `git commit` or `git push`|Never fabricate/.test(l),
+  [RUBRIC]: (l) => /^- Never /.test(l) || /Only `product-bug` ever becomes|regardless of any autonomy setting|Formats trusted by default/.test(l),
+  [FILEBUG]: (l) => /PRODUCTION PROHIBITION|Do NOT file anything until/.test(l),
+};
+const PIN_FILE = path.join(__dirname, 'triage-prose-pins.json');
+if (process.argv.includes('--write-pins')) {
+  const pins = {};
+  for (const [file, pick] of Object.entries(PIN_SELECTORS)) pins[file] = read(file).split('\n').map((l) => l.trimEnd()).filter(pick);
+  fs.writeFileSync(PIN_FILE, `${JSON.stringify(pins, null, 2)}\n`);
+  console.log(`wrote ${PIN_FILE}: ${Object.values(pins).reduce((n, l) => n + l.length, 0)} pinned lines`);
+  process.exit(0);
+}
+let pins = {};
+try { pins = JSON.parse(fs.readFileSync(PIN_FILE, 'utf8')); } catch (e) { bad(`cannot read ${PIN_FILE}: ${e.message} (generate it with --write-pins)`); }
+for (const file of Object.keys(PIN_SELECTORS)) {
+  const have = new Set(read(file).split('\n').map((l) => l.trimEnd()));
+  const want = pins[file] || [];
+  if (!want.length) bad(`${file}: no pinned lines (${PIN_FILE} is missing this file)`);
+  for (const line of want) if (!have.has(line)) bad(`${file}: a pinned line changed or is missing: "${line.trim().slice(0, 120)}" — if that was on purpose, run --write-pins and review the diff`);
+}
+
 if (problems.length) { console.log(`${problems.length} problem(s):\n  - ${problems.join('\n  - ')}`); process.exit(1); }
 console.log('OK');

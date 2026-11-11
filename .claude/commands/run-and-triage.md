@@ -36,7 +36,8 @@ node scripts/triage/orchestrate.js --framework <testFramework.type> --preflight 
 
 Add `--test-dir <testFramework.testDir>` and `--config-file <testFramework.configPath>` when those are set, and one
 `--spec <file>` per file in `$ARGUMENTS`. Generate `<run-id>` **once** for this run (a UTC timestamp such as
-`20261008T181500Z`) and reuse it if you have to run anything again: it is what makes retries safe. Re-runs default to 2
+`20261008T181500Z`) and reuse it if you have to run anything again: it is what makes retries safe. (Running `orchestrate.js` again, with the same id or not,
+clears the earlier run's snapshots and evidence in `qa-results/`, so step 3 below has to be done again for the new run.) Re-runs default to 2
 (`--reruns`, 0–5); more re-runs cost more and give better signal.
 
 Verdicts for runner formats that have not been verified on real failures (everything except TAP, by default) can never `act` on a
@@ -78,7 +79,7 @@ or `$(...)`.
 Then re-classify and re-plan from the runs already on disk (no need to run the suite again):
 
 ```bash
-node scripts/triage/classify.js --run qa-results/main/result.json --rerun qa-results/rerun-1/result.json --rerun qa-results/rerun-2/result.json --preflight <ok|failed> --evidence qa-results/evidence.json --out qa-results/triage.json
+node scripts/triage/classify.js --run qa-results/main/result.json --rerun qa-results/rerun-1/result.json --rerun qa-results/rerun-2/result.json --preflight <ok|failed> --evidence qa-results/evidence.json [--root <project dir, if orchestrate.js was given one>] --out qa-results/triage.json
 node scripts/triage/plan.js --report qa-results/triage.json --run-id <run-id> --out qa-results/plan.json --flaky-out qa-results/flaky.json
 ```
 

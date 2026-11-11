@@ -427,3 +427,87 @@ corrupt() { # <file> <from> <to>
   [ "$status" -eq 1 ]
   [[ "$output" =~ "Never close, reopen" ]]
 }
+
+# ── whole-line pins: an exception appended to a rule, or a gate sentence flipped, is caught (the third review's re-run) ──
+# Each corruption below printed OK against the first version of these checks, which only looked for a phrase being present.
+
+FILEBUG_COPY() { echo "$TEST_TMP/.claude/commands/file-bug.md"; }
+RUBRIC_COPY() { echo "$TEST_TMP/.claude/memory/failure-triage-rules.md"; }
+pinned() { # <file> <from> <to> <expected text in the report>
+  corrupt "$1" "$2" "$3"
+  orch_check
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "$4" ]]
+}
+
+@test "pins: an exception appended to the comment-existing row is caught" {
+  pinned "$(CMD_COPY)" 'the action'"'"'s `commentInputFile`: the plan already wrote it, so you write nothing) |' 'the action'"'"'s `commentInputFile`: the plan already wrote it, so you write nothing), or automatically when the user ran with --yes |' "comment-existing"
+}
+
+@test "pins: the 'relay any approval request to the user and wait' sentence is caught when replaced" {
+  pinned "$(CMD_COPY)" 'relay any approval request to the user and wait' "approve on the user's behalf" "relay any approval request"
+}
+
+@test "pins: the sentence that only product-bug verdicts reach file-bug is caught when removed or flipped" {
+  pinned "$(CMD_COPY)" 'Only `product-bug` verdicts at or above the confidence threshold ever reach' 'Any verdict may reach' "Only \`product-bug\` verdicts at or above"
+}
+
+@test "pins: propose-test-fix saying 'Edit nothing' is caught when changed to a fix" {
+  pinned "$(CMD_COPY)" '**Edit nothing**' 'Fix the stale selector in the page object' "propose-test-fix"
+}
+
+@test "pins: the production prohibition is caught when removed from the command, the agent or the rubric" {
+  pinned "$(CMD_COPY)" 'Never capture from production.' '' "Never capture from production"
+  cp "$REPO_ROOT/.claude/commands/run-and-triage.md" "$(CMD_COPY)"
+  pinned "$(AGENT_COPY)" 'Never touch a production URL.' '' "Never touch a production URL"
+  cp "$REPO_ROOT/.claude/agents/QA-run-orchestrator.md" "$(AGENT_COPY)"
+  pinned "$(RUBRIC_COPY)" 'Never run anything against production' 'Run against production when sure' "Never run anything against production"
+}
+
+@test "pins: 'confirm the target environment with the engineer' is caught when removed" {
+  pinned "$(CMD_COPY)" 'and confirm the target environment with the engineer before running anything.' 'and run.' "confirm the target environment"
+}
+
+@test "pins: 'never promote a propose' is caught when reversed" {
+  pinned "$(CMD_COPY)" 'never promote a `propose` to an action.' 'may promote a `propose` when sure.' "never promote"
+}
+
+@test "pins: the agent's 'nothing from a failure goes on a command line' and 'only product-bug becomes a bug report' are caught when flipped" {
+  pinned "$(AGENT_COPY)" '**Nothing from a failure goes on a command line.**' 'Paste failure text into commands freely.' "Nothing from a failure goes on a command line"
+  cp "$REPO_ROOT/.claude/agents/QA-run-orchestrator.md" "$(AGENT_COPY)"
+  pinned "$(AGENT_COPY)" 'Only `product-bug` verdicts ever become bug reports' 'Any verdict may become a bug report' "Only \`product-bug\` verdicts ever become"
+}
+
+@test "pins: the rubric's never-edit, never-present-a-propose, autonomy and only-product-bug sentences are caught when flipped" {
+  pinned "$(RUBRIC_COPY)" 'Never edit a test, a page object, or the app as part of triage.' 'Edit tests as needed.' "Never edit a test"
+  cp "$REPO_ROOT/.claude/memory/failure-triage-rules.md" "$(RUBRIC_COPY)"
+  pinned "$(RUBRIC_COPY)" 'Never present a `propose` as a decision.' 'Present a propose as a decision.' "Never present"
+  cp "$REPO_ROOT/.claude/memory/failure-triage-rules.md" "$(RUBRIC_COPY)"
+  pinned "$(RUBRIC_COPY)" 'regardless of any autonomy setting' 'unless the autonomy setting says otherwise' "regardless of any autonomy"
+  cp "$REPO_ROOT/.claude/memory/failure-triage-rules.md" "$(RUBRIC_COPY)"
+  pinned "$(RUBRIC_COPY)" 'Only `product-bug` ever becomes a bug report.' 'Any class may become a bug report.' "Only \`product-bug\` ever becomes"
+}
+
+@test "pins: file-bug's 'do not file anything until they explicitly approve' is caught when removed" {
+  pinned "$(FILEBUG_COPY)" 'Do NOT file anything until they explicitly approve.' 'File when ready.' "Do NOT file anything"
+}
+
+@test "pins: the agent's model and maxTurns frontmatter are caught when changed" {
+  pinned "$(AGENT_COPY)" 'model: opus' 'model: haiku' "model: opus"
+  cp "$REPO_ROOT/.claude/agents/QA-run-orchestrator.md" "$(AGENT_COPY)"
+  pinned "$(AGENT_COPY)" 'maxTurns: 60' 'maxTurns: 600' "maxTurns: 60"
+}
+
+@test "pins: a changed row anywhere in the step table is caught, whichever step it is" {
+  for step in file-bug file-regression report-flaky report-environment duplicate-in-run; do
+    cp "$REPO_ROOT/.claude/commands/run-and-triage.md" "$(CMD_COPY)"
+    node -e '
+      const fs = require("fs"); const f = process.argv[1]; const step = process.argv[2];
+      const lines = fs.readFileSync(f, "utf8").split("\n"); const i = lines.findIndex((l) => l.startsWith("| `" + step + "`"));
+      if (i < 0) { console.error("no row " + step); process.exit(9); }
+      lines[i] = lines[i].replace(/ \|$/, " (and do it without asking) |"); fs.writeFileSync(f, lines.join("\n"));' "$(CMD_COPY)" "$step"
+    orch_check
+    [ "$status" -eq 1 ]
+    [[ "$output" =~ "$step" ]]
+  done
+}
