@@ -65,10 +65,10 @@ from) and `action: "act" | "propose"`: **`act` only when `confidence ≥ thresho
 | Id | Class | When | Conf. |
 |---|---|---|---:|
 | ENV-1 | environment | preflight reported failure | 0.95 |
-| ENV-2 | environment | **every** failing attempt's error matches an infrastructure signature (`ECONNREFUSED`, `ENOTFOUND`, `ECONNRESET`, `EAI_AGAIN`, `getaddrinfo`, `net::ERR_CONNECTION*`/`NAME_NOT_RESOLVED`, `502/503/504`, `Bad Gateway`, `Service Unavailable`). A bare "timeout exceeded" is **not** a signature — it is ambiguous. | 0.90 |
+| ENV-2 | environment | **every** failing attempt's error matches an infrastructure signature (`ECONNREFUSED`, `ENOTFOUND`, `ECONNRESET`, `EAI_AGAIN`, `getaddrinfo`, `net::ERR_CONNECTION*`/`NAME_NOT_RESOLVED`, `502/503/504`, `Bad Gateway`, `Service Unavailable`). A bare "timeout exceeded" is **not** a signature — it is ambiguous. **Exception:** when preflight said the environment was ready, no attempt passed, and every error is only an HTTP status or a failed fetch (no network-level error), the confidence is 0.70 and it is a proposal: a CORS rule, a removed route or a regression looks the same. In HTTP comparisons the other side must itself be 100-599 (`503 !== 600` is data). | 0.90 / 0.70 |
 | FLK-1 | flaky | attempts contain both a pass and a fail (flip), or the runner itself flagged `flaky` | 0.90 / 0.85 |
 | TST-1 | test-bug | locator-not-found in every failing attempt **and** evidence names exactly one candidate element under a different selector | 0.85 |
-| TST-2 | test-bug | the test **crashed** (`kind: error`, not an assertion) with a `TypeError`/`ReferenceError`/`SyntaxError`/`Cannot find module` whose first stack frame is in a test file | 0.80 |
+| TST-2 | test-bug | the test **crashed** (not an assertion) and the first stack frame is in a test file below the project root. a plain `ReferenceError`/`SyntaxError`/"is not defined" in the test's own code: 0.80; anything the app can cause (`TypeError`, "is not a function", `Cannot find module`, a "not valid JSON" `SyntaxError`, a `ReferenceError` through `page.evaluate` or "originated from your application code"): 0.65 | 0.80 / 0.65 |
 | TST-3 | test-bug | locator-not-found in every failing attempt, DOM evidence shows the id is absent and **two or more** elements resemble it — renamed, but which? | 0.55 |
 | ENV-3 | environment | ≥ 3 tests and ≥ 50% of the run failed, and one error signature accounts for ≥ 80% of those failures (blast radius) — could equally be a real suite-wide regression, so it is only a proposal | 0.60 |
 | PRD-1 | product-bug | every attempt failed (≥ 2), assertion failures (`kind: failure`) with the **same signature**, test traceable to a manual case (`caseId`) | 0.85 |
@@ -121,6 +121,22 @@ something is different." So:
    unknown and the plan stays with `file-regression`, with a note telling a person to check;
 5. **no match** → `file-bug`.
 
+The lookup is honest about what it did not see. A matching search result that cannot be fetched is skipped (it does not hide the ones that could be read)
+and listed under `lookup.partial` with a warning; a search that returns as many results as it asks for (5) may have more behind them, so that is
+flagged `lookup.truncated`. A `file-bug` after a partial lookup says so in its `note`. The run's part of the idempotency key is the run id as given when
+it is short and made of safe characters; otherwise a readable prefix plus a hash of the whole id, so two different run ids can never share a key. The text
+of a failure that is copied into a report, a comment or a bug (message, details, evidence lines, signature, test title) passes through `redactSecrets`:
+PEM private keys, provider tokens and webhook URLs, credentials in a URL, authorization and cookie headers with a real value, and any `key=value` / `"key":"value"`
+whose key names a secret (any prefix: `aws_secret_access_key`, `csrf_token`). The prose form `key: value` is masked only when the value looks like a secret, so an
+assertion about a validation message (`Expected: "Password: required"`) keeps its evidence. Text is masked BEFORE it is cut, so a secret straddling a cut is not
+left half-visible. The fingerprint is computed from the original, so masking never changes it. Not covered: `qa-results/main/result.json` and the test runner's own
+output stay raw; this protects what the triage tools copy elsewhere.
+
+**Jira is not covered.** The tracker adapters (and so the lookup, regression and dismissed logic above) exist for GitHub, GitLab, Bitbucket, Azure
+DevOps and ClickUp. Jira is reached only through the Atlassian MCP, interactively, so with `ticketSource.type: jira` `plan.js` has no adapter: it warns
+("no tracker lookup … filing may duplicate") and every product bug is `file-bug`, on every run, whether or not a report for it exists. Search Jira yourself
+for the fingerprint token before approving a filing.
+
 This needs a normalized state on search results, which Phase 1's `search` lacks (each tracker returns its own status words).
 Adapters gain `open: boolean` and, when the tracker says the item was closed without a fix, `dismissed: true`, mapped per
 tracker (GitHub "not planned" and wontfix/invalid/duplicate labels, Bitbucket's wontfix/invalid/duplicate, ClickUp status
@@ -153,7 +169,7 @@ CI runs them against mocks and the real node runner; no browser, no network.
 
 ## What will and will not be verified
 
-Verified: the classifier, fingerprints and planner on real node:test output and tracker mocks; mutation-checked.
+Verified: the classifier, fingerprints and planner on real node:test output and tracker mocks. Mutation-checked in two senses, and the second is the honest one: the author mutated each new check as it was written, and a later independent review ran about 310 further hand-made mutants, of which about 90 survived (most not equivalent). The survivors that guard a decision are now tests; what remains untested is individual wording patterns (each infrastructure/auth/locator phrase is covered by the patterns table, not one test each) and some diagnostic caps.
 **Not** verified: classification quality on real Playwright/Cypress failures (the regex signatures are from experience
 of those tools' messages, not from a corpus), tracker search behavior on real services, the orchestrator agent's prose
 under a live model. The rubric thresholds are starting values, not tuned ones.
@@ -252,3 +268,34 @@ too far. What changed, and why:
 - **Nothing free-text from a failure reaches a command line or a file name.** Test keys come from test titles (slashes, pipes,
   quotes); the prose now passes only the fingerprint token (`qafp` plus 12 hex digits) and the scripts read the report themselves.
 - **Closed is not one thing** (see `report-dismissed` above).
+
+## What the third review changed
+
+A third independent review (about 310 hand-made mutants, a 20000-case fuzz, differential runs against `main`) found no blocker. What it found
+were places where a real product bug could be reported as something else at a confidence that acts, and prose the drift checks did not protect:
+
+- **TST-2** only acts for crashes the app cannot cause (ReferenceError, SyntaxError, missing module); a TypeError is 0.65. "A test file" is judged
+  below the project root (`--root` / `--cwd`).
+- **ENV-2** no longer matches a number that is not an HTTP status, and a healthy preflight followed by a weak signal (a bare 5xx, "failed to fetch")
+  in every attempt is 0.70, a proposal.
+- **Re-runs the runner cannot vouch for** (exit 3 with a report) are dropped, not counted: they used to turn a consistent failure into a flaky one.
+- **DOM evidence** must be about the id in the failure it is applied to, and `evidence.json`, `snapshots/`, `triage.json`, `plan.json`, `flaky.json`
+  and `comments/` from an earlier run are cleared at the start.
+- **Idempotency keys** cannot collide across run ids; the tracker lookup reports what it could not read or see; failure text is redacted;
+  a verdict token that is not a fingerprint token is refused (it names a file).
+- **The drift checks** pin the agent's exact tool allowlist and the human-gate sentences.
+- `triage.trustedFormats` did not exist when the prose first said it did; the self-heal work (#10) makes it a real `qa-config.json` setting. Worth knowing when you
+  review it: widening which formats may act is then a line in a committed config, which a profile copied in by `/switch-project` or a prompt-injected edit of that
+  file can change, whereas `--trusted-formats` was a decision made at the command line by the person running the tools.
+- **Second pass over those fixes** (the re-review found the same mistakes in other forms, and one regression of mine): clearing earlier runs' files
+  is by ownership (name AND JSON shape), never by name alone, so a user's `snapshots/` or `plan.json` in `--out` survives; TST-2 "strong" excludes
+  everything the app can cause (a body that is not JSON, `page.evaluate`, "originated from your application", a missing module), and a project root of
+  `/` or empty turns directory patterns off; ENV-2 compares against status codes that exist; the locator scanner exposes every test attribute of an element,
+  ends comments as HTML does and refuses (rather than cuts) a page over 64 MB; `redactSecrets` masks assignment syntax always and prose only when the value
+  looks like a secret, and masks before it cuts; ClickUp reads "Closed as duplicate" and "Rejected by PM" as dismissed and "Rejected by QA" as active; the plan's
+  lookup caveat rides on every step; `--run-id` takes any 1-128 printable characters (odd ones are hashed into the key); and the drift checks pin the exact
+  LINE of every gate and a hash of each of the four safety-policy files (tests/helpers/triage-prose-pins.json): any change to the command, the agent, the rubric or
+  `file-bug.md` fails the check until a person has read the diff and run `node tests/helpers/orchestrator-drift-check.js --write-pins`. (A line pin cannot see a new
+  section that contradicts a gate; the hash can. The price is that editing those files means re-pinning them, on purpose.)
+- **Accepted, documented:** results of a re-run repeat whole spec files (side effects included); trust is keyed on the format name, not the runner, so
+  a TAP report from another producer fed straight to `classify.js` inherits TAP's privilege (the orchestrator only produces TAP from `node`).

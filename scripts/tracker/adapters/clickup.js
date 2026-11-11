@@ -16,7 +16,7 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
   const tokenVar = settings.tokenEnvVar || 'CLICKUP_TOKEN';
   const token = env[tokenVar];
   if (!token) throw new TrackerError('CONFIG', `${tokenVar} is not set`);
-  const base = checkBaseUrl(baseUrl || settings.apiBaseUrl || 'https://api.clickup.com/api/v2', 'the ClickUp API base URL');
+  const base = checkBaseUrl(baseUrl || settings.apiBaseUrl || 'https://api.clickup.com/api/v2', 'the ClickUp API base URL', { hosts: ['api.clickup.com'], env });
 
   const call = (method, path, body, what) => request({
     fetch, method, url: `${base}${path}`, body, timeoutMs, retryDelayMs, what,
@@ -33,8 +33,22 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
   // "closed" — so it used to read as OPEN and a bug that came back was commented on forever. Match the wording instead.
   // Workspaces spell these every way: "Won't fix" (straight or curly apostrophe), WONTFIX, "Will not fix", "Not planned", "Out of scope", "Abandoned",
   // "Works as designed". "Cancelled" must be past tense: "Cancel pending" is a status that still has work in it.
-  const DISMISSED_STATUS = /\b(?:won['’]?t[ -]?(?:fix|do)|wont|will not (?:fix|do)|reject(?:ed)?|declined?|cancel(?:l)?ed|invalid|duplicate|not (?:a )?(?:bug|issue|defect)|not planned|out of scope|abandoned|(?:by|as) design(?:ed)?|obsolete|dismissed)\b/i;
-  const clickupDismissed = (s) => !!s && DISMISSED_STATUS.test(s.status || '');
+  // A WHOLE status, or one part of a compound one ("Closed - Won't fix", "Won't fix (by design)"), must BE the phrase. Matching the words anywhere read
+  // "QA Rejected - rework", "Needs duplicate check" and "Invalid input handling" (all still active) as dismissed, so a bug that came back was reported
+  // and never filed or commented.
+  const PHRASE = "(?:won['’]?t[ -]?(?:be )?(?:fix(?:ed)?|do|implement(?:ed)?)|wont(?:[ -]?(?:fix|do))?|will not (?:be )?(?:fix(?:ed)?|do|implement(?:ed)?)|not going to (?:fix|do|implement)|reject(?:ed)?|declined?|cancel(?:l)?ed|invalid|(?:a )?dup(?:e|licate)?|not (?:an? )?(?:bug|issue|defect)|not planned|out of scope|abandoned|(?:by|as) design(?:ed)?|(?:works|working) as (?:design(?:ed)?|intended)|obsolete|dismissed)";
+  // the phrase, optionally led by "closed as" / "merged as" and followed by "report" or a "by / for / of ..." clause ("Duplicate of #12", "Rejected by PM")
+  const DISMISSAL = new RegExp(`^(?:(?:closed|marked|resolved|merged|set)\\s+(?:as\\s+)?)?${PHRASE}(?:\\s+(?:report|bug|issue|ticket|request))?(?:\\s+(?:as|by|for|of|per|due to|from|in)\\b.*)?$`, 'i');
+  // wording that says a person still has work to do or a decision is still ahead: a QA-rejected fix, "needs rework", a reopen, "rejected by code review",
+  // "proposed - won't fix", "out of scope for this sprint" (a deferral). Such a status is active whatever else it says.
+  const STILL_ACTIVE = /\b(?:rework|re-?test|needs?|qa|re-?open(?:ed)?|testing|pending|review|dev|code|sprint|release|defer(?:red)?|propos(?:ed|al)|candidate|awaiting|blocked|maybe)\b/i;
+  const PARTS = /\s+[-–—:/|]\s+|[:/|,()]/; // a hyphen separates only when spaced, so "won't-fix" stays whole
+  const tidy = (x) => String(x || '').replace(/[^\p{L}\p{N}'’\s\-–—:/|,()#.]/gu, ' ').replace(/\s+/g, ' ').trim(); // emoji and punctuation like "!" or "?" are not part of the wording
+  const clickupDismissed = (s) => {
+    const t = tidy(s && s.status);
+    if (!t || STILL_ACTIVE.test(t)) return false;
+    return t.split(PARTS).map((p) => p.trim().replace(/\.+$/, '')).filter(Boolean).some((p) => DISMISSAL.test(p));
+  };
   const summarize = (t) => ({ id: String(t.id), title: t.name, url: t.url, status: t.status && t.status.status, open: !clickupClosed(t.status) && !clickupDismissed(t.status), ...(iso(t.date_created) ? { createdAt: iso(t.date_created) } : {}), ...(clickupDismissed(t.status) ? { dismissed: true } : {}) });
   const iso = (ms) => (/^\d+$/.test(String(ms)) ? new Date(Number(ms)).toISOString() : null);
 

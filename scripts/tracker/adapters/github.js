@@ -2,6 +2,7 @@
 
 const { TrackerError } = require('../lib/errors');
 const { checkBaseUrl } = require('../lib/base-url');
+const { findInPages, PAGE_SIZE } = require('../lib/paging');
 const { request } = require('../lib/http');
 const { keyMarker, hasMarker, stepsAsMarkdown, extractAcceptanceCriteria } = require('../lib/contract');
 
@@ -15,9 +16,10 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
     throw new TrackerError('CONFIG', 'ticketSource.github.repo must be "owner/repo"');
   }
   const tokenVar = settings.tokenEnvVar || 'GITHUB_TOKEN';
-  const token = env[tokenVar] || env.GITHUB_TOKEN || env.GH_TOKEN;
-  if (!token) throw new TrackerError('CONFIG', `${tokenVar} (or GH_TOKEN) is not set`);
-  const base = checkBaseUrl(baseUrl || settings.apiBaseUrl || 'https://api.github.com', 'the GitHub API base URL');
+  // A variable the config names is the only one read: falling back to GITHUB_TOKEN / GH_TOKEN would send a credential other than the one chosen.
+  const token = settings.tokenEnvVar ? env[tokenVar] : env.GITHUB_TOKEN || env.GH_TOKEN;
+  if (!token) throw new TrackerError('CONFIG', settings.tokenEnvVar ? `${tokenVar} is not set` : `${tokenVar} (or GH_TOKEN) is not set`);
+  const base = checkBaseUrl(baseUrl || settings.apiBaseUrl || 'https://api.github.com', 'the GitHub API base URL', { hosts: ['api.github.com'], env });
   const testLabel = settings.testLabelName || 'test-case';
 
   const call = (method, path, body, what) => request({
@@ -63,7 +65,9 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
   }
 
   async function search({ query, kind = 'any', limit = 10 }) {
-    const parts = [query, `repo:${repo}`, 'is:issue'];
+    // A colon in the text would let it carry a search qualifier ("repo:victim/private" widens the search to any repository the token can read), so the
+    // text is searched as words: the only qualifiers sent are the ones below.
+    const parts = [String(query).replace(/:/g, ' '), `repo:${repo}`, 'is:issue'];
     if (kind === 'bug') parts.push('label:bug');
     if (kind === 'test') parts.push(`label:${testLabel}`);
     const { json } = await call('GET', `/search/issues?q=${encodeURIComponent(parts.join(' '))}&per_page=${limit}`, undefined, 'search GitHub issues');
@@ -113,8 +117,10 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
   }
 
   async function findCommentByKey(id, key) {
-    const { json } = await call('GET', `${issuePath(id)}/comments`, undefined, `look up idempotency key on GitHub issue ${id}`);
-    const hit = (json || []).find((c) => hasMarker(c.body, key));
+    const hit = await findInPages(async (page) => {
+      const { json } = await call('GET', `${issuePath(id)}/comments?per_page=${PAGE_SIZE}&page=${page}`, undefined, `look up idempotency key on GitHub issue ${id}`);
+      return { items: json || [], more: (json || []).length >= PAGE_SIZE };
+    }, (c) => hasMarker(c.body, key), `look up idempotency key on GitHub issue ${id}`);
     return hit ? { id: String(hit.id), url: hit.html_url } : null;
   }
 

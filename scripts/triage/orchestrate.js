@@ -30,7 +30,7 @@ const { defaultRunResults } = require('./lib/run-results');
 const { classify, makeKeyer, parseTrustedFormats } = require('./classify');
 const { analyzeLocator } = require('./locators');
 const { isLocatorError, extractTestId, evidenceText } = require('./lib/text');
-const { plan, connectIfNeeded, writeCommentInputs } = require('./plan');
+const { plan, connectIfNeeded, writeCommentInputs, isValidRunId } = require('./plan');
 const { triageConfig, MAX_RERUNS } = require('./lib/config');
 const { heal, eligible } = require('./heal');
 
@@ -67,6 +67,9 @@ function parseArgs(argv) {
   if (opts.reruns !== undefined && (!Number.isInteger(opts.reruns) || opts.reruns < 0 || opts.reruns > MAX_RERUNS)) throw usage(`--reruns must be a whole number from 0 to ${MAX_RERUNS}`);
   if (opts.preflight && !['ok', 'failed', 'unknown'].includes(opts.preflight)) throw usage('--preflight must be ok, failed or unknown');
   if (opts.threshold !== undefined && !(opts.threshold > 0 && opts.threshold <= 1)) throw usage('--threshold must be between 0 and 1');
+  if (opts.timeoutMs !== undefined && !(Number.isInteger(opts.timeoutMs) && opts.timeoutMs > 0)) throw usage('--timeout-ms must be a positive whole number of milliseconds');
+  // the run id ends up in tracker idempotency keys (an odd one is hashed there, see plan.js runPart) and in comment text
+  if (opts.runId !== undefined && !isValidRunId(opts.runId)) throw usage('--run-id must be 1-128 characters with no control characters');
   return opts;
 }
 
@@ -77,6 +80,37 @@ function healWarning(h) {
   if (h.status !== 'reverted') return null;
   if (h.restored === false) return `self-heal reverted: ${h.reason} (the repository was NOT fully restored: ${(h.problems || ['unknown']).join('; ')} — run git status before doing anything else)`;
   return `self-heal reverted: ${h.reason} (the repository was restored)`;
+}
+
+// What an earlier run left in <out>, cleared by OWNERSHIP, not by name: <out> may be a directory the user also keeps things in (--out . is legal), and a
+// snapshots/ or a plan.json there is not ours to delete. A file is ours when its NAME and its SHAPE are what this tool writes; a directory is removed only
+// if that left it empty. (run.js protects its raw/ the same way, with a marker.)
+const readJson = (file) => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return undefined; } };
+const isObj = (x) => x && typeof x === 'object' && !Array.isArray(x);
+const OWNED_FILES = {
+  'triage.json': (d) => isObj(d) && isObj(d.data) && Array.isArray(d.data.verdicts),
+  'plan.json': (d) => isObj(d) && isObj(d.data) && Array.isArray(d.data.actions),
+  'flaky.json': (d) => isObj(d) && Array.isArray(d.flaky) && 'runId' in d,
+  'evidence.json': (d) => isObj(d) && Object.values(d).every((v) => isObj(v) && 'locator' in v),
+};
+function clearStale(out, warnings) {
+  if (!fs.existsSync(out)) return;
+  const rm = (p) => fs.rmSync(p, { recursive: true, force: true });
+  for (const e of fs.readdirSync(out, { withFileTypes: true })) {
+    const p = path.join(out, e.name);
+    if (OWNED_FILES[e.name]) {
+      if (e.isSymbolicLink()) { fs.unlinkSync(p); warnings.push(`${e.name} in ${out} was a symlink: the link was removed (its target was not touched), so an earlier run's file cannot stand in for this one`); } // eslint-disable-line max-len
+      else if (e.isFile() && OWNED_FILES[e.name](readJson(p))) rm(p);
+    } else if (e.isDirectory() && /^rerun-\d+$/.test(e.name)) {
+      // only what run.js writes into an --out directory (result.json, raw/); a user's file in the same directory stays, and so does the directory
+      for (const name of ['result.json', 'raw']) if (fs.existsSync(path.join(p, name))) rm(path.join(p, name));
+      if (!fs.readdirSync(p).length) fs.rmdirSync(p);
+    } else if (e.isDirectory() && (e.name === 'snapshots' || e.name === 'comments')) {
+      const mine = e.name === 'snapshots' ? /^qafp[0-9a-f]{12}\.html$/ : /^qafp[0-9a-f]{12}\.json$/;
+      for (const f of fs.readdirSync(p, { withFileTypes: true })) if (f.isFile() && mine.test(f.name)) rm(path.join(p, f.name));
+      if (!fs.readdirSync(p).length) fs.rmdirSync(p);
+    }
+  }
 }
 
 const writeJson = (file, obj) => { fs.mkdirSync(path.dirname(path.resolve(file)), { recursive: true }); fs.writeFileSync(file, `${JSON.stringify(obj, null, 2)}\n`); };
@@ -103,9 +137,11 @@ async function orchestrate(opts, { env = process.env, fetch = globalThis.fetch, 
     ...(opts.cwd ? ['--cwd', opts.cwd] : []), ...(opts.config ? ['--config', opts.config] : []), ...(opts.timeoutMs ? ['--timeout-ms', String(opts.timeoutMs)] : []), '--quiet'];
   const specArgs = (specs) => specs.flatMap((s) => ['--spec', s]);
 
-  // Re-runs left in <out> by an EARLIER run would be read as this run's attempts (the prose says "one --rerun per rerun-<k> directory that exists"):
-  // clear exactly those, by name. Nothing else in <out> is touched.
-  if (fs.existsSync(out)) for (const e of fs.readdirSync(out, { withFileTypes: true })) if (e.isDirectory() && /^rerun-\d+$/.test(e.name)) fs.rmSync(path.join(out, e.name), { recursive: true, force: true });
+  // What an EARLIER run left in <out> would be read as this run's: re-runs (the prose says "one --rerun per rerun-<k> directory that exists"), locator
+  // evidence and snapshots (a failure's token is stable across runs, so a stale snapshot would be applied to this run's failure with the same token),
+  // and the previous triage/plan/flaky/comments (a green or --no-plan run would otherwise leave a failing run's files looking current). Clear exactly
+  // those, by name. Nothing else in <out> is touched.
+  clearStale(out, warnings);
 
   // 1. the main run
   const first = await runResults([...base, ...specArgs(opts.specs), '--out', path.join(out, 'main')], env);
@@ -134,7 +170,10 @@ async function orchestrate(opts, { env = process.env, fetch = globalThis.fetch, 
     if (!everyFileKnown) rerunNotes.push('some failures carry no file location, so each re-run repeats the whole selection');
     for (let k = 1; k <= reruns; k += 1) {
       const r = await runResults([...base, ...specArgs(scope), '--out', path.join(out, `rerun-${k}`)], env);
-      if (r.doc && r.doc.data) rerunResults.push(r.doc.data);
+      // exit 3 WITH a report = the runner's exit code contradicts its own report (a crash after a partial report). The main run stops on that; a re-run
+      // that is not trusted must not count either: its "pass" would turn a consistent failure into a flaky one.
+      if (r.code === 3 && r.doc && r.doc.data) warnings.push(`re-run ${k} cannot be trusted (${(r.doc.warnings && r.doc.warnings[0]) || 'its exit code contradicts its report'}); it is not counted, classifying with ${rerunResults.length + 1} run(s)`);
+      else if (r.doc && r.doc.data) rerunResults.push(r.doc.data);
       else warnings.push(`re-run ${k} produced no usable report (${(r.doc && r.doc.error && r.doc.error.message) || `exit ${r.code}`}); classifying with ${rerunResults.length + 1} run(s)`);
     }
   }
@@ -149,13 +188,16 @@ async function orchestrate(opts, { env = process.env, fetch = globalThis.fetch, 
       const { keyOf } = makeKeyer([main, ...rerunResults]); // the same key classify() looks the evidence up by
       for (const t of main.tests.filter((x) => x.status === 'failed' && x.error && isLocatorError(evidenceText(x.error)))) {
         if (!extractTestId(evidenceText(t.error))) continue;
-        evidence[keyOf(t)] = { locator: analyzeLocator({ html, selector: evidenceText(t.error), bare: false }) };
+        try { evidence[keyOf(t)] = { locator: analyzeLocator({ html, selector: evidenceText(t.error), bare: false }) }; } catch (e) {
+          if (!e.code) throw e;
+          warnings.push(`locator evidence unavailable for ${t.name}: ${e.message}`);
+        }
       }
     }
   }
 
   // 4. classify
-  const report = classify({ runs: [main, ...rerunResults], preflight, evidence, threshold, trustedFormats });
+  const report = classify({ runs: [main, ...rerunResults], preflight, evidence, threshold, trustedFormats, root: path.resolve(opts.cwd || process.cwd()) });
   // Strictness needs a witness: if most failures end up undetermined the problem is the evidence (or the rules), not the failures.
   const und = report.summary.byClass.undetermined;
   if (und >= UND_ALARM_MIN && und / report.summary.triaged >= UND_ALARM_SHARE) {

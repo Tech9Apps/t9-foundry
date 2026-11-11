@@ -75,6 +75,15 @@ describe('orchestrate: the loop', () => {
     assert.deepEqual(r.doc.data.verdicts.map((v) => [v.class, v.rule]), [['environment', 'ENV-1']]);
   });
 
+  test('a snapshot too large to scan gives a warning and an undetermined verdict, never "the element is not on the page"', async () => {
+    const snap = path.join(tmp(), 'huge.html');
+    fs.writeFileSync(snap, `${'<p>x</p>'.repeat(9 * 1024 * 1024 + 10)}<button data-testid="coupon-apply-btn">Apply</button>`);
+    const stale = T('DEMO-101/TC-901: apply', 'failed', { ticket: 'DEMO-101', caseId: 'TC-901', file: '/w/tests/ui.test.js', error: E("locator not found: getByTestId('coupon-apply-btn')") });
+    const r = await go({ framework: 'node', snapshot: snap, noPlan: true }, { runResults: scripted(() => ({ doc: result(stale) })).runResults });
+    assert.ok(r.doc.data.warnings.some((w) => /locator evidence unavailable/.test(w) && /too large/.test(w)), JSON.stringify(r.doc.data.warnings));
+    assert.deepEqual(r.doc.data.verdicts.map((v) => [v.class, v.action]), [['undetermined', 'propose']]);
+  });
+
   test('a failure with no file location re-runs the caller\'s whole selection, and says so', async () => {
     const s = scripted(() => ({ doc: result(T('no-file test', 'failed', { error: ASSERT })) }));
     const r = await go({ framework: 'node', specs: ['suite.test.js'], noPlan: true }, { runResults: s.runResults });
@@ -320,5 +329,108 @@ describe('orchestrate: what the review of PR #9 found', () => {
     const code = await main({ argv: ['--framework', 'node', '--trusted-formats', 'tap,playwrite-json', '--out', out], env: {}, stdout: { write: () => {} }, stderr: { write: (x) => { err += x; } } });
     assert.equal(code, 2);
     assert.match(err, /unknown format "playwrite-json"/);
+  });
+});
+
+describe('orchestrate: what the second review of PR #9 found', () => {
+  const failing = () => T('DEMO-101/TC-005: x', 'failed', { ...ids(5), error: ASSERT });
+  const passing = () => T('DEMO-101/TC-005: x', 'passed', ids(5));
+
+  test('a re-run the runner calls untrustworthy (exit 3, with a report) is NOT an attempt: it is dropped with a warning, and a consistent failure stays a product bug', async () => {
+    // exit 3 with data = the runner's exit code contradicts its own report (a crash after a partial report). Counting that "pass" made PRD-1 look flaky.
+    const s = scripted({ main: { doc: result(failing()) }, 'rerun-1': { code: 3, doc: { ...result(passing()), warnings: ['exit code 1 but the report shows no failures'] } }, 'rerun-2': { doc: result(failing()) } });
+    const r = await go({ framework: 'node', noPlan: true }, { runResults: s.runResults });
+    assert.equal(r.doc.data.runs, 2, 'main + the one usable re-run');
+    assert.ok(r.doc.data.warnings.some((w) => /re-run 1/.test(w) && /cannot be trusted|untrust/.test(w)), JSON.stringify(r.doc.data.warnings));
+    assert.deepEqual(r.doc.data.verdicts.map((v) => [v.class, v.rule]), [['product-bug', 'PRD-1']]);
+  });
+
+  test('a re-run with exit 1 (tests failed) and a report is still a normal attempt', async () => {
+    const s = scripted({ main: { doc: result(failing()) }, 'rerun-1': { code: 1, doc: result(failing()) }, 'rerun-2': { code: 1, doc: result(failing()) } });
+    const r = await go({ framework: 'node', noPlan: true }, { runResults: s.runResults });
+    assert.equal(r.doc.data.runs, 3);
+    assert.equal(r.doc.data.warnings, undefined);
+  });
+
+  describe('what an EARLIER run left in <out> is cleared; what is not ours is never touched', () => {
+    const put = (out, rel, body = '{}') => { fs.mkdirSync(path.dirname(path.join(out, rel)), { recursive: true }); fs.writeFileSync(path.join(out, rel), body); };
+    const has = (out, rel) => fs.existsSync(path.join(out, rel));
+    const OWNED = {
+      'triage.json': '{"ok":true,"data":{"verdicts":[]}}', 'plan.json': '{"ok":true,"data":{"actions":[]}}', 'flaky.json': '{"runId":"r","flaky":[]}',
+      'evidence.json': '{"k":{"locator":{"target":"x"}}}', 'comments/qafp0123456789ab.json': '{}', 'snapshots/qafp0123456789ab.html': '<html></html>', 'rerun-1/result.json': '{}',
+    };
+    test('files this tool wrote are cleared (and a directory left empty by that goes too)', async () => {
+      const out = tmp();
+      for (const [rel, body] of Object.entries(OWNED)) put(out, rel, body);
+      put(out, 'keep-me.txt', 'mine');
+      await go({ framework: 'node', out }, { runResults: scripted({ main: { doc: result(passing()) } }).runResults });
+      for (const rel of Object.keys(OWNED)) assert.equal(has(out, rel), false, `${rel} should be cleared`);
+      for (const dir of ['snapshots', 'comments', 'rerun-1']) assert.equal(has(out, dir), false, `${dir}/ was left empty and should go`);
+      assert.equal(has(out, 'keep-me.txt'), true);
+    });
+    test('a file of the user\'s in the same places survives: other names inside snapshots/ and comments/, a plan.json that is not ours, a triage.json that is not JSON, a rerun-N directory the runner did not write', async () => {
+      const out = tmp();
+      put(out, 'snapshots/visual.png', 'PNG'); put(out, 'snapshots/qafp0123456789ab.html', '<html>');
+      put(out, 'comments/notes.md', '# notes'); put(out, 'comments/qafp0123456789ab.json', '{}');
+      put(out, 'plan.json', '{"my":"own plan"}'); put(out, 'triage.json', 'not json at all'); put(out, 'flaky.json', '[1,2,3]'); put(out, 'evidence.json', '["not", "ours"]');
+      put(out, 'rerun-2/notes.txt', 'mine');
+      put(out, 'rerun-3/result.json', '{}'); put(out, 'rerun-3/my-notes.md', 'mine'); put(out, 'rerun-3/raw/results-0.tap', 'tap');
+      await go({ framework: 'node', out, noPlan: true }, { runResults: scripted({ main: { doc: result(passing()) } }).runResults });
+      assert.equal(has(out, 'rerun-3/my-notes.md'), true, 'a user file inside a rerun-N directory survives');
+      assert.equal(has(out, 'rerun-3/result.json'), false, 'what run.js wrote there is cleared');
+      assert.equal(has(out, 'rerun-3/raw'), false);
+      for (const rel of ['snapshots/visual.png', 'comments/notes.md', 'plan.json', 'triage.json', 'flaky.json', 'evidence.json', 'rerun-2/notes.txt']) assert.equal(has(out, rel), true, `${rel} is the user's and must survive`);
+      assert.equal(fs.readFileSync(path.join(out, 'plan.json'), 'utf8'), '{"my":"own plan"}');
+      assert.equal(has(out, 'snapshots/qafp0123456789ab.html'), false, 'our own snapshot in the same directory is still cleared');
+      assert.equal(has(out, 'comments/qafp0123456789ab.json'), false);
+    });
+    test('a symlink where one of our files should be is removed as a link (its target is never touched) and reported', async () => {
+      const out = tmp();
+      const target = path.join(tmp(), 'precious.json');
+      fs.writeFileSync(target, '{"keep":true}');
+      fs.symlinkSync(target, path.join(out, 'evidence.json'));
+      const r = await go({ framework: 'node', out }, { runResults: scripted({ main: { doc: result(passing()) } }).runResults });
+      assert.equal(has(out, 'evidence.json'), false);
+      assert.equal(fs.readFileSync(target, 'utf8'), '{"keep":true}');
+      assert.ok((r.doc.data.warnings || []).some((w) => /evidence\.json/.test(w) && /symlink|link/.test(w)), JSON.stringify(r.doc.data));
+    });
+  });
+
+  test('a failing --no-plan run does not leave an earlier run\'s plan.json / flaky.json behind', async () => {
+    const out = tmp();
+    fs.writeFileSync(path.join(out, 'plan.json'), '{"ok":true,"data":{"actions":[]}}'); fs.writeFileSync(path.join(out, 'flaky.json'), '{"runId":"old","flaky":[]}');
+    const s = scripted(() => ({ doc: result(failing()) }));
+    const r = await go({ framework: 'node', out, noPlan: true }, { runResults: s.runResults });
+    assert.equal(r.doc.data.status, 'triaged');
+    assert.equal(fs.existsSync(path.join(out, 'plan.json')), false);
+    assert.equal(fs.existsSync(path.join(out, 'flaky.json')), false);
+    assert.equal(fs.existsSync(path.join(out, 'triage.json')), true);
+  });
+
+  test('--threshold reaches the classifier: a 0.85 product bug acts at the default and is only proposed at 0.9', async () => {
+    const s = scripted(() => ({ doc: result(failing()) }));
+    const dflt = await go({ framework: 'node', noPlan: true }, { runResults: s.runResults });
+    assert.deepEqual(dflt.doc.data.verdicts.map((v) => v.action), ['act']);
+    const strict = await go({ framework: 'node', noPlan: true, threshold: 0.9 }, { runResults: scripted(() => ({ doc: result(failing()) })).runResults });
+    assert.deepEqual(strict.doc.data.verdicts.map((v) => v.action), ['propose']);
+    const cli = async (argv) => { let out = ''; await main({ argv: ['--framework', 'node', '--out', tmp(), '--no-plan', '--config', cfgFile(), ...argv], env: {}, stdout: { write: (x) => { out += x; } }, stderr: { write: () => {} }, runResults: scripted(() => ({ doc: result(failing()) })).runResults }); return JSON.parse(out); };
+    assert.deepEqual((await cli(['--threshold', '0.9'])).data.verdicts.map((v) => v.action), ['propose'], 'through the command line too');
+    assert.deepEqual((await cli([])).data.verdicts.map((v) => v.action), ['act']);
+  });
+
+  describe('arguments that used to be accepted and ignored are refused (exit 2)', () => {
+    const cli = async (argv) => { let err = ''; const code = await main({ argv: ['--framework', 'node', '--out', tmp(), ...argv], env: {}, stdout: { write: () => {} }, stderr: { write: (x) => { err += x; } }, runResults: async () => ({ code: 3, doc: noReport }) }); return { code, err }; };
+    test('--timeout-ms must be a positive whole number', async () => {
+      for (const bad of ['abc', '0', '-5', '1.5', '']) assert.equal((await cli(['--timeout-ms', bad])).code, 2, `--timeout-ms ${JSON.stringify(bad)}`);
+      assert.equal((await cli(['--timeout-ms', '5000'])).code, 3, 'a valid value gets as far as the (scripted) run');
+    });
+    test('--run-id is any 1-128 printable characters (a CI ref like refs/heads/main is fine: odd ids are hashed into the tracker key); empty, too long or with control characters is refused', async () => {
+      for (const bad of ['', 'a'.repeat(129), 'a\nb', 'a\u0000b', 'a\u007fb']) assert.equal((await cli(['--run-id', bad])).code, 2, `--run-id ${JSON.stringify(bad)}`);
+      for (const ok of ['r1', 'ci-4242', '20260102T030405Z', 'a.b_c-d', 'a'.repeat(128), 'refs/heads/main', 'build#42', '2026-11-11 18:15', '!!!']) assert.equal((await cli(['--run-id', ok])).code, 3, ok);
+    });
+    test('the message names the flag', async () => {
+      assert.match((await cli(['--timeout-ms', 'abc'])).err, /--timeout-ms/);
+      assert.match((await cli(['--run-id', ''])).err, /--run-id/);
+    });
   });
 });

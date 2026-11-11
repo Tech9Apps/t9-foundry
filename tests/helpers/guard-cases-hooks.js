@@ -18,8 +18,10 @@ const dirFor = (name) => {
   const dir = fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), 'qa-guard-'));
   const protection = {};
   for (const k of ['prodUrlPatterns', 'allowedUrlPatterns', 'blockOnSuspiciousUrls']) if (c[k] !== undefined) protection[k] = c[k];
-  const doc = { productionProtection: protection };
-  if (c.testEnvironmentBaseUrl) doc.environments = { testEnvironmentBaseUrl: c.testEnvironmentBaseUrl };
+  // In enforce mode prod-guard.sh refuses every command when no production pattern or no staging URL is configured (tests/prod-guard.bats covers that
+  // on its own). What is compared here is the decision about each URL, so a config that lacks them gets ones that match nothing in the table.
+  if (!protection.prodUrlPatterns || !protection.prodUrlPatterns.length) protection.prodUrlPatterns = ['://prod\\.never-used\\.invalid/'];
+  const doc = { productionProtection: protection, environments: { testEnvironmentBaseUrl: c.testEnvironmentBaseUrl || 'https://staging.never-used.invalid' } };
   fs.writeFileSync(path.join(dir, 'qa-config.json'), JSON.stringify(doc));
   return (dirs[name] = dir);
 };

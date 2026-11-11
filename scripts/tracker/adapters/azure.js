@@ -20,7 +20,7 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
   const pat = env[tokenVar];
   if (!pat) throw new TrackerError('CONFIG', `${tokenVar} is not set`);
 
-  const host = checkBaseUrl(baseUrl || settings.host || 'https://dev.azure.com', 'the Azure DevOps host');
+  const host = checkBaseUrl(baseUrl || settings.host || 'https://dev.azure.com', 'the Azure DevOps host', { hosts: ['dev.azure.com'], env });
   const root = `${host}/${encodeURIComponent(organization)}/${encodeURIComponent(project)}`;
   const wit = `${root}/_apis/wit`;
   const auth = `Basic ${Buffer.from(`:${pat}`).toString('base64')}`;

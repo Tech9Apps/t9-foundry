@@ -76,14 +76,11 @@ curl_commands() {
   [ -z "$unmatched" ]
 }
 
-@test "allowlist rules name the real API URL, so a string in a query or another host cannot satisfy them" {
-  # `*api.clickup.com*` approved any command containing that text anywhere (a query string, another host's path).
+# What this checks, and what it does not: each curl allow rule must contain the real API URL ("https://api.clickup.com/"), not just the host name as
+# loose text ("*api.clickup.com*" approved any command that mentioned it anywhere). It reads the rule's TEXT. The rules still begin and end with a
+# wildcard, so a command that merely contains that URL after another one can match; narrowing that is a change to the permission rules themselves.
+@test "every curl allow rule names the real API URL (https://<host>/), not just the host name as loose text" {
   bad=$(jq -r '.permissions.allow[] | select(startswith("Bash(curl")) | select(test("https://api\\.(clickup\\.com|bitbucket\\.org)/") | not)' "$SETTINGS")
-  if [ -n "$bad" ] && [ -f "$REPO_ROOT/docs/settings.proposed.json" ] && [ -z "${QA_SETTINGS_FILE:-}" ]; then
-    # .claude/settings.json is write-protected for the agent that prepared the fix, so the fix waits in docs/ for a person to apply:
-    #   cp docs/settings.proposed.json .claude/settings.json && rm docs/settings.proposed.json
-    skip "broad curl rules still in .claude/settings.json — apply docs/settings.proposed.json (this test is enforced once it is removed)"
-  fi
   [ -z "$bad" ] || { echo "curl rules that do not anchor on https://<host>/ :"; echo "$bad"; false; }
 }
 

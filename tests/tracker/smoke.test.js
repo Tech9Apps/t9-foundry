@@ -187,3 +187,19 @@ describe('smoke: failure reporting', () => {
     }
   });
 });
+
+describe('smoke: the target it prints', () => {
+  test('a host in the config is shown as scheme://host: user:password@ in it never reaches the terminal or the result JSON', async () => {
+    const mock = MOCKS.gitlab();
+    const cfg = path.join(dir, `leak-${Math.random().toString(36).slice(2)}.json`);
+    fs.writeFileSync(cfg, JSON.stringify({ ticketSource: { type: 'gitlab', gitlab: { ...mock.settings, host: 'https://deploy:hunter2secret@gitlab.corp.example/x' } } }));
+    let out = ''; let err = '';
+    const code = await main({
+      argv: ['--config', cfg], env: { [mock.tokenEnv]: mock.token }, fetch: mock.fetch,
+      stdout: { write: (s) => { out += s; } }, stderr: { write: (s) => { err += s; } },
+    });
+    assert.equal(code, 2);
+    assert.ok(!/hunter2secret|deploy:/.test(out + err), 'credentials must not be echoed');
+    assert.match(JSON.parse(out).target, /host=https:\/\/gitlab\.corp\.example /);
+  });
+});

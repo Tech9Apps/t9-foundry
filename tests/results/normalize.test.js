@@ -242,3 +242,110 @@ test('CLI: --out writes the same document it prints', () => {
   assert.equal(r.json.data.framework, 'pytest');
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+// --- a point that is "not ok" for its OWN reason is a failure, not a pass hidden behind its passing children -----
+test('real node:test TAP: a suite whose own after-hook throws is a FAILED test (node itself counts it as nothing and, alone, exits 0)', () => {
+  const r = norm('node-hook-failure.tap');
+  assert.deepEqual(r.totals, { total: 4, passed: 2, failed: 2, skipped: 0 });
+  assert.deepEqual(r.tests.filter((t) => t.status === 'failed').map((t) => t.name).sort(), ['suite with broken after', 'this one fails']);
+  const hook = byName(r, 'suite with broken after');
+  assert.match(hook.error.message, /boom in the after hook/);
+  assert.equal(hook.error.kind, 'error');
+  assert.match(hook.file, /hook\.test\.js$/);
+  assert.equal(byName(r, 'child passes').status, 'passed', 'its passing child is still a pass');
+});
+
+test('a parent that is only "N subtests failed" is NOT counted again on top of the failing child', () => {
+  const r = norm('node-hook-failure.tap');
+  assert.equal(r.tests.filter((t) => t.name === 'suite with a failing child').length, 0);
+  assert.equal(r.tests.filter((t) => t.name === 'this one fails').length, 1);
+});
+
+test('generic TAP: a parent not ok while every child is ok is its own failure; one with a failing child is not; skipped children do not fail a parent', () => {
+  const tap = [
+    'TAP version 13',
+    '    ok 1 - a', '    ok 2 - b', 'not ok 1 - parent with only passing children',
+    '    not ok 1 - c', '    ok 2 - d', 'not ok 2 - parent with a failing child',
+    '    ok 1 - e # SKIP later', 'ok 3 - parent with only skipped children',
+    '    ok 1 - deep1', '        ok 1 - deepest', '    not ok 2 - middle fails on its own', 'not ok 4 - top fails because of middle',
+    '1..4',
+  ].join('\n');
+  const r = parseText(tap, 'tap', {});
+  const failed = r.tests.filter((t) => t.status === 'failed').map((t) => t.name).sort();
+  assert.deepEqual(failed, ['c', 'middle fails on its own', 'parent with only passing children']);
+  assert.equal(r.tests.some((t) => t.name === 'parent with a failing child'), false);
+  assert.equal(r.tests.some((t) => t.name === 'top fails because of middle'), false);
+  assert.equal(r.tests.some((t) => t.name === 'parent with only skipped children'), false, 'an ok parent is never a test of its own');
+});
+
+// --- a directory of reports: a file that IS a report but cannot be read must fail the run, not vanish -------------
+const reportDir = () => fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), 'qa-results.'));
+const GOOD_XML = '<testsuites><testsuite name="s" tests="1"><testcase name="DEMO-1/TC-001: ok"/></testsuite></testsuites>';
+const BAD_ENTITY_XML = '<testsuites><testsuite name="s" tests="1"><testcase name="DEMO-1/TC-002: breaks"><failure message="bad &#x110000; char">x</failure></testcase></testsuite></testsuites>';
+
+test('a directory with one good report and one that is a report but cannot be parsed FAILS, naming the file (it used to report the good one alone: 1 passed, 0 failed)', () => {
+  const dir = reportDir();
+  fs.writeFileSync(path.join(dir, 'results-0.xml'), GOOD_XML);
+  fs.writeFileSync(path.join(dir, 'results-1.xml'), BAD_ENTITY_XML);
+  assert.throws(() => normalizePath(dir), (e) => e.code === 'UNPARSEABLE' && /results-1\.xml/.test(e.message));
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('an empty report file in a directory fails too (a runner that crashed before writing)', () => {
+  const dir = reportDir();
+  fs.writeFileSync(path.join(dir, 'results-0.xml'), GOOD_XML);
+  for (const empty of ['', '  \n']) {
+    fs.writeFileSync(path.join(dir, 'results-1.xml'), empty);
+    assert.throws(() => normalizePath(dir), (e) => e.code === 'UNPARSEABLE' && /results-1\.xml/.test(e.message) && /empty/.test(e.message));
+  }
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('a file that is not a test report at all is still ignored, but the result SAYS so (a warning)', () => {
+  const dir = reportDir();
+  fs.writeFileSync(path.join(dir, 'results-0.xml'), GOOD_XML);
+  fs.writeFileSync(path.join(dir, 'package.json'), '{"name":"x"}');
+  const warnings = [];
+  const r = normalizePath(dir, { warnings });
+  assert.equal(r.totals.total, 1);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /package\.json/);
+  assert.match(warnings[0], /not a test report/);
+  // naming the format changes nothing about a report that cannot be read
+  fs.writeFileSync(path.join(dir, 'results-1.xml'), BAD_ENTITY_XML);
+  assert.throws(() => normalizePath(dir, { format: 'junit' }), (e) => e.code === 'UNPARSEABLE' && /results-1\.xml/.test(e.message));
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('a JSON file in a directory that is CUT OFF (a runner killed mid-write) fails the run: it is a damaged report, not "some other file"', () => {
+  const dir = reportDir();
+  fs.writeFileSync(path.join(dir, 'results-0.xml'), GOOD_XML);
+  const whole = JSON.stringify({ testResults: [{ name: 'a.test.js', assertionResults: [{ title: 'DEMO-1/TC-002: x', status: 'failed', fullName: 'DEMO-1/TC-002: x' }] }] });
+  fs.writeFileSync(path.join(dir, 'jest.json'), whole.slice(0, Math.floor(whole.length / 2)));
+  for (const opts of [{}, { format: 'jest-json' }]) {
+    assert.throws(() => normalizePath(dir, opts), (e) => e.code === 'UNPARSEABLE' && /jest\.json/.test(e.message) && /JSON/.test(e.message), JSON.stringify(opts));
+  }
+  // JSON that parses but is not a report (a package.json) is still just ignored, with a warning (one report format per directory, so the XML goes)
+  fs.rmSync(path.join(dir, 'results-0.xml'));
+  fs.writeFileSync(path.join(dir, 'jest.json'), whole);
+  fs.writeFileSync(path.join(dir, 'package.json'), '{"name":"x"}');
+  const warnings = [];
+  normalizePath(dir, { warnings });
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /package\.json/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('the CLI prints those warnings, and exits 1 for a directory with an unreadable report', () => {
+  const dir = reportDir();
+  fs.writeFileSync(path.join(dir, 'results-0.xml'), GOOD_XML);
+  fs.writeFileSync(path.join(dir, 'notes.json'), '{"a":1}');
+  let out = ''; let err = '';
+  assert.equal(main({ argv: [dir], stdout: { write: (s) => { out += s; } }, stderr: { write: (s) => { err += s; } } }), 0);
+  assert.match(JSON.parse(out).warnings[0], /notes\.json/);
+  fs.writeFileSync(path.join(dir, 'results-1.xml'), BAD_ENTITY_XML);
+  out = '';
+  assert.equal(main({ argv: [dir], stdout: { write: (s) => { out += s; } }, stderr: { write: (s) => { err += s; } } }), 1);
+  assert.equal(JSON.parse(out).error.code, 'UNPARSEABLE');
+  fs.rmSync(dir, { recursive: true, force: true });
+});

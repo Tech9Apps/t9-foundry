@@ -36,7 +36,8 @@ node scripts/triage/orchestrate.js --framework <testFramework.type> --preflight 
 
 Add `--test-dir <testFramework.testDir>` and `--config-file <testFramework.configPath>` when those are set, and one
 `--spec <file>` per file in `$ARGUMENTS`. Generate `<run-id>` **once** for this run (a UTC timestamp such as
-`20261008T181500Z`) and reuse it if you have to run anything again: it is what makes retries safe. Re-runs default to 2
+`20261008T181500Z`) and reuse it if you have to run anything again: it is what makes retries safe. (Running `orchestrate.js` again, with the same id or not,
+clears the earlier run's snapshots and evidence in `qa-results/`, so step 3 below has to be done again for the new run.) Re-runs default to 2
 (`--reruns`, 0–5); more re-runs cost more and give better signal. A project sets its own defaults once in `qa-config.json`
 (`triage.reruns`, `triage.confidenceThreshold`) and a flag overrides them; the output's `settings` says which source each value
 came from, so tell the user if a re-run count or threshold came from their config.
@@ -83,12 +84,12 @@ title or an error message can contain a quote or `$(...)`.
 Then re-classify and re-plan from the runs already on disk (no need to run the suite again):
 
 ```bash
-node scripts/triage/classify.js --run qa-results/main/result.json --rerun qa-results/rerun-1/result.json --rerun qa-results/rerun-2/result.json --preflight <ok|failed> --evidence qa-results/evidence.json --out qa-results/triage.json
+node scripts/triage/classify.js --run qa-results/main/result.json --rerun qa-results/rerun-1/result.json --rerun qa-results/rerun-2/result.json --preflight <ok|failed> --evidence qa-results/evidence.json [--root <project dir, if orchestrate.js was given one>] --out qa-results/triage.json
 node scripts/triage/plan.js --report qa-results/triage.json --run-id <run-id> --out qa-results/plan.json --flaky-out qa-results/flaky.json
 ```
 
-(Pass one `--rerun` per `rerun-<k>` directory that exists. If you gave `orchestrate.js` a `--threshold` or `--trusted-formats`, give
-`classify.js` the same: they are not remembered, and without them the re-classification quietly goes back to the defaults.)
+(Pass one `--rerun` per `rerun-<k>` directory that exists. If you gave `orchestrate.js` a `--threshold`, `--trusted-formats` or `--cwd`, give
+`classify.js` the same (`--cwd` is `--root` there): they are not remembered, and without them the re-classification quietly goes back to the defaults.)
 
 ## 4. Act on each step in `plan.json`
 

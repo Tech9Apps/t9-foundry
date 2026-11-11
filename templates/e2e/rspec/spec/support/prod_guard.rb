@@ -136,6 +136,12 @@ module ProdGuard
     nil
   end
 
+  # Does `re` first match INSIDE "scheme://host[:port]", the first `finish` characters of `form`? (A match that begins at the first character of the path is not inside it.)
+  def self.starts_at_host?(re, form, finish)
+    m = re.match(form)
+    !m.nil? && m.begin(0) < finish
+  end
+
   # decide(url, mode:, prod_url_patterns:, allowed_url_patterns:, block_on_suspicious_urls:, test_environment_base_url:)
   #   -> { decision: 'allow' | 'warn' | 'block', reason: String, detail: String? }
   def self.decide(url, cfg = {})
@@ -159,10 +165,14 @@ module ProdGuard
     return { decision: 'allow', reason: 'EXEMPT_HOST' } if BUILTIN_EXEMPT_HOSTS.any? { |d| on_label_boundary?(u.host, d) }
 
     shown = u.v6 ? "[#{u.host}]" : u.host
-    stripped = "#{u.scheme}://#{shown}#{u.port.empty? ? '' : ":#{u.port}"}#{u.path}" # no userinfo, query or fragment
+    authority = "#{u.scheme}://#{shown}#{u.port.empty? ? '' : ":#{u.port}"}"
+    stripped = "#{authority}#{u.path}" # no userinfo, query or fragment
+    plain_authority = "#{u.scheme}://#{u.host}"
+    # An allow pattern has to START matching within "scheme://host[:port]". It may go on into the path ("://partner\\.io/guide" allows what is under
+    # /guide), but text that merely appears later, inside the path of some other host ("https://evil.com/go/https://partner.io/guide"), allows nothing.
     (cfg[:allowed_url_patterns] || []).each do |pattern|
       re = pattern && !pattern.empty? ? compile(pattern) : nil # an invalid allow-pattern never exempts anything
-      if re && (re.match?(stripped) || re.match?("#{u.scheme}://#{u.host}#{u.path}"))
+      if re && (starts_at_host?(re, stripped, authority.length) || starts_at_host?(re, "#{plain_authority}#{u.path}", plain_authority.length))
         return { decision: 'allow', reason: 'ALLOWED_PATTERN', detail: pattern }
       end
     end
