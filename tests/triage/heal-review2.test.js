@@ -14,6 +14,8 @@ const core = require('../../scripts/triage/lib/heal-core');
 const { classify } = require('../../scripts/triage/classify');
 
 const IDENT = { GIT_AUTHOR_NAME: 'T', GIT_AUTHOR_EMAIL: 't@example.test', GIT_COMMITTER_NAME: 'T', GIT_COMMITTER_EMAIL: 't@example.test' };
+// heal.js commits with the real process.env, so the identity has to be there too: a developer's global git config hides this, a CI runner has none
+Object.assign(process.env, IDENT);
 const baseEnv = () => { const e = { ...process.env, ...IDENT }; delete e.NODE_TEST_CONTEXT; return e; };
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', env: baseEnv() }).trim();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
