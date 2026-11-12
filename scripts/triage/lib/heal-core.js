@@ -7,14 +7,13 @@
 // control flow, other ids) is out of reach by construction, and verifyOnlySubstitution() checks that it stayed that way.
 const fs = require('fs');
 const path = require('path');
+const { escapeRe } = require('../../lib/regex');
 
 // Ids end up inside source code. The NEW one comes from the page's HTML, which is not trusted: a quote, bracket or
 // semicolon in it would be code injection into a test file. So ids are restricted to characters that cannot break out of
 // a string or a selector.
 const SAFE_ID = /^[A-Za-z0-9_:.-]+$/;
 const isSafeTestId = (id) => typeof id === 'string' && id.length > 0 && id.length <= 120 && SAFE_ID.test(id);
-
-const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 // Each pattern has three groups: (everything before the id)(the id)(everything after). Only group 2 is ever replaced, so
 // an id that happens to equal part of the surrounding syntax ("testid") can never damage it.

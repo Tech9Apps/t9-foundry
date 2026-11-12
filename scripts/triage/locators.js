@@ -17,14 +17,14 @@
 // `locator` object classify.js reads from --evidence. Exit 0 = analysed, 1 = unreadable / no test-id in the selector, 2 = usage.
 
 const fs = require('fs');
-const path = require('path');
 const { extractTestId, evidenceText } = require('./lib/text');
+const { usage, unreadable, readJson, writeJson, parseFlags, jsonPrinter, codedError } = require('../lib/cli');
+const { readReport } = require('./lib/documents');
 
 const SYNONYMS = { btn: 'button', qty: 'quantity', cta: 'button', img: 'image', nav: 'navigation', msg: 'message', num: 'number', amt: 'amount', info: 'information' };
 // Strictly more than half: two ids that share ONE word out of two (cart-count / cart-total, Dice 0.5) are different elements, and a removed
 // feature next to a similarly named one must not read as a rename. A real rename shares most of its words (add-to-cart / add-to-basket 0.67).
 const THRESHOLD = 0.6;
-const usage = (message) => Object.assign(new Error(message), { isUsage: true });
 
 const tokens = (id) => String(id).replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
 const canon = (t) => SYNONYMS[t] || t;
@@ -108,7 +108,7 @@ function testIdsIn(html) {
 // an error message, where a one-word message ("boom") would otherwise become a test-id called "boom".
 function analyzeLocator({ html, selector, bare = true }) {
   const target = extractTestId(selector) || (bare && /^[\w-]+$/.test(String(selector).trim()) ? String(selector).trim() : null);
-  if (!target) throw Object.assign(new Error(`no test-id found in "${String(selector).slice(0, 80)}" (looked for getByTestId('x'), [data-testid=x], data-cy=…)`), { code: 'NO_TESTID' });
+  if (!target) throw codedError('NO_TESTID', `no test-id found in "${String(selector).slice(0, 80)}" (looked for getByTestId('x'), [data-testid=x], data-cy=…)`);
   const elements = testIdsIn(html);
   const present = elements.some((e) => e.testid === target);
   const candidates = elements.filter((e) => e.testid !== target)
@@ -119,17 +119,13 @@ function analyzeLocator({ html, selector, bare = true }) {
 }
 
 const TOKEN = /^qafp[0-9a-f]{12}$/;
-const unreadable = (what, e) => Object.assign(new Error(`cannot read ${what}: ${e.message}`), { code: 'UNREADABLE' });
 
 // the verdict a token names, and what its failure SAYS (message + the reporter's diagnosis) — which is where the test-id usually is
 function verdictFor(reportFile, token) {
-  let doc;
-  try { doc = JSON.parse(fs.readFileSync(reportFile, 'utf8')); } catch (e) { throw unreadable(reportFile, e); }
-  const report = doc && doc.data ? doc.data : doc;
-  if (!report || !Array.isArray(report.verdicts)) throw Object.assign(new Error(`${reportFile} is not a triage report (no "verdicts" array)`), { code: 'UNREADABLE' });
+  const report = readReport(reportFile);
   const v = report.verdicts.find((x) => x.token === token);
-  if (!v) throw Object.assign(new Error(`no verdict with token ${token} in ${reportFile}`), { code: 'UNKNOWN_TOKEN' });
-  if (!v.error) throw Object.assign(new Error(`the verdict for ${token} records no error text to read a locator from`), { code: 'NO_ERROR' });
+  if (!v) throw codedError('UNKNOWN_TOKEN', `no verdict with token ${token} in ${reportFile}`);
+  if (!v.error) throw codedError('NO_ERROR', `the verdict for ${token} records no error text to read a locator from`);
   return v;
 }
 
@@ -137,32 +133,29 @@ function verdictFor(reportFile, token) {
 function mergeEvidence(file, key, locator) {
   let evidence = {};
   if (fs.existsSync(file)) {
-    try { evidence = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { throw unreadable(file, e); }
-    if (!evidence || typeof evidence !== 'object' || Array.isArray(evidence)) throw Object.assign(new Error(`${file} is not an evidence object, so it was left alone`), { code: 'UNREADABLE' });
+    evidence = readJson(file);
+    if (!evidence || typeof evidence !== 'object' || Array.isArray(evidence)) throw unreadable(`${file} is not an evidence object, so it was left alone`);
   }
   evidence[key] = { ...(evidence[key] || {}), locator };
-  fs.mkdirSync(path.dirname(path.resolve(file)), { recursive: true });
-  fs.writeFileSync(file, `${JSON.stringify(evidence, null, 2)}\n`);
+  writeJson(file, evidence);
 }
 
+const FLAGS = {
+  '--html': { key: 'html' },
+  '--selector': { key: 'selector' },
+  '--report': { key: 'report' },
+  '--token': { key: 'token' },
+  '--evidence-out': { key: 'evidenceOut' },
+};
+
 function main({ argv = process.argv.slice(2), stdout = process.stdout, stderr = process.stderr } = {}) {
-  const out = (obj) => stdout.write(`${JSON.stringify(obj, null, 2)}\n`);
+  const out = jsonPrinter(stdout);
   try {
     if (!argv.length || argv[0] === '-h' || argv[0] === '--help') {
       stderr.write('Usage: locators.js --html <page.html> (--selector <selector or error message> | --report <triage.json> --token <qafp…> [--evidence-out <evidence.json>])\n');
       return argv.length ? 0 : 2;
     }
-    const opts = {};
-    for (let n = 0; n < argv.length; n += 1) {
-      const flag = argv[n];
-      const value = () => { if (n + 1 >= argv.length) throw usage(`${flag} needs a value`); n += 1; return argv[n]; };
-      if (flag === '--html') opts.html = value();
-      else if (flag === '--selector') opts.selector = value();
-      else if (flag === '--report') opts.report = value();
-      else if (flag === '--token') opts.token = value();
-      else if (flag === '--evidence-out') opts.evidenceOut = value();
-      else throw usage(`unknown option ${flag}`);
-    }
+    const opts = parseFlags(argv, FLAGS);
     const byToken = opts.report !== undefined || opts.token !== undefined;
     if (!opts.html) throw usage('--html is required');
     if (byToken && opts.selector !== undefined) throw usage('use --selector OR --report with --token, not both');
@@ -171,7 +164,7 @@ function main({ argv = process.argv.slice(2), stdout = process.stdout, stderr = 
     if (opts.evidenceOut && !byToken) throw usage('--evidence-out needs --report and --token (it files the result under that verdict\'s key)');
     if (byToken && !TOKEN.test(opts.token)) throw usage('--token must be a fingerprint token from the report (qafp followed by 12 hex digits)');
     let html;
-    try { html = fs.readFileSync(opts.html, 'utf8'); } catch (e) { throw unreadable(opts.html, e); }
+    try { html = fs.readFileSync(opts.html, 'utf8'); } catch (e) { throw unreadable(`cannot read ${opts.html}: ${e.message}`); }
     if (!byToken) { out({ ok: true, data: analyzeLocator({ html, selector: opts.selector }) }); return 0; }
     const verdict = verdictFor(opts.report, opts.token);
     const data = analyzeLocator({ html, selector: evidenceText(verdict.error), bare: false });
@@ -187,4 +180,4 @@ function main({ argv = process.argv.slice(2), stdout = process.stdout, stderr = 
 
 if (require.main === module) process.exitCode = main();
 
-module.exports = { main, analyzeLocator, similarity, verdictFor, mergeEvidence };
+module.exports = { main, analyzeLocator, similarity, verdictFor, mergeEvidence, FLAGS };

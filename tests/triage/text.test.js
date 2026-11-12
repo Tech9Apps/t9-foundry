@@ -2,7 +2,7 @@
 
 const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
-const { infraSignal, isLocatorError, extractTestId, testCrash, appCrash, firstSourceFrame } = require('../../scripts/triage/lib/text');
+const { infraSignal, authSignal, errorPageSignal, firstMatch, isLocatorError, extractTestId, testCrash, appCrash, firstSourceFrame } = require('../../scripts/triage/lib/text');
 
 describe('infraSignal', () => {
   test('recognises connection and gateway failures', () => {
@@ -85,5 +85,33 @@ describe('appCrash', () => {
   });
   test('a missing-element error is never an application crash', () => {
     assert.equal(app("locator not found: getByTestId('x')", 'at f (/w/app/src/page.js:1:1)'), null);
+  });
+});
+
+describe('the signals share one way of reading a message', () => {
+  test('firstMatch returns the source of the FIRST pattern that matches, and null when none does', () => {
+    const patterns = [/alpha/, /beta/, /b/];
+    assert.equal(firstMatch(patterns, 'a beta here'), 'beta');
+    assert.equal(firstMatch(patterns, 'only b'), 'b');
+    assert.equal(firstMatch(patterns, 'nothing'), null);
+  });
+  test('firstMatch reads through ANSI colour codes, and a missing message matches nothing', () => {
+    assert.equal(firstMatch([/ECONNREFUSED/], '\u001b[31mECONNREFUSED\u001b[39m'), 'ECONNREFUSED');
+    for (const m of [undefined, null, '']) assert.equal(firstMatch([/x/], m), null, String(m));
+  });
+  test('infraSignal, authSignal and errorPageSignal name the pattern that matched, read through ANSI codes, and are null otherwise', () => {
+    assert.match(infraSignal('connect ECONNREFUSED 127.0.0.1:3000'), /ECONNREFUSED/);
+    assert.match(authSignal('Received: 401'), /401/);
+    assert.match(authSignal('\u001b[31msession expired\u001b[39m'), /session/);
+    assert.match(errorPageSignal('Received: Not Found'), /Not Found/);
+    assert.match(errorPageSignal('503 !== 200'.replace('503', '404')), /404/);
+    for (const fn of [infraSignal, authSignal, errorPageSignal]) {
+      assert.equal(fn('expected 10 to equal 12'), null, fn.name);
+      assert.equal(fn(undefined), null, fn.name);
+      assert.equal(fn(''), null, fn.name);
+    }
+  });
+  test('the first listed pattern wins when several match', () => {
+    assert.match(infraSignal('Received: 503 after ECONNREFUSED'), /ECONNREFUSED/);
   });
 });

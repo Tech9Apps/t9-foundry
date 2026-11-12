@@ -26,11 +26,12 @@
 // A comment-existing step comes with its input already written to <comments-dir>/<fingerprint token>.json, so nobody has to assemble
 // JSON from text that came out of a failing test. Output: { ok, data: { runId, actions[], flaky[], warnings[] } }. Exit 0 = planned, 1 = unreadable input, 2 = usage.
 
-const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { run } = require('../tracker/adapters');
-const { connect } = require('../tracker/lib/connect');
+const { connect, CONNECT_FLAGS } = require('../tracker/lib/connect');
+const { usage, writeJson, parseFlags, jsonPrinter } = require('../lib/cli');
+const { readReport } = require('./lib/documents');
 const { TrackerError } = require('../tracker/lib/errors');
 const { redactSecrets } = require('./lib/text');
 
@@ -38,7 +39,6 @@ const { redactSecrets } = require('./lib/text');
 // (tests/helpers/orchestrator-drift-check.js), so a step cannot be added here without telling the model about it.
 const STEPS = ['file-bug', 'file-regression', 'report-dismissed', 'comment-existing', 'duplicate-in-run', 'propose-test-fix', 'report-flaky', 'report-environment', 'propose'];
 
-const usage = (message) => Object.assign(new Error(message), { isUsage: true });
 const MAX_CANDIDATES = 5;
 const CAP_REASON = 'held at propose: classification of this runner format has not been verified on real failures (a person widens the trusted formats, with triage.trustedFormats or --trusted-formats), so a person decides';
 const sanitize = (s) => String(s).replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
@@ -55,22 +55,17 @@ const runPart = (runId) => {
 const isValidRunId = (id) => typeof id === 'string' && /^[^\u0000-\u001f\u007f]{1,128}$/u.test(id);
 const TOKEN = /^qafp[0-9a-f]{12}$/;
 
+const FLAGS = {
+  '--report': { key: 'report' },
+  '--run-id': { key: 'runId' },
+  '--flaky-out': { key: 'flakyOut' },
+  '--out': { key: 'out' },
+  '--comments-dir': { key: 'commentsDir' },
+  ...CONNECT_FLAGS,
+};
+
 function parseArgs(argv) {
-  const opts = {};
-  for (let n = 0; n < argv.length; n += 1) {
-    const flag = argv[n];
-    const value = () => { if (n + 1 >= argv.length) throw usage(`${flag} needs a value`); n += 1; return argv[n]; };
-    if (flag === '--report') opts.report = value();
-    else if (flag === '--run-id') opts.runId = value();
-    else if (flag === '--flaky-out') opts.flakyOut = value();
-    else if (flag === '--out') opts.out = value();
-    else if (flag === '--comments-dir') opts.commentsDir = value();
-    else if (flag === '--source') opts.source = value();
-    else if (flag === '--config') opts.config = value();
-    else if (flag === '--base-url') opts.baseUrl = value();
-    else if (flag === '--timeout-ms') opts.timeoutMs = Number(value());
-    else throw usage(`unknown option ${flag}`);
-  }
+  const opts = parseFlags(argv, FLAGS);
   if (!opts.report) throw usage('--report <triage report json> is required');
   if (opts.runId !== undefined && !isValidRunId(opts.runId)) throw usage('--run-id must be 1-128 characters with no control characters');
   return opts;
@@ -180,8 +175,7 @@ function writeCommentInputs(actions) {
   const written = [];
   for (const a of actions) {
     if (a.step !== 'comment-existing' || !a.commentInputFile) continue;
-    fs.mkdirSync(path.dirname(path.resolve(a.commentInputFile)), { recursive: true });
-    fs.writeFileSync(a.commentInputFile, `${JSON.stringify(a.commentInput, null, 2)}\n`);
+    writeJson(a.commentInputFile, a.commentInput);
     written.push(a.commentInputFile);
   }
   return written;
@@ -200,17 +194,14 @@ function connectIfNeeded(report, { configPath, source, baseUrl, timeoutMs, env, 
 }
 
 async function main({ argv = process.argv.slice(2), env = process.env, stdout = process.stdout, stderr = process.stderr, fetch = globalThis.fetch, now = Date.now } = {}) {
-  const out = (obj) => stdout.write(`${JSON.stringify(obj, null, 2)}\n`);
+  const out = jsonPrinter(stdout);
   try {
     if (!argv.length || argv[0] === '-h' || argv[0] === '--help') {
       stderr.write('Usage: plan.js --report <triage.json> [--run-id ID] [--flaky-out FILE] [--out FILE] [--comments-dir DIR] [--source T] [--config P] [--base-url U] [--timeout-ms N]\n');
       return argv.length ? 0 : 2;
     }
     const opts = parseArgs(argv);
-    let doc;
-    try { doc = JSON.parse(fs.readFileSync(opts.report, 'utf8')); } catch (e) { throw Object.assign(new Error(`cannot read ${opts.report}: ${e.message}`), { code: 'UNREADABLE' }); }
-    const report = doc && doc.data ? doc.data : doc;
-    if (!report || !Array.isArray(report.verdicts)) throw Object.assign(new Error(`${opts.report} is not a triage report (no "verdicts" array)`), { code: 'UNREADABLE' });
+    const report = readReport(opts.report);
     const runId = opts.runId || new Date(now()).toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
 
     const { adapter, trackerWarning } = connectIfNeeded(report, { configPath: opts.config, source: opts.source, baseUrl: opts.baseUrl, timeoutMs: opts.timeoutMs, env, fetch });
@@ -218,8 +209,7 @@ async function main({ argv = process.argv.slice(2), env = process.env, stdout = 
     const data = await plan({ report, runId, adapter, trackerWarning, commentsDir });
     writeCommentInputs(data.actions);
     for (const f of [opts.out && [opts.out, { ok: true, data }], opts.flakyOut && [opts.flakyOut, { runId, flaky: data.flaky }]].filter(Boolean)) {
-      fs.mkdirSync(path.dirname(path.resolve(f[0])), { recursive: true });
-      fs.writeFileSync(f[0], `${JSON.stringify(f[1], null, 2)}\n`);
+      writeJson(f[0], f[1]);
     }
     out({ ok: true, data });
     return 0;
@@ -232,4 +222,4 @@ async function main({ argv = process.argv.slice(2), env = process.env, stdout = 
 
 if (require.main === module) main().then((code) => { process.exitCode = code; });
 
-module.exports = { main, plan, connectIfNeeded, writeCommentInputs, sanitize, isValidRunId, STEPS };
+module.exports = { main, plan, connectIfNeeded, writeCommentInputs, sanitize, isValidRunId, STEPS, FLAGS };

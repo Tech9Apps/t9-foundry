@@ -18,7 +18,7 @@ const ROOT = path.join(__dirname, '..', '..');
 const manifest = require('../../demo/scenarios/manifest.json');
 const scn = (id) => manifest.scenarios.find((s) => s.id === id);
 
-const baseEnv = () => { const e = { ...process.env }; delete e.NODE_TEST_CONTEXT; return e; }; // the inner `node --test` must not think it is a subprocess of this test run
+const { cleanEnv: baseEnv } = require('../helpers/node-env'); // the inner `node --test` must not think it is a subprocess of this test run
 
 // Drive one scenario through the real orchestrator with a tracker mock for the plan step.
 async function drive(s, { extra = [], mock = MOCKS.github(), snapshot = true } = {}) {

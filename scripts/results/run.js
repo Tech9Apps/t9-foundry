@@ -27,9 +27,9 @@ const childProcess = require('child_process');
 const { plan, SUPPORTED } = require('./frameworks');
 const { normalizePath } = require('./normalize');
 const { findConfig } = require('../tracker/lib/connect');
+const { usage, readJson, parseFlags, jsonPrinter } = require('../lib/cli');
 
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000;
-const usage = (message) => Object.assign(new Error(message), { isUsage: true });
 const MARKER = '.qa-results-raw';
 // Only reports this tool (or the frameworks it drives) writes. Used to refuse clearing a directory that holds anything else.
 const OURS = /^(results[-\w.]*\.(xml|json|tap)|\.qa-results-raw)$/;
@@ -41,31 +41,25 @@ function refuseLeadingDash(name, v) {
   if (typeof v === 'string' && v.startsWith('-')) throw usage(`${name} "${v.slice(0, 40)}" starts with "-", so the test runner would read it as an option; write it as ./${v} if it really is a path`);
   return v;
 }
+const runnerArg = (v, flag) => refuseLeadingDash(flag, v);
+
+const FLAGS = {
+  '--framework': { key: 'framework' },
+  '--test-dir': { key: 'testDir', parse: runnerArg },
+  '--config-file': { key: 'configFile', parse: runnerArg },
+  '--spec': { key: 'specs', list: true, parse: runnerArg },
+  '--headed': { key: 'headed', set: true },
+  '--out': { key: 'out' },
+  '--cwd': { key: 'cwd' },
+  '--config': { key: 'config' },
+  '--timeout-ms': { key: 'timeoutMs', parse: Number },
+  '--quiet': { key: 'quiet', set: true },
+  '--allow-all-skipped': { key: 'allowAllSkipped', set: true },
+  '--dry-run': { key: 'dryRun', set: true },
+};
 
 function parseArgs(argv) {
-  const opts = { specs: [] };
-  for (let n = 0; n < argv.length; n += 1) {
-    const flag = argv[n];
-    const value = () => {
-      if (n + 1 >= argv.length) throw usage(`${flag} needs a value`);
-      n += 1;
-      return argv[n];
-    };
-    const runnerArg = () => refuseLeadingDash(flag, value());
-    if (flag === '--framework') opts.framework = value();
-    else if (flag === '--test-dir') opts.testDir = runnerArg();
-    else if (flag === '--config-file') opts.configFile = runnerArg();
-    else if (flag === '--spec') opts.specs.push(runnerArg());
-    else if (flag === '--headed') opts.headed = true;
-    else if (flag === '--out') opts.out = value();
-    else if (flag === '--cwd') opts.cwd = value();
-    else if (flag === '--config') opts.config = value();
-    else if (flag === '--timeout-ms') opts.timeoutMs = Number(value());
-    else if (flag === '--quiet') opts.quiet = true;
-    else if (flag === '--allow-all-skipped') opts.allowAllSkipped = true;
-    else if (flag === '--dry-run') opts.dryRun = true;
-    else throw usage(`unknown option ${flag}`);
-  }
+  const opts = parseFlags(argv, FLAGS, { init: { specs: [] } });
   if (opts.timeoutMs !== undefined && !(opts.timeoutMs > 0)) throw usage('--timeout-ms must be a positive number');
   return opts;
 }
@@ -73,9 +67,7 @@ function parseArgs(argv) {
 function fromConfig(opts, env) {
   const file = findConfig(opts.config, env);
   if (!file) return {};
-  try { return (JSON.parse(fs.readFileSync(file, 'utf8')).testFramework) || {}; } catch (e) {
-    throw usage(`cannot read ${file}: ${e.message}`);
-  }
+  return (readJson(file, { fail: usage }) || {}).testFramework || {}; // a config that is literally `null` has no testFramework: "no framework" follows
 }
 
 // The runs in flight. A caller that is itself interrupted (self-heal reverting on SIGTERM) must stop them: a runner left going keeps writing into the
@@ -120,7 +112,7 @@ function runChild({ spawn, command, args, env, cwd, timeoutMs, quiet }) {
 }
 
 async function main({ argv = process.argv.slice(2), env = process.env, stdout = process.stdout, stderr = process.stderr, spawn = childProcess.spawn, now = Date.now } = {}) {
-  const out = (obj) => stdout.write(`${JSON.stringify(obj, null, 2)}\n`);
+  const out = jsonPrinter(stdout);
   try {
     if (!argv.length || argv[0] === '-h' || argv[0] === '--help') {
       stderr.write('Usage: run.js [--framework F] [--test-dir D] [--config-file F] [--spec S]... [--headed] [--out DIR] [--cwd D] [--config P] [--timeout-ms N] [--quiet] [--allow-all-skipped] [--dry-run]\n');
@@ -215,4 +207,4 @@ if (require.main === module) {
   main().then((code) => { process.exitCode = code; });
 }
 
-module.exports = { main, killActive };
+module.exports = { main, killActive, FLAGS };

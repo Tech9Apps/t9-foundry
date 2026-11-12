@@ -11,7 +11,7 @@ setup() {
   # a private copy of everything the checker reads, so a test can corrupt the prose safely
   mkdir -p "$TEST_TMP/.claude" "$TEST_TMP/scripts"
   cp -R "$REPO_ROOT/.claude/commands" "$REPO_ROOT/.claude/agents" "$TEST_TMP/.claude/"
-  cp -R "$REPO_ROOT/scripts/tracker" "$REPO_ROOT/scripts/results" "$TEST_TMP/scripts/"
+  cp -R "$REPO_ROOT/scripts/lib" "$REPO_ROOT/scripts/tracker" "$REPO_ROOT/scripts/results" "$TEST_TMP/scripts/"
   cp -R "$REPO_ROOT/schemas" "$TEST_TMP/"
 }
 teardown() {

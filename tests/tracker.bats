@@ -45,6 +45,18 @@ node_tests() { # <file> -> runs it, echoes the TAP summary lines
   [[ "$output" =~ "# fail 0" ]]
 }
 
+@test "the pieces every adapter shares (markers, ids, tokens, paging, summaries, the API call) pass their tests" {
+  run node_tests kit.test.js
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "# fail 0" ]]
+}
+
+@test "the dismissed-status rules of all five trackers pass their tests (a recurrence after \"won't fix\" is not filed as a regression)" {
+  run node_tests dismissed.test.js
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "# fail 0" ]]
+}
+
 @test "idempotency keys match whole keys only (bug-1 is not found in bug-10), on every tracker" {
   run node_tests keys.test.js
   [ "$status" -eq 0 ]

@@ -16,6 +16,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const { cleanEnv } = require('../helpers/node-env');
 
 const HOSTILE = {
   project: { name: "a developer's own config, not the test's" },
@@ -31,8 +32,7 @@ const RUNS = [
 test('the triage tests give the same results when a hostile qa-config.json is in the working directory', { timeout: 600000 }, () => {
   const dir = fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), 'qa-hostile-'));
   fs.writeFileSync(path.join(dir, 'qa-config.json'), JSON.stringify(HOSTILE));
-  const env = { ...process.env, CLAUDE_PROJECT_DIR: dir };
-  delete env.NODE_TEST_CONTEXT; // a nested `node --test` must run its own tests, not be mistaken for part of this run
+  const env = cleanEnv({ CLAUDE_PROJECT_DIR: dir }); // a nested `node --test` must run its own tests, not be mistaken for part of this run
   const failures = [];
   for (const [file, ...extra] of RUNS) {
     const r = spawnSync(process.execPath, ['--test', ...extra, path.join(__dirname, file)], { cwd: dir, env, encoding: 'utf8' });

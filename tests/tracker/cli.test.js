@@ -197,3 +197,54 @@ describe('tracker CLI', () => {
     assert.equal(mock.calls.length, 0);
   });
 });
+
+// The flags that choose and reach a tracker are defined once (connect.js CONNECT_FLAGS). These check that each one really reaches the
+// adapter — the other tests hand the mock a --base-url its fetch never looks at, so a flag that stopped working would pass them.
+describe('the connection flags reach the adapter', () => {
+  const dir = tmpdir();
+  const config = (ticketSource) => {
+    const file = path.join(dir, `cfg-${Math.random().toString(36).slice(2)}.json`);
+    fs.writeFileSync(file, JSON.stringify({ ticketSource }));
+    return file;
+  };
+  const github = config({ type: 'github', github: { repo: 'acme/shop' } });
+
+  test('--base-url decides where the request goes', async () => {
+    const mock = createGithubMock();
+    const id = mock.seedTicket({ title: 'T' });
+    const seen = [];
+    const fetch = (url, init) => { seen.push(String(url)); return mock.fetch(String(url).replace('https://override.example.test/api', mock.baseUrl), init); };
+    const r = await cli(['fetch', '--config', github, '--input', JSON.stringify({ id }), '--base-url', 'https://override.example.test/api'], { env: { GITHUB_TOKEN: mock.token }, fetch });
+    assert.equal(r.code, 0, r.out);
+    assert.ok(seen.length > 0 && seen.every((u) => u.startsWith('https://override.example.test/api/')), seen.join('\n'));
+  });
+
+  test('--timeout-ms is the per-request timeout', { timeout: 10000 }, async () => {
+    // AbortSignal.timeout's timer does not keep the process alive (a real socket would), so this fake request does, until it is aborted
+    const hangs = (url, init) => new Promise((resolve, reject) => {
+      const hold = setTimeout(() => {}, 30000);
+      init.signal.addEventListener('abort', () => { clearTimeout(hold); reject(init.signal.reason); });
+    });
+    const started = Date.now();
+    const r = await cli(['fetch', '--config', github, '--input', '{"id":"1"}', '--timeout-ms', '20'], { env: { GITHUB_TOKEN: 'x'.repeat(12) }, fetch: hangs });
+    assert.equal(r.code, 1);
+    assert.equal(r.json.error.code, 'TIMEOUT');
+    assert.ok(Date.now() - started < 5000, 'it gave up at 20 ms per try, not the 15 s default');
+  });
+
+  test('--source overrides the type in the config', async () => {
+    const r = await cli(['fetch', '--config', github, '--input', '{"id":"1"}', '--source', 'gitlab'], { env: { GITHUB_TOKEN: 'x'.repeat(12) } });
+    assert.equal(r.code, 1);
+    assert.equal(r.json.error.code, 'CONFIG');
+    assert.match(r.json.error.message, /ticketSource\.gitlab\.projectId/);
+  });
+
+  test('every script that connects takes exactly the same four flags, defined once', () => {
+    const { CONNECT_FLAGS } = require('../../scripts/tracker/lib/connect');
+    assert.deepEqual(Object.keys(CONNECT_FLAGS).sort(), ['--base-url', '--config', '--source', '--timeout-ms']);
+    for (const script of ['tracker/cli', 'tracker/post-tests', 'tracker/smoke', 'triage/plan']) {
+      const { FLAGS } = require(`../../scripts/${script}`);
+      for (const [flag, spec] of Object.entries(CONNECT_FLAGS)) assert.equal(FLAGS[flag], spec, `${script} ${flag}`);
+    }
+  });
+});

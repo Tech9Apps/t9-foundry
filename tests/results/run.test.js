@@ -8,6 +8,7 @@ const os = require('os');
 const path = require('path');
 const { main } = require('../../scripts/results/run');
 const { plan, SUPPORTED } = require('../../scripts/results/frameworks');
+const { cleanEnv } = require('../helpers/node-env');
 
 const FIX = path.join(__dirname, '..', 'fixtures', 'results');
 const tmp = () => fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), 'qa-run.'));
@@ -284,8 +285,7 @@ test('REAL run: node --test on a throwaway project, failing then fixed', async (
   fs.mkdirSync(proj);
   fs.writeFileSync(path.join(proj, 'a.test.js'), "const t=require('node:test');const a=require('node:assert');\nt('DEMO-7/TC-001: adds',()=>a.equal(1+1,2));\nt('DEMO-7/TC-002: breaks',()=>a.equal(1+1,3));\nt('DEMO-7/TC-003: skipped',{skip:true},()=>{});\n");
   // the inner `node --test` must not think it is a subprocess of THIS test run
-  const env = { ...process.env };
-  delete env.NODE_TEST_CONTEXT;
+  const env = cleanEnv();
   const go = (extra = []) => new Promise((resolve) => {
     let out = '';
     main({ argv: ['--framework', 'node', '--cwd', proj, '--spec', 'a.test.js', '--out', path.join(dir, 'qa'), ...extra], env, stdout: { write: (s) => { out += s; } }, stderr: { write: () => {} } })
@@ -412,7 +412,6 @@ setTimeout(() => {}, 60000);
 `);
   return proj;
 }
-const cleanEnv = () => { const e = { ...process.env }; delete e.NODE_TEST_CONTEXT; return e; };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function until(fn, ms) { const end = Date.now() + ms; while (Date.now() < end) { if (fn()) return true; await sleep(50); } return false; }
 

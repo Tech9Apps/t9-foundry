@@ -3,7 +3,8 @@
 const { TrackerError } = require('../lib/errors');
 const { checkBaseUrl } = require('../lib/base-url');
 const { request } = require('../lib/http');
-const { keyTag, keyMarker, hasMarker, hasTag, stripHtml, escapeXml, extractAcceptanceCriteria } = require('../lib/contract');
+const { keyTag, hasMarker, hasTag, stripHtml, escapeXml, extractAcceptanceCriteria } = require('../lib/contract');
+const { withMarker, requireNumericId, requireToken, summary, isDuplicateLink } = require('../lib/kit');
 
 // Azure DevOps work-item tracking, REST 7.1, PAT auth.
 // settings = qa-config.json > ticketSource.azure  ({ organization, project, host, tokenEnvVar })
@@ -16,9 +17,7 @@ const JSON_PATCH = { 'Content-Type': 'application/json-patch+json' };
 function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, retryDelayMs }) {
   const { organization, project } = settings;
   if (!organization || !project) throw new TrackerError('CONFIG', 'ticketSource.azure.organization and .project must be set');
-  const tokenVar = settings.tokenEnvVar || 'AZURE_DEVOPS_PAT';
-  const pat = env[tokenVar];
-  if (!pat) throw new TrackerError('CONFIG', `${tokenVar} is not set`);
+  const pat = requireToken({ settings, env, defaultVar: 'AZURE_DEVOPS_PAT' });
 
   const host = checkBaseUrl(baseUrl || settings.host || 'https://dev.azure.com', 'the Azure DevOps host', { hosts: ['dev.azure.com'], env });
   const root = `${host}/${encodeURIComponent(organization)}/${encodeURIComponent(project)}`;
@@ -28,10 +27,7 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
   const call = (method, url, body, what, extraHeaders = {}, idempotent = false) => request({
     fetch, method, url, body, timeoutMs, retryDelayMs, what, idempotent, headers: { Authorization: auth, ...extraHeaders },
   });
-  const workItemUrl = (id) => {
-    if (!/^\d+$/.test(String(id))) throw new TrackerError('VALIDATION', `Azure DevOps work item ids are numbers (got "${id}")`);
-    return `${wit}/workitems/${id}`;
-  };
+  const workItemUrl = (id) => `${wit}/workitems/${requireNumericId('Azure DevOps work item', id)}`;
   const htmlUrl = (wi) => (wi._links && wi._links.html && wi._links.html.href) || `${root}/_workitems/edit/${wi.id}`;
   const f = (wi, name) => (wi.fields || {})[name];
   const wiqlString = (s) => String(s).replace(/'/g, "''");
@@ -84,7 +80,7 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
     if (kind === 'bug') where = `([System.Title] CONTAINS '${q}' OR [System.Description] CONTAINS '${q}' OR [Microsoft.VSTS.TCM.ReproSteps] CONTAINS '${q}') AND [System.WorkItemType] = 'Bug'`;
     if (kind === 'test') where += " AND [System.WorkItemType] = 'Test Case'";
     const items = await runQuery(where, limit);
-    return { items: items.map((wi) => ({ id: String(wi.id), title: f(wi, 'System.Title'), url: htmlUrl(wi), status: f(wi, 'System.State'), open: !AZ_CLOSED.test(f(wi, 'System.State') || ''), ...(f(wi, 'System.CreatedDate') ? { createdAt: f(wi, 'System.CreatedDate') } : {}), ...(azDismissed(wi) ? { dismissed: true } : {}) })) };
+    return { items: items.map((wi) => summary({ id: wi.id, title: f(wi, 'System.Title'), url: htmlUrl(wi), status: f(wi, 'System.State'), open: !AZ_CLOSED.test(f(wi, 'System.State') || ''), createdAt: f(wi, 'System.CreatedDate'), dismissed: azDismissed(wi) })) };
   }
 
   async function findByKey(key) {
@@ -121,15 +117,13 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
     try {
       await call('PATCH', `${workItemUrl(childId)}?api-version=7.1`, [{ op: 'add', path: '/relations/-', value: relation }], `link work item ${childId} to ${parentId}`, JSON_PATCH);
     } catch (err) {
-      // Linking twice is not a failure: the goal state (linked) already holds.
-      if (!(err instanceof TrackerError && err.code === 'VALIDATION' && /already exists/i.test(err.message))) throw err;
+      if (!isDuplicateLink(err, /already exists/i)) throw err;
     }
     return { linked: true, method: 'native' };
   }
 
   async function comment({ id, body, idempotencyKey }) {
-    const text = idempotencyKey ? `${body}\n\n${keyMarker(idempotencyKey)}` : body;
-    const { json } = await call('POST', `${workItemUrl(id)}/comments?api-version=7.1-preview.3`, { text }, `comment on work item ${id}`);
+    const { json } = await call('POST', `${workItemUrl(id)}/comments?api-version=7.1-preview.3`, { text: withMarker(body, idempotencyKey) }, `comment on work item ${id}`);
     return { id: String(json.id) };
   }
 

@@ -28,14 +28,14 @@ const { STEPS } = require(path.join(ROOT, 'scripts/triage/plan.js'));
 const { MAX_RERUNS } = require(path.join(ROOT, 'scripts/triage/orchestrate.js'));
 
 // ── scripts and flags ───────────────────────────────────────────────────────
-const flagsIn = (src) => new Set([...src.matchAll(/flag === '(--[a-z-]+)'/g)].map((m) => m[1]).concat(['--help']));
+const scriptFlags = require('./script-flags');
 const SCRIPTS = {};
 cmd.split('\n').forEach((line, i) => {
   const m = line.match(/node (scripts\/(?:triage|tracker|results)\/[\w-]+\.js)(.*)$/);
   if (!m) return;
   const [, file, rest] = m;
   if (!exists(file)) { bad(`${CMD}:${i + 1}: ${file} does not exist`); return; }
-  SCRIPTS[file] = SCRIPTS[file] || flagsIn(read(file));
+  SCRIPTS[file] = SCRIPTS[file] || scriptFlags(ROOT, file);
   for (const f of rest.matchAll(/(?:^|\s)(--[a-z-]+)/g)) if (!SCRIPTS[file].has(f[1])) bad(`${CMD}:${i + 1}: ${path.basename(file)} has no option ${f[1]}`);
   if (file.endsWith('tracker/cli.js')) {
     const op = rest.trim().split(/\s+/)[0];
@@ -44,7 +44,7 @@ cmd.split('\n').forEach((line, i) => {
   }
 });
 // flags named in prose for orchestrate.js ("`--test-dir <…>`", "(`--reruns`, 0–5)") must exist there too
-const orchFlags = flagsIn(read('scripts/triage/orchestrate.js'));
+const orchFlags = scriptFlags(ROOT, 'scripts/triage/orchestrate.js');
 for (const m of cmd.matchAll(/`(--[a-z-]+)[ `]/g)) if (!orchFlags.has(m[1]) && !Object.values(SCRIPTS).some((set) => set.has(m[1]))) bad(`${CMD}: mentions ${m[1]}, which no script it calls defines`);
 for (const need of ['orchestrate.js', 'classify.js', 'plan.js', 'locators.js']) if (!Object.keys(SCRIPTS).some((f) => f.endsWith(need))) bad(`${CMD}: no longer calls ${need}`);
 if (!/bash scripts\/preflight\.sh/.test(cmd)) bad(`${CMD}: no longer runs scripts/preflight.sh`);

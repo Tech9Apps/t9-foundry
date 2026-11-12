@@ -13,7 +13,7 @@ setup() {
   mkdir -p "$TEST_TMP/.claude/memory" "$TEST_TMP/scripts" "$TEST_TMP/schemas"
   cp "$REPO_ROOT/.claude/memory/failure-triage-rules.md" "$REPO_ROOT/.claude/memory/ai-usage-rules.md" "$TEST_TMP/.claude/memory/"
   cp -R "$REPO_ROOT/.claude/commands" "$REPO_ROOT/.claude/agents" "$REPO_ROOT/.claude/skills" "$TEST_TMP/.claude/"
-  cp -R "$REPO_ROOT/scripts/triage" "$REPO_ROOT/scripts/results" "$REPO_ROOT/scripts/tracker" "$REPO_ROOT/scripts/preflight.sh" "$TEST_TMP/scripts/"
+  cp -R "$REPO_ROOT/scripts/lib" "$REPO_ROOT/scripts/triage" "$REPO_ROOT/scripts/results" "$REPO_ROOT/scripts/tracker" "$REPO_ROOT/scripts/preflight.sh" "$TEST_TMP/scripts/"
   cp "$REPO_ROOT/qa-config.schema.json" "$TEST_TMP/"   # the prose names config keys; the checks verify them against the schema
 }
 teardown() {
@@ -58,6 +58,24 @@ node_tests() { cd "$REPO_ROOT" && env -u NODE_TEST_CONTEXT node --test --test-re
 
 @test "triage on REAL Jest 30.5.2 and Playwright 1.65.0 reports: every failure of a demo app with known causes is classified correctly" {
   run node_tests real-output.test.js
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "# fail 0" ]]
+}
+
+@test "the triage tests give the same results when a hostile qa-config.json is in the working directory (slow: it re-runs them)" {
+  run node_tests hermetic.test.js
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "# fail 0" ]]
+}
+
+@test "the readers of the triage report and the run result accept both forms and name a file of the wrong kind" {
+  run node_tests documents.test.js
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "# fail 0" ]]
+}
+
+@test "the helpers the self-heal tests stand on (a clean child environment, the stale-selector project) pass their own tests" {
+  run node_tests heal-project.test.js
   [ "$status" -eq 0 ]
   [[ "$output" =~ "# fail 0" ]]
 }
@@ -674,7 +692,7 @@ pinned() { # <file> <from> <to> <expected text in the report>
   printf '\nAn editorial note added on purpose.\n' >> "$(FILEBUG_COPY)"
   cp "$REPO_ROOT/tests/helpers/triage-prose-pins.json" "$TEST_TMP/pins.backup"
   # the checker writes next to ITSELF; run a private copy so the repository's pins are never touched
-  mkdir -p "$TEST_TMP/helpers" && cp "$ORCH_CHECK" "$TEST_TMP/helpers/" && cp "$REPO_ROOT/tests/helpers/triage-prose-pins.json" "$TEST_TMP/helpers/"
+  mkdir -p "$TEST_TMP/helpers" && cp "$ORCH_CHECK" "$BATS_TEST_DIRNAME/helpers/script-flags.js" "$TEST_TMP/helpers/" && cp "$REPO_ROOT/tests/helpers/triage-prose-pins.json" "$TEST_TMP/helpers/"
   run env DRIFT_ROOT="$TEST_TMP" node "$TEST_TMP/helpers/orchestrator-drift-check.js"
   [ "$status" -eq 1 ]
   run env DRIFT_ROOT="$TEST_TMP" node "$TEST_TMP/helpers/orchestrator-drift-check.js" --write-pins

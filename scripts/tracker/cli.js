@@ -20,37 +20,23 @@
 // Secrets are read from environment variables only and are never printed.
 
 const fs = require('fs');
-const path = require('path');
 const { OPERATIONS } = require('./lib/contract');
 const { TrackerError } = require('./lib/errors');
 const { run } = require('./adapters');
-const { connect } = require('./lib/connect');
+const { connect, CONNECT_FLAGS } = require('./lib/connect');
+const { usage, parseFlags, jsonPrinter, writeJson } = require('../lib/cli');
 const { toTicketContext } = require('./lib/context');
 
-function parseArgs(argv) {
-  const [op, ...rest] = argv;
-  const opts = { op };
-  for (let n = 0; n < rest.length; n += 1) {
-    const flag = rest[n];
-    const value = () => {
-      if (n + 1 >= rest.length) throw usage(`${flag} needs a value`);
-      n += 1;
-      return rest[n];
-    };
-    if (flag === '--source') opts.source = value();
-    else if (flag === '--config') opts.config = value();
-    else if (flag === '--input') opts.input = value();
-    else if (flag === '--input-file') opts.inputFile = value();
-    else if (flag === '--stdin') opts.stdin = true;
-    else if (flag === '--context-file') opts.contextFile = value();
-    else if (flag === '--base-url') opts.baseUrl = value();
-    else if (flag === '--timeout-ms') opts.timeoutMs = Number(value());
-    else throw usage(`unknown option ${flag}`);
-  }
-  return opts;
-}
+const FLAGS = {
+  ...CONNECT_FLAGS,
+  '--input': { key: 'input' },
+  '--input-file': { key: 'inputFile' },
+  '--stdin': { key: 'stdin', set: true },
+  '--context-file': { key: 'contextFile' },
+};
 
-const usage = (message) => Object.assign(new Error(message), { isUsage: true });
+// the first argument is the operation; everything after it is flags
+const parseArgs = ([op, ...rest]) => parseFlags(rest, FLAGS, { init: { op } });
 
 async function readStdin(stdin) {
   const chunks = [];
@@ -59,7 +45,7 @@ async function readStdin(stdin) {
 }
 
 async function main({ argv = process.argv.slice(2), env = process.env, stdin = process.stdin, stdout = process.stdout, stderr = process.stderr, fetch = globalThis.fetch } = {}) {
-  const out = (obj) => stdout.write(`${JSON.stringify(obj, null, 2)}\n`);
+  const out = jsonPrinter(stdout);
   try {
     if (!argv.length || argv[0] === '-h' || argv[0] === '--help') {
       stderr.write(`Usage: cli.js <${OPERATIONS.join('|')}> [--source T] [--config P] [--input J | --input-file P | --stdin] [--base-url U] [--timeout-ms N] [--context-file P]\n`);
@@ -82,10 +68,7 @@ async function main({ argv = process.argv.slice(2), env = process.env, stdin = p
 
     const adapter = connect({ configPath: opts.config, source: opts.source, baseUrl: opts.baseUrl, timeoutMs: opts.timeoutMs, env, fetch });
     const data = await run(adapter, opts.op, input);
-    if (opts.contextFile) {
-      fs.mkdirSync(path.dirname(path.resolve(opts.contextFile)), { recursive: true });
-      fs.writeFileSync(opts.contextFile, `${JSON.stringify(toTicketContext(data), null, 2)}\n`);
-    }
+    if (opts.contextFile) writeJson(opts.contextFile, toTicketContext(data));
     out({ ok: true, data });
     return 0;
   } catch (err) {
@@ -106,4 +89,4 @@ if (require.main === module) {
   main().then((code) => { process.exitCode = code; });
 }
 
-module.exports = { main };
+module.exports = { main, FLAGS };
