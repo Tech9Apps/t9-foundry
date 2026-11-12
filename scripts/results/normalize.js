@@ -24,7 +24,6 @@ const PARSERS = {
 const FORMATS = Object.keys(PARSERS);
 const EXT = new Set(['.xml', '.json', '.tap']);
 
-
 function detect(text) {
   const t = text.replace(/^﻿/, '').trimStart();
   if (t.startsWith('<')) return 'junit';

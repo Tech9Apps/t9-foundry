@@ -20,7 +20,6 @@
 // Secrets are read from environment variables only and are never printed.
 
 const fs = require('fs');
-const path = require('path');
 const { OPERATIONS } = require('./lib/contract');
 const { TrackerError } = require('./lib/errors');
 const { run } = require('./adapters');
