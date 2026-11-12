@@ -92,6 +92,12 @@ md.split('\n').forEach((line, i) => {
     if (![...Object.values(FLAGS)].some((set) => set.has(f[1]))) bad(`${FILE}:${i + 1}: no triage script has an option ${f[1]}`);
   }
 });
+// the rules a corrupted copy could reverse without touching a rule row
+const flatMd = md.replace(/\s+/g, ' ');
+for (const sentence of ['Never file a bug for `flaky`, `environment`, `test-bug` or `undetermined`.', 'Never close, reopen or re-prioritize an existing bug.']) {
+  if (!flatMd.includes(sentence)) bad(`${FILE}: no longer says "${sentence}"`);
+}
+if (!/the plan says `report-dismissed`: file nothing and\s+comment on nothing/.test(md)) bad(`${FILE}: no longer says a dismissed match means report-dismissed: file nothing and comment on nothing`);
 for (const need of ['--preflight', '--threshold', '--trusted-formats']) if (!mentioned.has(need)) bad(`${FILE}: no longer tells the model about ${need}`);
 const schemaTriage = JSON.parse(read('qa-config.schema.json')).properties.triage;
 for (const key of ['confidenceThreshold', 'reruns', 'trustedFormats']) {

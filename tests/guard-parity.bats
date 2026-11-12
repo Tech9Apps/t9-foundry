@@ -48,7 +48,8 @@ need_node_22_6() {
 @test "the Python runtime guards (pytest, selenium) give every case the same decision and reason" {
   find_python || skip "no working python3 (a macOS python3 shim fails until the Xcode licence is accepted)"
   for fw in pytest selenium; do
-    run "$PY" "$HELPERS/guard-cases-py.py" "$REPO_ROOT/templates/e2e/$fw"
+    # stderr is dropped, as for the TypeScript guards: a macOS python3 shim prints an xcrun warning there until the Xcode licence is accepted, which is not a parity failure
+    run bash -c "'$PY' '$HELPERS/guard-cases-py.py' '$REPO_ROOT/templates/e2e/$fw' 2>/dev/null"
     echo "$fw: $output"
     [ "$status" -eq 0 ]
     [ "$output" = "OK" ]
@@ -73,7 +74,7 @@ need_node_22_6() {
     const reasons = new Set(t.cases.map((c) => c.reason));
     const need = ["PROD_PATTERN", "UNPARSEABLE", "UNVERIFIABLE_HOST", "HEURISTIC_DISABLED", "EXEMPT_HOST", "ALLOWED_PATTERN", "TEST_ENV_HOST", "NONPROD_HOST", "UNRECOGNIZED_HOST"];
     const groups = t.cases.reduce((m, c) => ({ ...m, [c.group]: (m[c.group] || 0) + 1 }), {});
-    const needGroups = { "prod-pattern-spellings": 15, "allowed-patterns": 5, "heuristic-bypasses": 25, "unverifiable-hosts": 8, "not-production": 20, "known-hosts": 8, "test-environment": 2, "heuristic-off": 3 };
+    const needGroups = { "prod-pattern-spellings": 15, "allowed-patterns": 17, "heuristic-bypasses": 25, "unverifiable-hosts": 8, "not-production": 20, "known-hosts": 8, "test-environment": 2, "heuristic-off": 3 };
     const problems = [];
     for (const r of need) if (!reasons.has(r)) problems.push("no case reaches " + r);
     for (const [g, n] of Object.entries(needGroups)) if ((groups[g] || 0) < n) problems.push("group " + g + " has " + (groups[g] || 0) + " cases, expected at least " + n);

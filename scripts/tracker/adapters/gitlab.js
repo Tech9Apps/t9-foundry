@@ -4,6 +4,7 @@ const { TrackerError } = require('../lib/errors');
 const { checkBaseUrl } = require('../lib/base-url');
 const { hasMarker, extractAcceptanceCriteria } = require('../lib/contract');
 const { withMarker, requireNumericId, requireToken, testCaseBody, priorityFromLabels, summary, isDuplicateLink, eachPage, apiCall } = require('../lib/kit');
+const { findInPages, PAGE_SIZE } = require('../lib/paging');
 
 // GitLab Issues, REST v4, personal/project access token.
 // settings = qa-config.json > ticketSource.gitlab  ({ projectId, host, tokenEnvVar, testLabelName })
@@ -14,7 +15,7 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
   if (!projectId) throw new TrackerError('CONFIG', 'ticketSource.gitlab.projectId is not set');
   const token = requireToken({ settings, env, defaultVar: 'GITLAB_TOKEN' });
   // `baseUrl` overrides the whole API root (mocks); otherwise <host>/api/v4
-  const api = checkBaseUrl(baseUrl || `${(settings.host || 'https://gitlab.com').replace(/\/$/, '')}/api/v4`, 'the GitLab API URL');
+  const api = checkBaseUrl(baseUrl || `${(settings.host || 'https://gitlab.com').replace(/\/$/, '')}/api/v4`, 'the GitLab API URL', { hosts: ['gitlab.com'], env });
   const testLabel = settings.testLabelName || 'test-case';
   const project = `/projects/${encodeURIComponent(projectId)}`;
 
@@ -86,6 +87,7 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
   }
 
   async function link({ childId, parentId }) {
+    issuePath(parentId); // both ends are issue numbers: refused here, before a request, instead of becoming target_issue_iid: null
     const targetProject = await resolveProjectId();
     try {
       await call('POST', `${issuePath(childId)}/links`, { target_project_id: targetProject, target_issue_iid: Number(parentId), link_type: 'relates_to' }, `link GitLab issue ${childId} to ${parentId}`);
@@ -101,8 +103,10 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
   }
 
   async function findCommentByKey(id, key) {
-    const { json } = await call('GET', `${issuePath(id)}/notes?sort=asc&order_by=created_at&per_page=100`, undefined, `look up idempotency key on GitLab issue ${id}`);
-    const hit = (json || []).find((n) => !n.system && hasMarker(n.body, key));
+    const hit = await findInPages(async (page) => {
+      const { json } = await call('GET', `${issuePath(id)}/notes?sort=asc&order_by=created_at&per_page=${PAGE_SIZE}&page=${page}`, undefined, `look up idempotency key on GitLab issue ${id}`);
+      return { items: json || [], more: (json || []).length >= PAGE_SIZE };
+    }, (n) => !n.system && hasMarker(n.body, key), `look up idempotency key on GitLab issue ${id}`);
     return hit ? { id: String(hit.id) } : null;
   }
 

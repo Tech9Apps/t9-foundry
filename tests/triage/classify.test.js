@@ -201,10 +201,12 @@ describe('test-bug (TST-1/2)', () => {
     assert.equal(v.rule, 'TST-1');
   });
 
-  test('TST-2: a TypeError whose first stack frame is in the test file → test-bug 0.8', () => {
-    const e = err("TypeError: Cannot read properties of undefined (reading 'click')", 'error', 'TestContext.<anonymous> (/work/e2e/checkout.spec.ts:12:7)\n at node:internal/x:1:1');
+  test('TST-2: a crash only the test can cause (ReferenceError, missing module) whose first stack frame is in the test file → test-bug 0.8, act; a TypeError is 0.65, propose', () => {
+    const e = err('ReferenceError: page is not defined', 'error', 'TestContext.<anonymous> (/work/e2e/checkout.spec.ts:12:7)\n at node:internal/x:1:1');
     const v = only(triage([run(fail('t', e)), run(fail('t', e))]));
     assert.deepEqual([v.class, v.rule, v.confidence, v.action], ['test-bug', 'TST-2', 0.8, 'act']);
+    const t = err("TypeError: Cannot read properties of undefined (reading 'click')", 'error', 'TestContext.<anonymous> (/work/e2e/checkout.spec.ts:12:7)');
+    assert.deepEqual([only(triage([run(fail('t', t)), run(fail('t', t))])).confidence, only(triage([run(fail('t', t)), run(fail('t', t))])).action], [0.65, 'propose']);
     assert.match(v.evidence[0], /checkout\.spec\.ts:12/);
   });
 
@@ -257,6 +259,7 @@ describe('undetermined is STRICT: a last resort with a closed list of reasons', 
       LOCATOR_NO_EVIDENCE: () => twice('ui', stale),
       LOCATOR_PRESENT: () => twice('ui', stale),
       LOCATOR_GONE: () => twice('ui', stale),
+      EVIDENCE_FOR_OTHER_LOCATOR: () => twice('ui', stale),
       AUTH_OR_SESSION: () => twice('dashboard', err('expect(page).toHaveURL(expected)', 'failure', 'Expected pattern: /dashboard/\nReceived string:  "http://localhost:3000/login"')),
       ERROR_PAGE: () => twice('home', err('expect(locator).toHaveText(expected)', 'failure', 'Locator: locator(\'h1\')\nExpected: "Welcome back"\nReceived: "404 Not Found"')),
       CONSISTENT_TIMEOUT: () => twice('slow', err('Timeout 30000ms exceeded.', 'timeout')),
@@ -265,7 +268,7 @@ describe('undetermined is STRICT: a last resort with a closed list of reasons', 
       UNATTRIBUTED_CRASH: () => twice('t', err('Something exploded', 'error', '')),
       UNCLASSIFIED: () => twice('t', err('weird', 'unknown-kind')),
     };
-    const evidenceFor = { LOCATOR_PRESENT: { present: true }, LOCATOR_GONE: { present: false, candidates: [] } };
+    const evidenceFor = { LOCATOR_PRESENT: { present: true }, LOCATOR_GONE: { present: false, candidates: [] }, EVIDENCE_FOR_OTHER_LOCATOR: { target: 'some-other-id', present: false, candidates: [] } };
     assert.deepEqual(Object.keys(reach).sort(), Object.keys(UND_REASONS).sort(), 'a reason without a test is a reason nobody has seen');
     for (const [reason, build] of Object.entries(reach)) {
       const runs = build();

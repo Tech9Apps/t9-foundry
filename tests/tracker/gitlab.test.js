@@ -94,7 +94,7 @@ describe('gitlab: specifics', () => {
   test('the host setting builds the API root when no override is given', async () => {
     const urls = [];
     const spy = async (url) => { urls.push(String(url)); return new Response(String(url).includes('/notes') ? '[]' : '{"iid":1,"title":"t","state":"opened","labels":[]}', { status: 200 }); };
-    const adapter = createAdapter('gitlab', { settings: { projectId: '7', host: 'https://git.example.org/' }, env: { GITLAB_TOKEN: 'x' }, fetch: spy, retryDelayMs: 0 });
+    const adapter = createAdapter('gitlab', { settings: { projectId: '7', host: 'https://git.example.org/' }, env: { GITLAB_TOKEN: 'x', QA_TRACKER_ALLOW_HOSTS: 'git.example.org' }, fetch: spy, retryDelayMs: 0 });
     await run(adapter, 'fetch', { id: '1' });
     assert.ok(urls[0].startsWith('https://git.example.org/api/v4/projects/7/issues/1'));
   });

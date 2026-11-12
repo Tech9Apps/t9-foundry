@@ -63,7 +63,7 @@ Trigger phrases: "connect to the repo", "configure repository", "set up code rep
 6. **Populate production URL patterns**
    Ask: "What are your production URL patterns? I'll use these to block any test execution against production."
 
-   Provide examples: `myapp\.com$`, `app\.myapp\.com`, `production\.myapp\.com`
+   Provide examples, anchored to the scheme and host so that they cannot match the staging host: `://myapp\.com(/|:|$)`, `://app\.myapp\.com(/|:|$)`, `://production\.myapp\.com(/|:|$)`
 
    Write to `qa-config.json > productionProtection.prodUrlPatterns`
 

@@ -42,8 +42,8 @@ describe('extractTestId', () => {
 describe('testCrash', () => {
   const crash = (message, details, kind = 'error') => testCrash({ kind, message, details });
   test('a crash whose first source frame is a test file is the test\'s fault', () => {
-    for (const file of ['/work/e2e/checkout.spec.ts', '/work/tests/a.js', '/w/src/foo.test.js', '/w/spec/cart_spec.rb', '/w/tests/test_cart.py', '/w/cart_test.py', '/w/cypress/e2e/a.cy.js']) {
-      const f = crash('TypeError: x is not a function', `at run (${file}:10:5)`);
+    for (const file of ['/w/e2e/checkout.spec.ts', '/w/tests/a.js', '/w/src/foo.test.js', '/w/spec/cart_spec.rb', '/w/tests/test_cart.py', '/w/cart_test.py', '/w/cypress/e2e/a.cy.js']) {
+      const f = testCrash({ kind: 'error', message: 'TypeError: x is not a function', details: `at run (${file}:10:5)` }, { root: '/w' });
       assert.ok(f, file);
     }
   });
@@ -60,7 +60,7 @@ describe('testCrash', () => {
     for (const kind of ['failure', 'error', 'timeout', undefined]) assert.ok(crash('TypeError: x is not a function', 'at run (/w/tests/a.test.js:1:1)', kind), String(kind));
   });
   test('reports the file and line', () => {
-    assert.deepEqual(crash('ReferenceError: nope is not defined', 'at X (/w/tests/a.test.js:7:3)'), { file: '/w/tests/a.test.js', line: 7 });
+    assert.deepEqual(crash('ReferenceError: nope is not defined', 'at X (/w/tests/a.test.js:7:3)'), { file: '/w/tests/a.test.js', line: 7, strong: true });
   });
 });
 

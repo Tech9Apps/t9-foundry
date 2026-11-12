@@ -31,7 +31,7 @@ function detect(text) {
   if (/^TAP version \d+/m.test(t.slice(0, 200)) || /^(not )?ok \d+/m.test(t)) return 'tap';
   if (t.startsWith('{')) {
     let doc;
-    try { doc = JSON.parse(t); } catch { throw codedError('UNRECOGNIZED', 'looks like JSON but does not parse'); }
+    try { doc = JSON.parse(t); } catch { throw codedError('UNPARSEABLE', 'looks like JSON but does not parse (cut off or damaged?)'); }
     if (Array.isArray(doc.suites) && (doc.config || doc.stats)) return 'playwright-json';
     if (Array.isArray(doc.testResults)) return 'jest-json';
   }
@@ -83,7 +83,8 @@ function merge(results, opts) {
 }
 
 // Pure entry point (also used by run.js and the tests): path or directory in, result out.
-function normalizePath(target, { format, framework } = {}) {
+// `warnings` (an array) collects what was left out: a file in a directory that is not a test report.
+function normalizePath(target, { format, framework, warnings = [] } = {}) {
   let stat;
   try { stat = fs.statSync(target); } catch { throw codedError('NOT_FOUND', `no such file or directory: ${target}`); }
   const opts = { framework };
@@ -92,9 +93,14 @@ function normalizePath(target, { format, framework } = {}) {
     if (!files.length) throw codedError('NOT_FOUND', `no .xml/.json/.tap files in ${target}`);
     const parsed = [];
     for (const f of files) {
-      try { parsed.push(parseText(fs.readFileSync(f, 'utf8'), format, opts)); } catch (err) {
-        // a stray non-report JSON in the directory should not sink the rest; only fail if nothing parses
+      const text = fs.readFileSync(f, 'utf8');
+      try { parsed.push(parseText(text, format, opts)); } catch (err) {
         if (err.isUsage) throw err;
+        if (text.trim() === '') throw codedError('UNPARSEABLE', `${f} is empty (a runner that crashed before it wrote its report?)`);
+        // A file that is not a test report at all (a package.json, a config: detection found no format) is left out, and the result says so. A file
+        // that IS a report but cannot be read fails the run: dropping it would present the rest as the whole run.
+        if (err.code === 'UNRECOGNIZED') { warnings.push(`${f}: not a test report (${err.message}), ignored`); continue; }
+        throw codedError(err.code || 'UNPARSEABLE', `${f}: ${err.message}`);
       }
     }
     if (!parsed.length) throw codedError('UNRECOGNIZED', `none of the ${files.length} file(s) in ${target} is a recognized test report`);
@@ -124,9 +130,10 @@ function main({ argv = process.argv.slice(2), stdout = process.stdout, stderr = 
       return argv.length ? 0 : 2;
     }
     const opts = parseArgs(argv);
-    const data = normalizePath(opts.target, opts);
+    const warnings = [];
+    const data = normalizePath(opts.target, { ...opts, warnings });
     if (data.totals.total === 0) throw codedError('NO_TESTS', `${opts.target} parsed as ${data.format} but contains no tests — the run executed nothing`);
-    const doc = { ok: true, data };
+    const doc = { ok: true, data, ...(warnings.length ? { warnings } : {}) };
     if (opts.out) writeJson(opts.out, doc);
     out(doc);
     return 0;

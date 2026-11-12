@@ -3,6 +3,7 @@
 const { TrackerError } = require('./errors');
 const { request } = require('./http');
 const { keyMarker, stepsAsMarkdown } = require('./contract');
+const { PAGE_SIZE } = require('./paging');
 
 // The pieces every adapter was writing for itself. What differs between trackers (the endpoints, the field names, what "dismissed" means
 // in their words) stays in each adapter; what is the same lives here, so a fix lands in all five at once.
@@ -20,8 +21,10 @@ function requireNumericId(what, id) {
 // e.g. "(or GH_TOKEN)". The token itself is never part of a message.
 function requireToken({ settings = {}, env, defaultVar, fallbacks = [], hint }) {
   const tokenVar = settings.tokenEnvVar || defaultVar;
-  const token = [tokenVar, ...fallbacks].map((name) => env[name]).find(Boolean);
-  if (!token) throw new TrackerError('CONFIG', `${tokenVar}${hint ? ` ${hint}` : ''} is not set`);
+  // A variable the config names is the ONLY one read: falling back to another would send a credential other than the one chosen.
+  const names = settings.tokenEnvVar ? [tokenVar] : [tokenVar, ...fallbacks];
+  const token = names.map((name) => env[name]).find(Boolean);
+  if (!token) throw new TrackerError('CONFIG', `${tokenVar}${hint && !settings.tokenEnvVar ? ` ${hint}` : ''} is not set`);
   return token;
 }
 
@@ -52,7 +55,6 @@ const isDuplicateLink = (err, pattern) => err instanceof TrackerError && err.cod
 // Walks a tracker's listing a page at a time, yielding each page's items, for at most `max` pages and ending at the first page shorter
 // than `size`. Stopping early (a `return` in the consumer) asks for no further page.
 const LIST_PAGES = 5; // up to 500 items per lookup
-const PAGE_SIZE = 100;
 async function* eachPage(fetchPage, { first = 1, max = LIST_PAGES, size = PAGE_SIZE } = {}) {
   for (let page = first; page < first + max; page += 1) {
     const batch = (await fetchPage(page)) || [];

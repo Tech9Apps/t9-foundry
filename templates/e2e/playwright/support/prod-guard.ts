@@ -140,6 +140,12 @@ function compile(p: string, flags?: string): RegExp | null {
   try { return new RegExp(p, flags); } catch { return null; }
 }
 
+// Does `re` first match INSIDE "scheme://host[:port]", the first `end` characters of `form`? (A match that begins at the first character of the path is not inside it.)
+function startsAtHost(re: RegExp, form: string, end: number): boolean {
+  const m = re.exec(form);
+  return m !== null && m.index < end;
+}
+
 export interface DecideConfig {
   mode?: 'enforce' | 'warn';
   prodUrlPatterns?: string[];
@@ -165,10 +171,14 @@ export function decideUrl(url: string, cfg: DecideConfig = {}): GuardDecision {
   if (!u.verifiable) return failing('UNVERIFIABLE_HOST', 'the host contains a variable, escape, or non-plain character');
 
   if (BUILTIN_EXEMPT_HOSTS.some((d) => onLabelBoundary(u.host, d))) return { decision: 'allow', reason: 'EXEMPT_HOST' };
-  const stripped = u.scheme + '://' + (u.v6 ? '[' + u.host + ']' : u.host) + (u.port ? ':' + u.port : '') + u.path;
+  const authority = u.scheme + '://' + (u.v6 ? '[' + u.host + ']' : u.host) + (u.port ? ':' + u.port : '');
+  const stripped = authority + u.path; // no userinfo, query or fragment
+  const plainAuthority = u.scheme + '://' + u.host;
+  // An allow pattern has to START matching within "scheme://host[:port]". It may go on into the path ("://partner\\.io/guide" allows what is under /guide), but
+  // text that merely appears later, inside the path of some other host ("https://evil.com/go/https://partner.io/guide"), allows nothing.
   for (const pattern of cfg.allowedUrlPatterns ?? []) {
     const re = pattern ? compile(pattern) : null; // an invalid allow-pattern never exempts anything
-    if (re && (re.test(stripped) || re.test(u.scheme + '://' + u.host + u.path))) return { decision: 'allow', reason: 'ALLOWED_PATTERN', detail: pattern };
+    if (re && (startsAtHost(re, stripped, authority.length) || startsAtHost(re, plainAuthority + u.path, plainAuthority.length))) return { decision: 'allow', reason: 'ALLOWED_PATTERN', detail: pattern };
   }
   const testEnv = cfg.testEnvironmentBaseUrl ? parseUrl(cfg.testEnvironmentBaseUrl) : null;
   if (testEnv && testEnv.verifiable && testEnv.host === u.host) return { decision: 'allow', reason: 'TEST_ENV_HOST' };

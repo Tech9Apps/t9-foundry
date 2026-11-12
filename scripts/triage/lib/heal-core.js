@@ -84,7 +84,11 @@ function collectFiles({ root, cwd, dirs, exts = DEFAULT_EXTS }) {
       const p = path.join(dir, e.name);
       if (e.isSymbolicLink()) { if (exts.has(path.extname(e.name).toLowerCase())) note(p, 'a symlink'); continue; } // never follow a link out of the allowed directory
       if (e.isDirectory()) { if (!SKIP_DIRS.has(e.name)) walk(p); } else if (e.isFile() && exts.has(path.extname(e.name).toLowerCase())) {
-        if (fs.statSync(p).size <= MAX_BYTES) files.push(p); else note(p, 'larger than 1 MB');
+        const st = fs.statSync(p);
+        // writing in place through a hard link edits EVERY path to the file, including ones outside the heal's scope (or the repository), and the
+        // revert only knows about the files it listed
+        if (st.nlink > 1) note(p, 'a hard link (another path leads to the same file)');
+        else if (st.size <= MAX_BYTES) files.push(p); else note(p, 'larger than 1 MB');
       }
     }
   };

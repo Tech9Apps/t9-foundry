@@ -6,7 +6,7 @@
 // and whether it is confident enough to ACT on or should only be PROPOSED.
 //
 //   node scripts/triage/classify.js --run qa-results/result.json [--rerun qa-results/rerun-1/result.json]...
-//                                   [--preflight ok|failed] [--evidence evidence.json] [--threshold T] [--trusted-formats tap] [--out report.json]
+//                                   [--preflight ok|failed] [--evidence evidence.json] [--threshold T] [--trusted-formats tap] [--root <project dir>] [--out report.json]
 //                                   [--config qa-config.json]    (--threshold defaults to triage.confidenceThreshold there, else 0.8;
 //                                                                 --trusted-formats to triage.trustedFormats, else tap)
 //
@@ -15,8 +15,9 @@
 // Output: { "ok": true, "data": <triage report> } (schemas/triage-report.schema.json). Exit 0 = report produced
 // (failures are data), 1 = an input could not be read, 2 = bad invocation.
 
+const path = require('path');
 const { fingerprint, identity, pathTail } = require('./fingerprint');
-const { signatureOf, evidenceText, infraSignal, authSignal, errorPageSignal, isLocatorError, testCrash, appCrash, baseName } = require('./lib/text');
+const { signatureOf, evidenceText, infraSignal, infraStrong, authSignal, errorPageSignal, isLocatorError, extractTestId, testCrash, appCrash, redactSecrets, baseName } = require('./lib/text');
 const { triageConfig, FORMATS, DEFAULTS, checkTriageFlags } = require('./lib/config');
 const { usage, readJson, writeJson, parseFlags, jsonPrinter } = require('../lib/cli');
 const { readRunResult } = require('./lib/documents');
@@ -33,10 +34,10 @@ const CAPPED_CLASSES = ['product-bug', 'test-bug'];
 // and add() below refuses to emit a confidence that is not listed here.
 const RULE_TABLE = {
   'ENV-1': { class: 'environment', confidence: [0.95] },
-  'ENV-2': { class: 'environment', confidence: [0.9] },
+  'ENV-2': { class: 'environment', confidence: [0.9, 0.7] },
   'FLK-1': { class: 'flaky', confidence: [0.9, 0.85] },
   'TST-1': { class: 'test-bug', confidence: [0.85] },
-  'TST-2': { class: 'test-bug', confidence: [0.8] },
+  'TST-2': { class: 'test-bug', confidence: [0.8, 0.65] },
   'TST-3': { class: 'test-bug', confidence: [0.55] },
   'ENV-3': { class: 'environment', confidence: [0.6] },
   'PRD-1': { class: 'product-bug', confidence: [0.85] },
@@ -58,13 +59,15 @@ const UND_REASONS = {
   NOT_RERUN: { confidence: 0.4, means: 'it failed once and was not re-run, and nothing else decides it' },
   UNSTABLE_ERRORS: { confidence: 0.3, means: 'it failed every time, but with a different error each time' },
   UNATTRIBUTED_CRASH: { confidence: 0.3, means: 'it crashed, but there is no stack location to say whether the test or the app is at fault' },
+  EVIDENCE_FOR_OTHER_LOCATOR: { confidence: 0.4, means: 'DOM evidence was supplied for a different locator than the one in this failure, so it is ignored: capture the page and run scripts/triage/locators.js for this failure' },
   UNCLASSIFIED: { confidence: 0.3, means: 'no rule applies (the catch-all: if this is frequent, the rules do not cover this suite)' },
 };
 const RULES = Object.keys(RULE_TABLE);
 const CLASSES = ['product-bug', 'test-bug', 'flaky', 'environment', 'undetermined'];
 
 const short = (s, n = 140) => (String(s).length > n ? `${String(s).slice(0, n)}…` : String(s));
-const msgOf = (a) => (a.error && a.error.message) || '';
+// (redacted: this is what is copied into the report, the evidence lines, a comment and a bug; the rules themselves read textOf, the original)
+const msgOf = (a) => redactSecrets((a.error && a.error.message) || '');
 // what the failure SAYS: message + the reporter's diagnostics (see lib/text.js evidenceText) — every signal reads this, not just the first line
 const textOf = (a) => evidenceText(a.error);
 
@@ -122,7 +125,7 @@ function blastSignatures(run) {
   return n >= 0.8 * failed.length ? new Set([top]) : new Set();
 }
 
-function evaluate({ key, attempts }, { runCount, preflight, blast, evidence }) {
+function evaluate({ key, attempts }, { runCount, preflight, blast, evidence, root }) {
   const failing = attempts.filter((a) => a.status === 'failed');
   const passing = attempts.filter((a) => a.status === 'passed');
   const main = attempts[0].test;
@@ -140,24 +143,32 @@ function evaluate({ key, attempts }, { runCount, preflight, blast, evidence }) {
   }
   const infra = failing.map((a) => infraSignal(textOf(a)));
   if (failing.length && infra.every(Boolean)) {
-    add('ENV-2', 'environment', 0.9, `every failing attempt (${failing.length}) carries an infrastructure error: "${short(msgOf(failing[0]))}"`);
+    // a preflight that just said "ready" followed by a failure in EVERY attempt that only says an HTTP status or "failed to fetch": the check is evidence
+    // too, and a CORS rule, a removed route or a regression looks the same. A network-level error (refused, not resolved, TLS) stays an outage.
+    const healthy = preflight === 'ok' && !passing.length && failing.every((a) => !infraStrong(textOf(a)));
+    add('ENV-2', 'environment', healthy ? 0.7 : 0.9, `every failing attempt (${failing.length}) carries an infrastructure error: "${short(msgOf(failing[0]))}"`,
+      ...(healthy ? ['preflight reported the environment as ready and the error is only an HTTP status or a failed fetch, so it is proposed, not acted on, as an environment problem'] : []));
   }
   if ((failing.length && passing.length) || attempts.some((a) => a.flaky)) {
     if (failing.length && passing.length) add('FLK-1', 'flaky', 0.9, `failed in run ${runsOf(failing)} but passed in run ${runsOf(passing)} with no change`);
     else add('FLK-1', 'flaky', 0.85, `the runner retried it and it passed (retries: ${Math.max(...attempts.map((a) => a.retries))})`);
   }
   const locatorFails = failing.length > 0 && failing.every((a) => isLocatorError(textOf(a)));
-  const loc = evidence && evidence.locator;
+  // DOM evidence is about ONE locator. If the id in this failure's error is not the evidence's target (evidence left by an earlier run, or about another
+  // failure), it says nothing about this one.
+  const rawLoc = evidence && evidence.locator;
+  const staleLoc = locatorFails && rawLoc && !failing.every((a) => extractTestId(textOf(a)) === rawLoc.target);
+  const loc = staleLoc ? undefined : rawLoc;
   if (locatorFails && loc && loc.present === false && Array.isArray(loc.candidates) && loc.candidates.length === 1) {
     const c = loc.candidates[0];
     add('TST-1', 'test-bug', 0.85, `the test looks for "${loc.target}", which is not on the page, but "${c.testid}" is (similarity ${c.similarity})`, `locator error in every failing attempt: "${short(msgOf(failing[0]))}"`);
     // the concrete fix, so even with self-heal off the report says exactly what would change
     matches[matches.length - 1].proposal = { kind: 'rename-testid', from: loc.target, to: c.testid, similarity: c.similarity };
   }
-  const crash = failing.length > 0 && failing.every((a) => testCrash(a.error));
-  if (crash) {
-    const f = testCrash(failing[0].error);
-    add('TST-2', 'test-bug', 0.8, `the test crashed in its own code (${baseName(f.file)}${f.line ? `:${f.line}` : ''}): "${short(msgOf(failing[0]))}"`);
+  const testCrashes = failing.map((a) => testCrash(a.error, { root }));
+  if (failing.length > 0 && testCrashes.every(Boolean)) {
+    const f = testCrashes[0];
+    add('TST-2', 'test-bug', testCrashes.every((c) => c.strong) ? 0.8 : 0.65, `the test crashed in its own code (${baseName(f.file)}${f.line ? `:${f.line}` : ''}): "${short(msgOf(failing[0]))}"`);
   }
   if (locatorFails && loc && loc.present === false && Array.isArray(loc.candidates) && loc.candidates.length >= 2) {
     const names = loc.candidates.slice(0, 3).map((c) => `"${c.testid}"`).join(', ');
@@ -182,16 +193,17 @@ function evaluate({ key, attempts }, { runCount, preflight, blast, evidence }) {
     add('PRD-3', 'product-bug', 0.6, `an assertion failed on the only attempt${runCount === 1 ? ' (no re-run was done)' : ' (it was not re-run)'}; a flaky test cannot be ruled out`);
   }
 
-  const crashes = failing.length > 0 && failing.every((a) => appCrash(a.error));
+  const crashes = failing.length > 0 && failing.every((a) => appCrash(a.error, { root }));
   if (crashes && !passing.length && (failing.length === 1 || sameSignature)) {
-    const f = appCrash(failing[0].error);
+    const f = appCrash(failing[0].error, { root });
     add('PRD-4', 'product-bug', 0.55, `the application threw (${baseName(f.file)}${f.line ? `:${f.line}` : ''}): "${short(msgOf(failing[0]))}" — an exception in application code, not an assertion; ${failing.length > 1 ? `the same in all ${failing.length} attempts` : 'seen once, so a flake cannot be ruled out'}`);
   }
 
   let reason = null;
   if (!matches.length) {
     // STRICT: reached only when nothing above found positive evidence. Name the one reason, from the closed list.
-    if (locatorFails && !loc) reason = 'LOCATOR_NO_EVIDENCE';
+    if (staleLoc) reason = 'EVIDENCE_FOR_OTHER_LOCATOR';
+    else if (locatorFails && !loc) reason = 'LOCATOR_NO_EVIDENCE';
     else if (locatorFails && loc && loc.present === true) reason = 'LOCATOR_PRESENT';
     else if (locatorFails) reason = 'LOCATOR_GONE';
     else if (authy) reason = 'AUTH_OR_SESSION';
@@ -201,7 +213,7 @@ function evaluate({ key, attempts }, { runCount, preflight, blast, evidence }) {
     else if (failing.length > 1 && !sameSignature) reason = 'UNSTABLE_ERRORS';
     else if (failing.every((a) => a.error && a.error.kind === 'error')) reason = 'UNATTRIBUTED_CRASH';
     else reason = 'UNCLASSIFIED';
-    const detail = reason === 'LOCATOR_PRESENT' ? ` ("${loc.target}")` : '';
+    const detail = reason === 'LOCATOR_PRESENT' ? ` ("${loc.target}")` : reason === 'EVIDENCE_FOR_OTHER_LOCATOR' ? ` (the evidence is for "${rawLoc.target}")` : '';
     const spec = UND_REASONS[reason];
     if (!RULE_TABLE['UND-1'].confidence.includes(spec.confidence)) throw new Error(`internal: UND_REASONS.${reason} uses a confidence that RULE_TABLE does not list`);
     matches.push({ rule: 'UND-1', class: 'undetermined', confidence: spec.confidence, evidence: [`${reason}: ${spec.means}${detail}`], reason });
@@ -212,9 +224,11 @@ function evaluate({ key, attempts }, { runCount, preflight, blast, evidence }) {
 const countBy = (list, key) => list.reduce((o, x) => ({ ...o, [x[key]]: (o[x[key]] || 0) + 1 }), {});
 
 // the details kept in a report: enough for a later step (locators.js, the Bug-reporter, heal.js) to see the diagnosis, not a whole stack trace
-const evidenceDetails = (error) => evidenceText({ message: '', details: error.details }).trim().slice(0, 1000);
+// mask FIRST, then cut: cut first and a secret that straddles the cut is left as its first few characters, which no rule recognises
+const evidenceDetails = (error) => redactSecrets(evidenceText({ message: '', details: error.details }).trim()).slice(0, 1000);
+const redactedError = (error) => (error ? { ...error, message: redactSecrets(error.message), details: redactSecrets(error.details), ...(error.expected !== undefined ? { expected: redactSecrets(error.expected) } : {}), ...(error.actual !== undefined ? { actual: redactSecrets(error.actual) } : {}) } : error);
 
-function classify({ runs, preflight = 'unknown', evidence = {}, threshold = DEFAULT_THRESHOLD, trustedFormats = DEFAULT_TRUSTED_FORMATS }) {
+function classify({ runs, preflight = 'unknown', evidence = {}, threshold = DEFAULT_THRESHOLD, trustedFormats = DEFAULT_TRUSTED_FORMATS, root = process.cwd() }) {
   if (!runs.length) throw usage('at least one run is required');
   const format = runs[0].format || 'unknown'; // a result that does not say what it was parsed from cannot be trusted
   const trusted = trustedFormats.includes(format);
@@ -224,7 +238,7 @@ function classify({ runs, preflight = 'unknown', evidence = {}, threshold = DEFA
   for (const entry of attemptsByKey.values()) {
     const first = entry.attempts.find((a) => a.run === 0);
     if (!first || !(first.status === 'failed' || first.flaky)) continue; // triage what failed or flaked in the MAIN run
-    const ctx = { runCount: runs.length, preflight, blast, evidence: evidence[entry.key] || evidence[first.test.name] };
+    const ctx = { runCount: runs.length, preflight, blast, root, evidence: evidence[entry.key] || evidence[first.test.name] };
     const { matches, failing, main } = evaluate(entry, ctx);
     const [win, ...rest] = matches;
     // an undetermined verdict NEVER acts, even if the threshold is set below its confidence: "unsure" is not a basis for action
@@ -233,7 +247,7 @@ function classify({ runs, preflight = 'unknown', evidence = {}, threshold = DEFA
     const capped = action === 'act' && !trusted && CAPPED_CLASSES.includes(win.class);
     if (capped) {
       action = 'propose';
-      evidenceLines.push(`capped at propose: classification of ${format} output has not been verified against real failures, so a ${win.class} verdict is shown to a human, not acted on (triage.trustedFormats lists the formats that may act)`);
+      evidenceLines.push(`capped at propose: classification of ${format} output has not been verified against real failures, so a ${win.class} verdict is shown to a human, not acted on (a person widens the list, with triage.trustedFormats in qa-config.json or --trusted-formats, once a format has been checked on real failures)`);
     }
     const fp = fingerprint(failing.length ? { ...main, error: failing[0].error } : main);
     verdicts.push({
@@ -248,7 +262,7 @@ function classify({ runs, preflight = 'unknown', evidence = {}, threshold = DEFA
       ...(rest.length ? { alternatives: rest.map((m) => ({ class: m.class, rule: m.rule, confidence: m.confidence })) } : {}),
       attempts: entry.attempts.map((a) => ({ run: a.run, status: a.status })),
       ...(failing.length ? { error: { kind: failing[0].error && failing[0].error.kind, message: msgOf(failing[0]), ...(failing[0].error && failing[0].error.details ? { details: evidenceDetails(failing[0].error) } : {}) } } : {}),
-      fingerprint: fp.fingerprint, token: fp.token, signature: fp.signature,
+      fingerprint: fp.fingerprint, token: fp.token, signature: signatureOf(redactedError(failing.length ? failing[0].error : main.error)), // the hash was taken from the original; the text SHOWN is built from the masked error (masked before the signature's own cut)
     });
   }
   const byClass = Object.fromEntries(CLASSES.map((c) => [c, verdicts.filter((v) => v.class === c).length]));
@@ -275,6 +289,7 @@ const FLAGS = {
   '--evidence': { key: 'evidence' },
   '--threshold': { key: 'threshold', parse: Number },
   '--trusted-formats': { key: 'trustedFormats', parse: parseTrustedFormats },
+  '--root': { key: 'root' },
   '--out': { key: 'out' },
   '--config': { key: 'config' },
 };
@@ -290,7 +305,7 @@ function main({ argv = process.argv.slice(2), stdout = process.stdout, stderr = 
   const out = jsonPrinter(stdout);
   try {
     if (!argv.length || argv[0] === '-h' || argv[0] === '--help') {
-      stderr.write('Usage: classify.js --run <result.json> [--rerun <result.json>]... [--preflight ok|failed] [--evidence <json>] [--threshold T] [--trusted-formats tap,junit|none] [--config <qa-config.json>] [--out <file>]\n');
+      stderr.write('Usage: classify.js --run <result.json> [--rerun <result.json>]... [--preflight ok|failed] [--evidence <json>] [--threshold T] [--trusted-formats tap,junit|none] [--root <project dir>] [--config <qa-config.json>] [--out <file>]\n');
       return argv.length ? 0 : 2;
     }
     const opts = parseArgs(argv);
@@ -299,7 +314,7 @@ function main({ argv = process.argv.slice(2), stdout = process.stdout, stderr = 
     const settings = triageConfig({ configPath: opts.config }); // flag > qa-config.json > default
     const threshold = opts.threshold !== undefined ? opts.threshold : settings.confidenceThreshold;
     const trustedFormats = opts.trustedFormats || settings.trustedFormats;
-    const data = classify({ runs, preflight: opts.preflight || 'unknown', evidence, threshold, trustedFormats });
+    const data = classify({ runs, preflight: opts.preflight || 'unknown', evidence, threshold, trustedFormats, ...(opts.root ? { root: path.resolve(opts.root) } : {}) });
     const doc = { ok: true, data };
     if (opts.out) writeJson(opts.out, doc);
     out(doc);

@@ -4,6 +4,7 @@ const { TrackerError } = require('../lib/errors');
 const { checkBaseUrl } = require('../lib/base-url');
 const { hasMarker, extractAcceptanceCriteria } = require('../lib/contract');
 const { withMarker, requireNumericId, requireToken, testCaseBody, summary, linkByReference, eachPage, apiCall } = require('../lib/kit');
+const { findInPages, PAGE_SIZE } = require('../lib/paging');
 
 // Bitbucket Cloud issue tracker, REST 2.0, app-password auth.
 // settings = qa-config.json > ticketSource.bitbucket  ({ workspace, repo, username, tokenEnvVar })
@@ -20,7 +21,7 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
   if (!workspace || !repo) throw new TrackerError('CONFIG', 'ticketSource.bitbucket.workspace and .repo must be set');
   if (!username) throw new TrackerError('CONFIG', 'ticketSource.bitbucket.username is not set (app passwords authenticate as username:app_password)');
   const secret = requireToken({ settings, env, defaultVar: 'BITBUCKET_TOKEN' });
-  const api = checkBaseUrl(baseUrl || 'https://api.bitbucket.org/2.0', 'the Bitbucket API base URL');
+  const api = checkBaseUrl(baseUrl || 'https://api.bitbucket.org/2.0', 'the Bitbucket API base URL', { hosts: ['api.bitbucket.org'], env });
   const issues = `/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(repo)}/issues`;
   const auth = `Basic ${Buffer.from(`${username}:${secret}`).toString('base64')}`;
 
@@ -96,8 +97,11 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
   }
 
   async function findCommentByKey(id, key) {
-    const { json } = await call('GET', `${issuePath(id)}/comments?pagelen=100`, undefined, `look up idempotency key on Bitbucket issue ${id}`);
-    const hit = ((json && json.values) || []).find((c) => !c.deleted && hasMarker(c.content && c.content.raw, key));
+    // `next` only says another page exists; the URL for it is built here, never taken from the response
+    const hit = await findInPages(async (page) => {
+      const { json } = await call('GET', `${issuePath(id)}/comments?pagelen=${PAGE_SIZE}&page=${page}`, undefined, `look up idempotency key on Bitbucket issue ${id}`);
+      return { items: (json && json.values) || [], more: Boolean(json && json.next) };
+    }, (c) => !c.deleted && hasMarker(c.content && c.content.raw, key), `look up idempotency key on Bitbucket issue ${id}`);
     return hit ? { id: String(hit.id) } : null;
   }
 

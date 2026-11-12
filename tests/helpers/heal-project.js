@@ -8,6 +8,8 @@ const { execFileSync } = require('node:child_process');
 const { cleanEnv } = require('./node-env');
 
 const IDENT = { GIT_AUTHOR_NAME: 'T', GIT_AUTHOR_EMAIL: 't@example.test', GIT_COMMITTER_NAME: 'T', GIT_COMMITTER_EMAIL: 't@example.test' };
+// heal.js commits with the real process.env, so the identity has to be there too: a developer's global git config hides this, a CI runner has none
+Object.assign(process.env, IDENT);
 const baseEnv = () => cleanEnv(IDENT);
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', env: baseEnv() }).trim();
 

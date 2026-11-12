@@ -40,7 +40,13 @@ function createGitlabMock({ token = 'glpat-test-token', projectId = '42' } = {})
     return [200, all.slice((page - 1) * per, page * per)];
   });
   core.route('GET', `${P}/issues/:iid`, ({ params }) => [200, issue(params)]);
-  core.route('GET', `${P}/issues/:iid/notes`, ({ params }) => { issue(params); return [200, state.notes.get(Number(params.iid))]; });
+  // 20 per page unless per_page says otherwise (at most 100), `page` from 1, as the real API does
+  core.route('GET', `${P}/issues/:iid/notes`, ({ params, query }) => {
+    issue(params);
+    const per = Math.min(Number(query.per_page) || 20, 100);
+    const page = Number(query.page) || 1;
+    return [200, state.notes.get(Number(params.iid)).slice((page - 1) * per, page * per)];
+  });
   core.route('POST', `${P}/issues`, ({ params, body }) => {
     inProject(params);
     if (!body || !body.title) throw core.httpError(400, 'title missing', { message: { title: ["can't be blank"] } });

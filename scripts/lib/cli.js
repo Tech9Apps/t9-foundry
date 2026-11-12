@@ -38,6 +38,7 @@ function writeJson(file, doc) {
 //   '--source':     { key: 'source' }                         the next argument is the value
 //   '--timeout-ms': { key: 'timeoutMs', parse: Number }       ...converted first: parse(value, flag)
 //   '--dry-run':    { key: 'dryRun', set: true }              takes no value; sets the key to that constant
+//                   (+ contradicts: 'message' makes a second flag that sets the same key to the opposite value a usage error)
 //   '--spec':       { key: 'specs', list: true }              every occurrence is collected (the array is created on first use)
 //
 // `init` seeds the result (defaults, or a leading <op>); `positionals` collects bare words in `_` instead of refusing them. A flag
@@ -54,7 +55,12 @@ function parseFlags(argv, flags, { init = {}, positionals = false } = {}) {
       if (positionals && !flag.startsWith('--')) { opts._.push(flag); continue; }
       throw usage(`unknown option ${flag}`);
     }
-    if ('set' in spec) { opts[spec.key] = spec.set; continue; }
+    if ('set' in spec) {
+      // two flags that set one key to opposite values (--heal / --no-heal) are a mistake, not a preference: the last one used to win silently
+      if (spec.contradicts && opts[spec.key] !== undefined && opts[spec.key] !== spec.set) throw usage(spec.contradicts);
+      opts[spec.key] = spec.set;
+      continue;
+    }
     if (n + 1 >= argv.length) throw usage(`${flag} needs a value`);
     n += 1;
     const value = spec.parse ? spec.parse(argv[n], flag) : argv[n];

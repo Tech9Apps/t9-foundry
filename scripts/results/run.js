@@ -36,10 +36,12 @@ const OURS = /^(results[-\w.]*\.(xml|json|tap)|\.qa-results-raw)$/;
 
 // These values are handed to the test runner as arguments. A value that starts with "-" would be read by the runner as one of ITS options
 // (a spec of "--import=./x.js" would make node load that file), so it is refused; write ./-name for a file that really starts with "-".
-const runnerArg = (v, flag) => {
-  if (v.startsWith('-')) throw usage(`${flag} "${v.slice(0, 40)}" starts with "-", so the test runner would read it as an option; write it as ./${v} if it really is a path`);
+// That holds wherever the value comes from: a command-line flag, or testFramework.testDir / .configPath in qa-config.json.
+function refuseLeadingDash(name, v) {
+  if (typeof v === 'string' && v.startsWith('-')) throw usage(`${name} "${v.slice(0, 40)}" starts with "-", so the test runner would read it as an option; write it as ./${v} if it really is a path`);
   return v;
-};
+}
+const runnerArg = (v, flag) => refuseLeadingDash(flag, v);
 
 const FLAGS = {
   '--framework': { key: 'framework' },
@@ -71,24 +73,41 @@ function fromConfig(opts, env) {
 // The runs in flight. A caller that is itself interrupted (self-heal reverting on SIGTERM) must stop them: a runner left going keeps writing into the
 // project after the caller has put everything back.
 const ACTIVE = new Set();
+// Signal the child's whole process group (it was spawned detached, as its own group leader): signalling only the leader leaves its workers and browsers running.
+function killGroup(child, signal) {
+  try {
+    if (child.pid && process.platform !== 'win32') process.kill(-child.pid, signal);
+    else child.kill(signal);
+  } catch { try { child.kill(signal); } catch { /* already gone */ } }
+}
 function killActive(signal = 'SIGTERM') {
-  for (const child of ACTIVE) { try { child.kill(signal); } catch { /* already gone */ } }
+  for (const child of ACTIVE) killGroup(child, signal);
 }
 
 function runChild({ spawn, command, args, env, cwd, timeoutMs, quiet }) {
   return new Promise((resolve) => {
     let child;
     try {
-      child = spawn(command, args, { cwd, env, stdio: quiet ? 'ignore' : ['ignore', 2, 2] });
+      // Its own process group: `npx playwright test` is a launcher, and killing only it leaves the workers and browsers running (writing into a
+      // folder the next run clears). The whole group is killed instead, on a timeout and when this process is told to stop.
+      child = spawn(command, args, { cwd, env, stdio: quiet ? 'ignore' : ['ignore', 2, 2], detached: process.platform !== 'win32' });
     } catch (err) {
       resolve({ spawnError: err });
       return;
     }
     ACTIVE.add(child);
+    const stop = () => killGroup(child, 'SIGKILL');
+    // being detached, the child no longer receives the terminal's Ctrl-C or a SIGTERM sent to this process, so those are forwarded
+    const handlers = Object.entries({ SIGINT: 130, SIGTERM: 143, SIGHUP: 129 }).map(([sig, exitCode]) => {
+      const handler = () => { stop(); process.exit(exitCode); };
+      process.on(sig, handler);
+      return [sig, handler];
+    });
+    const done = () => { clearTimeout(timer); ACTIVE.delete(child); for (const [sig, handler] of handlers) process.removeListener(sig, handler); };
     let timedOut = false;
-    const timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, timeoutMs);
-    child.on('error', (err) => { clearTimeout(timer); ACTIVE.delete(child); resolve({ spawnError: err }); });
-    child.on('close', (code, signal) => { clearTimeout(timer); ACTIVE.delete(child); resolve({ code, signal, timedOut }); });
+    const timer = setTimeout(() => { timedOut = true; stop(); }, timeoutMs);
+    child.on('error', (err) => { done(); resolve({ spawnError: err }); });
+    child.on('close', (code, signal) => { done(); resolve({ code, signal, timedOut }); });
   });
 }
 
@@ -101,6 +120,8 @@ async function main({ argv = process.argv.slice(2), env = process.env, stdout = 
     }
     const opts = parseArgs(argv);
     const cfg = fromConfig(opts, env);
+    refuseLeadingDash('testFramework.testDir', cfg.testDir);
+    refuseLeadingDash('testFramework.configPath', cfg.configPath);
     const framework = opts.framework || cfg.type;
     if (!framework) throw usage('no framework: pass --framework or set testFramework.type in qa-config.json');
     const outDir = opts.out || 'qa-results';
@@ -116,6 +137,10 @@ async function main({ argv = process.argv.slice(2), env = process.env, stdout = 
       out({ ok: true, dryRun: true, framework, command, cwd: path.resolve(opts.cwd || '.'), env: Object.keys(p.env), report: p.results, format: p.format, resultPath, notes: p.notes });
       return 0;
     }
+
+    // The previous run's result.json must not stand in for this one either: the commands tell a model to read it, and every path below that
+    // reports "no usable report" would otherwise leave the last run's file sitting there.
+    fs.rmSync(resultPath, { force: true });
 
     // never let a previous run's report stand in for this one — but --out is caller-controlled, so only clear a directory that holds nothing
     // except reports (ours or the frameworks'). Anything else in there is somebody's, and is not ours to delete.
@@ -146,8 +171,9 @@ async function main({ argv = process.argv.slice(2), env = process.env, stdout = 
     }
 
     let data;
+    const warnings = [];
     try {
-      data = normalizePath(p.results, { format: p.format, framework });
+      data = normalizePath(p.results, { format: p.format, framework, warnings });
     } catch (err) {
       return noReport(`${framework} exited ${run.code === null ? `on ${run.signal}` : run.code} but wrote no usable report at ${p.results} (${err.message}). ${p.notes.join(' ')}`.trim(), { exitCode: run.code });
     }
@@ -159,7 +185,6 @@ async function main({ argv = process.argv.slice(2), env = process.env, stdout = 
       return noReport(`every one of the ${data.totals.total} test(s) was skipped, so nothing was verified — that is not a pass (pass --allow-all-skipped if it is intended)`, { exitCode: run.code });
     }
 
-    const warnings = [];
     const failed = data.totals.failed > 0;
     if (run.code !== 0 && !failed) warnings.push(`the runner exited ${run.code} but its report shows no failures — it may have crashed after writing a partial report`);
     if (run.code === 0 && failed) warnings.push('the runner exited 0 but its report shows failures');

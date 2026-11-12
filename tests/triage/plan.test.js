@@ -282,7 +282,7 @@ describe('plan: behavior that does not depend on the tracker', () => {
   test('each class maps to its step: flaky and environment are reported, test-bug is only proposed, undetermined is proposed', async () => {
     const flaky = report([R(failing('f', ASSERT)), R(T('f', 'passed'))]);
     const env = report([R(failing('e', E('connect ECONNREFUSED 127.0.0.1:1', 'error'))), R(failing('e', E('connect ECONNREFUSED 127.0.0.1:1', 'error')))]);
-    const crash = E('TypeError: x is not a function', 'error', 'at run (/work/tests/a.test.js:3:3)');
+    const crash = E('ReferenceError: x is not defined', 'error', 'at run (/work/tests/a.test.js:3:3)'); // a crash only the test can cause: acts. (A TypeError is 0.65: only proposed.)
     const testBug = report([R(failing('t', crash)), R(failing('t', crash))]);
     const und = report([R(failing('u', E('Timeout 30000ms exceeded.', 'timeout'))), R(failing('u', E('Timeout 30000ms exceeded.', 'timeout')))]);
     const steps = {};
@@ -321,7 +321,7 @@ describe('plan: behavior that does not depend on the tracker', () => {
     const both = () => R(failing('DEMO-101/TC-001: a', ASSERT, ids(1)), failing('DEMO-101/TC-002: b', ASSERT, ids(2)));
     const dup = report([both(), both(), both()]); dup.verdicts[1].fingerprint = dup.verdicts[0].fingerprint; dup.verdicts[1].token = dup.verdicts[0].token;
     const env = report([R(failing('e', E('connect ECONNREFUSED 127.0.0.1:1', 'error'))), R(failing('e', E('connect ECONNREFUSED 127.0.0.1:1', 'error')))]);
-    const crash = E('TypeError: x is not a function', 'error', 'at run (/work/tests/a.test.js:3:3)');
+    const crash = E('ReferenceError: x is not defined', 'error', 'at run (/work/tests/a.test.js:3:3)');
     const tb = report([R(failing('t', crash)), R(failing('t', crash))]);
     const closedMock = MOCKS.github(); await seedBug('github', closedMock, tokenOf(pb), { close: true });
     const dismissedMock = MOCKS.github(); await seedBug('github', dismissedMock, tokenOf(pb), { dismiss: true });
@@ -340,8 +340,9 @@ describe('plan: behavior that does not depend on the tracker', () => {
     const k = async (args) => stepOf(await plan('github', rep, { args })).idempotencyKey;
     assert.equal(await k(['--run-id', 'r1']), await k(['--run-id', 'r1']));
     assert.notEqual(await k(['--run-id', 'r1']), await k(['--run-id', 'r2']));
-    const long = await k(['--run-id', `${'x'.repeat(200)}!!`]);
+    const long = await k(['--run-id', 'x'.repeat(128)]); // the longest id the CLI accepts
     assert.match(long, /^[A-Za-z0-9._-]{1,80}$/);
+    assert.ok(long.length < `fp-${rep.verdicts[0].fingerprint}-${'x'.repeat(128)}`.length, 'shortened');
   });
 
   test('without --run-id a UTC timestamp id is used', async () => {
@@ -378,6 +379,201 @@ describe('plan CLI', () => {
     assert.equal((await cli(['--report', path.join(dir, 'nope.json')])).json.error.code, 'UNREADABLE');
     const bad = path.join(dir, 'bad.json'); fs.writeFileSync(bad, '{"hello":1}');
     assert.match((await cli(['--report', bad])).json.error.message, /no "verdicts" array/);
-    for (const argv of [[], ['--bogus'], ['--report'], ['--report', 'x', '--run-id', '!!!']]) assert.equal((await cli(argv)).code, 2, argv.join(' '));
+    for (const argv of [[], ['--bogus'], ['--report'], ['--report', 'x', '--run-id', '']]) assert.equal((await cli(argv)).code, 2, argv.join(' '));
+  });
+});
+
+describe('plan: what the third review of PR #9 found', () => {
+  const key = (rep, runId) => stepOf(rep).idempotencyKey;
+  const keyFor = async (runId) => stepOf(await plan('github', report(productBug()), { args: ['--run-id', runId] })).idempotencyKey;
+
+  test('the idempotency key tells run ids apart however long or odd they are (it used to keep 40 characters and fold every other character to "-")', async () => {
+    const long1 = 'ci-build-1234567890-abcdefghijklmnopqrstuvwxyz-1';
+    const long2 = 'ci-build-1234567890-abcdefghijklmnopqrstuvwxyz-2';
+    assert.notEqual(await keyFor(long1), await keyFor(long2), 'ids that differ only after character 40');
+    assert.equal(await keyFor(long1), await keyFor(long1), 'the same id gives the same key every time (that is what makes a retry safe)');
+    assert.equal(await keyFor('run42'), `fp-${report(productBug()).verdicts[0].fingerprint}-run42`, 'a plain short id is used as it is');
+  });
+  test('keys stay valid (at most 80 characters of the allowed alphabet) for the longest ids, including the comment form', async () => {
+    const rep = report(productBug());
+    const id = 'x'.repeat(64);
+    const mock = MOCKS.github();
+    const bug = await seedBug('github', mock, tokenOf(rep));
+    const a = stepOf(await plan('github', rep, { mock, args: ['--run-id', id] }));
+    assert.equal(a.step, 'comment-existing');
+    assert.match(a.commentInput.idempotencyKey, /^[A-Za-z0-9._-]{1,80}$/);
+    assertValidInput('comment', a.commentInput);
+    assert.ok(bug);
+  });
+  test('--run-id accepts what orchestrate.js accepts (odd ids are hashed into the key) and refuses empty, over-long and control characters (exit 2)', async () => {
+    for (const bad of ['', 'a'.repeat(129), 'a\nb', 'a\u0000b']) assert.equal((await plan('github', report(productBug()), { args: ['--run-id', bad] })).code, 2, JSON.stringify(bad));
+    for (const ok of ['refs/heads/main', 'build#42', '2026-11-11 18:15', '!!!', 'a b', '../x']) {
+      const r = await plan('github', report(productBug()), { args: ['--run-id', ok] });
+      assert.equal(r.code, 0, ok);
+      assert.match(stepOf(r).idempotencyKey, /^fp-[0-9a-f]{12}-[A-Za-z0-9._-]+$/, ok);
+    }
+  });
+  test('keys never collide: distinct odd ids, and a literal id that equals another id\'s HASHED form', async () => {
+    const fp = report(productBug()).verdicts[0].fingerprint;
+    const long = 'ci-build-1234567890-abcdefghijklmnopqrstuvwxyz-1';
+    const hashedPart = (await keyFor(long)).slice(`fp-${fp}-`.length);
+    assert.notEqual(await keyFor(hashedPart), await keyFor(long), 'a run literally named like the hashed form must not share its key');
+    const set = new Set([await keyFor('a/b'), await keyFor('a-b'), await keyFor('a b'), await keyFor('a_b'), await keyFor(long), await keyFor(`${long.slice(0, -1)}2`), await keyFor(hashedPart)]);
+    assert.equal(set.size, 7);
+    for (const id of ['x'.repeat(128), '!'.repeat(128), 'a/b', hashedPart]) assert.ok((await keyFor(id)).length + '-comment'.length <= 80, id.slice(0, 20));
+  });
+
+  describe('the tracker lookup', () => {
+    // wrap a mock's fetch so that GET of one specific issue fails for good (a 500 on every try)
+    const breakIssue = (mock, id) => async (url, init) => (new RegExp(`/issues/${id}$`).test(String(url)) && (!init || !init.method || init.method === 'GET')
+      ? new Response('{"message":"boom"}', { status: 500 }) : mock.fetch(url, init));
+    test('one candidate that cannot be read does not discard the others: an open report that WAS read still gets the comment, and the skip is reported', async () => {
+      const mock = MOCKS.github();
+      const rep = report(productBug());
+      const first = await seedBug('github', mock, tokenOf(rep), { title: '[BUG] Unreadable' });
+      const second = await seedBug('github', mock, tokenOf(rep), { title: '[BUG] Readable' });
+      const r = await plan('github', rep, { mock, fetch: breakIssue(mock, first.id) });
+      const a = stepOf(r);
+      assert.equal(a.step, 'comment-existing');
+      assert.equal(a.existing.id, second.id);
+      assert.ok(r.json.data.warnings.some((w) => /could not be read/.test(w) && new RegExp(`#?${first.id}\\b`).test(w)), JSON.stringify(r.json.data.warnings));
+      assert.ok(a.lookup.partial, 'the step says the lookup was partial');
+    });
+    test('when the only candidate cannot be read, filing is still the step but it SAYS an existing report may exist', async () => {
+      const mock = MOCKS.github();
+      const rep = report(productBug());
+      const only = await seedBug('github', mock, tokenOf(rep));
+      const r = await plan('github', rep, { mock, fetch: breakIssue(mock, only.id) });
+      const a = stepOf(r);
+      assert.equal(a.step, 'file-bug');
+      assert.match(a.note, /could not be read/);
+      assert.ok(r.json.data.warnings.some((w) => /could not be read/.test(w)));
+    });
+    test('hitting the candidate limit is reported: a report ranked below it could not have been seen', async () => {
+      const mock = MOCKS.github();
+      const rep = report(productBug());
+      for (let i = 0; i < 6; i += 1) await seedBug('github', mock, tokenOf(rep), { title: `[BUG] copy ${i}`, close: true });
+      const r = await plan('github', rep, { mock });
+      assert.ok(r.json.data.warnings.some((w) => /only the first 5/.test(w)), JSON.stringify(r.json.data.warnings));
+      assert.ok(stepOf(r).lookup.truncated);
+    });
+    test('every step that FILES or REPORTS carries the lookup caveat, not only file-bug: a regression or a dismissal decided from a partial lookup says so', async () => {
+      const rep = report(productBug());
+      // (a) a closed match plus an unreadable candidate (which might be the open one) -> file-regression
+      const m1 = MOCKS.github();
+      await seedBug('github', m1, tokenOf(rep), { title: '[BUG] old', close: true });
+      const hidden = await seedBug('github', m1, tokenOf(rep), { title: '[BUG] maybe open' });
+      const a = stepOf(await plan('github', rep, { mock: m1, fetch: breakIssue(m1, hidden.id) }));
+      assert.equal(a.step, 'file-regression');
+      assert.match(a.note, /could not be read/);
+      assert.match(a.note, /regression/, 'the regression explanation is still there');
+      // (b) a dismissed match plus an unreadable candidate -> report-dismissed
+      const m2 = MOCKS.github();
+      await seedBug('github', m2, tokenOf(rep), { title: '[BUG] wontfix', dismiss: true });
+      const hidden2 = await seedBug('github', m2, tokenOf(rep), { title: '[BUG] maybe open' });
+      const b = stepOf(await plan('github', rep, { mock: m2, fetch: breakIssue(m2, hidden2.id) }));
+      assert.equal(b.step, 'report-dismissed');
+      assert.match(b.note, /could not be read/);
+      // (c) the candidate limit was hit -> file-regression / file-bug say only the first 5 were checked
+      const m3 = MOCKS.github();
+      for (let i = 0; i < 6; i += 1) await seedBug('github', m3, tokenOf(rep), { title: `[BUG] copy ${i}`, close: true });
+      const c = stepOf(await plan('github', rep, { mock: m3 }));
+      assert.equal(c.step, 'file-regression');
+      assert.match(c.note, /only the first 5/);
+    });
+    test('fewer candidates than the limit: no warning and no partial flag', async () => {
+      const mock = MOCKS.github();
+      const rep = report(productBug());
+      await seedBug('github', mock, tokenOf(rep));
+      const r = await plan('github', rep, { mock });
+      assert.deepEqual(r.json.data.warnings, []);
+      assert.equal(stepOf(r).lookup.partial, undefined);
+      assert.equal(stepOf(r).lookup.truncated, undefined);
+    });
+  });
+
+  describe('what a comment says', () => {
+    test('secrets in the recorded error text are masked in the comment body (and the comment still carries the marker)', async () => {
+      const mock = MOCKS.github();
+      const leaky = E('request failed: Authorization: Bearer abc123def456ghi789jkl token=ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA https://deploy:hunter2secret@staging.example.test/x');
+      const rep = report(productBug(5, leaky));
+      await seedBug('github', mock, tokenOf(rep));
+      const a = stepOf(await plan('github', rep, { mock }));
+      assert.equal(a.step, 'comment-existing');
+      for (const secret of ['abc123def456ghi789jkl', 'ghp_AAAA', 'hunter2secret']) assert.ok(!a.commentInput.body.includes(secret), secret);
+      assert.match(a.commentInput.body, new RegExp(`qa-harness-fingerprint: ${tokenOf(rep)}`));
+    });
+    test('a hand-edited report with a secret in it is masked too (the plan does not trust the report to have been cleaned)', async () => {
+      const mock = MOCKS.github();
+      const rep = report(productBug());
+      await seedBug('github', mock, tokenOf(rep));
+      rep.verdicts[0].error = { kind: 'failure', message: 'password=correcthorsebattery in the form' };
+      const a = stepOf(await plan('github', rep, { mock }));
+      assert.ok(!a.commentInput.body.includes('correcthorsebattery'));
+    });
+  });
+
+  test('a verdict whose token is not a fingerprint token is refused before anything is written: it names a FILE (comments/<token>.json)', async () => {
+    const mock = MOCKS.github();
+    const rep = report(productBug());
+    await seedBug('github', mock, tokenOf(rep));
+    rep.verdicts[0].token = '../../evil';
+    const outDir = fs.mkdtempSync(path.join(dir, 'out-'));
+    const r = await plan('github', rep, { mock, args: ['--out', path.join(outDir, 'plan.json')] });
+    assert.equal(r.code, 2);
+    assert.match(r.err, /token/);
+    assert.equal(fs.existsSync(path.join(outDir, 'plan.json')), false);
+    assert.equal(fs.existsSync(path.join(outDir, '..', 'evil.json')), false);
+  });
+});
+
+describe('plan: the ordering and tie decisions, with dates and search order under the test\'s control', () => {
+  const { plan: planCore } = require('../../scripts/triage/plan');
+  // a stand-in tracker: search returns exactly `items` in that order; every candidate's body carries the token
+  const stub = (rep, items) => ({
+    async search() { return { items }; },
+    async fetchTicket() { return { description: `qa-harness-fingerprint: ${tokenOf(rep)}` }; },
+  });
+  const it = (id, kind, createdAt) => ({ id, title: `t${id}`, status: kind, url: `u${id}`, open: kind === 'open', ...(kind === 'dismissed' ? { dismissed: true } : {}), ...(createdAt ? { createdAt } : {}) });
+  const decide = async (items) => { const rep = report(productBug()); return (await planCore({ report: rep, runId: 'r1', adapter: stub(rep, items) })).actions[0]; };
+  const day = (n) => `2026-01-0${n}T00:00:00Z`;
+
+  test('the LATEST report on each side decides which side is the last word (not the earliest)', async () => {
+    // fixed on day 1 and day 3, dismissed on day 2: the day-3 fix is newer than the dismissal, so a recurrence IS a regression
+    const a = await decide([it('1', 'closed', day(1)), it('2', 'dismissed', day(2)), it('3', 'closed', day(3))]);
+    assert.equal(a.step, 'file-regression');
+    // fixed on days 1 and 2, dismissed on days 0 and 3: the day-3 dismissal is the last word
+    const b = await decide([it('1', 'closed', day(1)), it('2', 'closed', day(2)), it('0', 'dismissed', '2025-12-31T00:00:00Z'), it('4', 'dismissed', day(3))]);
+    assert.equal(b.step, 'report-dismissed');
+  });
+  test('the same moment on both sides is not "dismissed after the fix": it stays a regression, with the check-a-person note', async () => {
+    const a = await decide([it('1', 'closed', day(2)), it('2', 'dismissed', day(2))]);
+    assert.equal(a.step, 'file-regression');
+    assert.match(a.note, /not newer than the fixed one|no dates/);
+  });
+  test('no date on either side: the order is unknown, so a regression (never "dismissed")', async () => {
+    assert.equal((await decide([it('1', 'closed'), it('2', 'dismissed')])).step, 'file-regression');
+    assert.equal((await decide([it('1', 'closed', day(1)), it('2', 'dismissed')])).step, 'file-regression');
+  });
+  test('with several matches the FIRST the tracker ranked is the one commented on / linked / reported', async () => {
+    const open = await decide([it('7', 'open'), it('8', 'open')]);
+    assert.equal(open.step, 'comment-existing');
+    assert.equal(open.existing.id, '7');
+    const closed = await decide([it('5', 'closed', day(1)), it('6', 'closed', day(2))]);
+    assert.equal(closed.step, 'file-regression');
+    assert.equal(closed.regressionOf.id, '5');
+    const dismissed = await decide([it('3', 'dismissed', day(1)), it('4', 'dismissed', day(2))]);
+    assert.equal(dismissed.step, 'report-dismissed');
+    assert.equal(dismissed.dismissedAs.id, '3');
+  });
+  test('flaky and environment verdicts are reported only when they ACT: raise the threshold and they are proposals', async () => {
+    const flakyRuns = [R(failing('f', ASSERT)), R(T('f', 'passed'))];
+    const envRuns = [R(failing('e', E('connect ECONNREFUSED 127.0.0.1:1', 'error'))), R(failing('e', E('connect ECONNREFUSED 127.0.0.1:1', 'error')))];
+    for (const [runs, step] of [[flakyRuns, 'report-flaky'], [envRuns, 'report-environment']]) {
+      const lax = (await planCore({ report: classify({ runs }), runId: 'r1', adapter: null })).actions[0];
+      assert.equal(lax.step, step);
+      const strict = (await planCore({ report: classify({ runs, threshold: 0.95 }), runId: 'r1', adapter: null })).actions[0];
+      assert.equal(strict.step, 'propose', `${step} at threshold 0.95`);
+    }
   });
 });

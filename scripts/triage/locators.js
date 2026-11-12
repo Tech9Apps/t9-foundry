@@ -43,10 +43,64 @@ function similarity(a, b) {
   return Math.round(((2 * hit) / (ta.length + tb.length)) * 100) / 100; // Dice coefficient
 }
 
+// The test ids on a page. A scanner, not a regex: a regex that looks for "<tag ... data-testid=..." mishandles what real markup does (an unquoted value, a
+// ">" inside an earlier quoted attribute, upper-case names, a tag in a comment or a script) and "not on the page" is the claim that turns into a
+// test-bug verdict, so it must never be said of an element that is. One pass, no backtracking, so a page of unterminated tags cannot make it slow.
+const TEST_ATTR = /^data-(?:testid|test-id|test|cy|qa)$/i;
+// A page bigger than this is refused (TOO_LARGE), not truncated: an element past a silent cut would read as "not on the page".
+const MAX_HTML = 64 * 1024 * 1024;
+const TAG_OPEN = /<([A-Za-z][A-Za-z0-9:-]*)/y;
+const ATTR = /[\s/]*([^\s"'<>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/y;
+const TAG_END = /[\s/]*>/y;
+const CLOSE_SCRIPT = /<\/script/gi; // searched from a given position, case-insensitively, without lower-casing the whole page each time
+const CLOSE_STYLE = /<\/style/gi;
 function testIdsIn(html) {
+  const s = String(html);
+  if (s.length > MAX_HTML) throw Object.assign(new Error(`the page is too large to scan (${s.length} characters, the limit is ${MAX_HTML}), so nothing can be said about what is on it`), { code: 'TOO_LARGE' });
   const out = [];
-  const re = /<([a-zA-Z][\w-]*)\b([^>]*?)\bdata-(?:testid|test-id|cy|qa)\s*=\s*(?:"([^"]*)"|'([^']*)')([^>]*)>([^<]*)/g;
-  for (const m of String(html).matchAll(re)) out.push({ testid: m[3] !== undefined ? m[3] : m[4], tag: m[1].toLowerCase(), text: m[6].replace(/\s+/g, ' ').trim().slice(0, 60) });
+  let i = 0;
+  while ((i = s.indexOf('<', i)) !== -1) {
+    if (s.startsWith('<!--', i)) {
+      // <!--> and <!---> are complete (empty) comments; otherwise the comment ends at --> or --!>, whichever comes first; an unterminated one swallows the rest
+      if (s.startsWith('<!-->', i)) { i += 5; continue; }
+      if (s.startsWith('<!--->', i)) { i += 6; continue; }
+      const a = s.indexOf('-->', i + 4); const b = s.indexOf('--!>', i + 4);
+      const end = a === -1 ? b : b === -1 ? a : Math.min(a, b);
+      if (end === -1) break;
+      i = end + (s.startsWith('--!>', end) ? 4 : 3);
+      continue;
+    }
+    TAG_OPEN.lastIndex = i;
+    const open = TAG_OPEN.exec(s);
+    if (!open) { i += 1; continue; }
+    const tag = open[1].toLowerCase();
+    let pos = TAG_OPEN.lastIndex;
+    const ids = [];
+    const seen = new Set(); // a repeated attribute counts once (the first), as in a browser; different spellings are different attributes
+    for (;;) { // attributes, up to the ">" that is OUTSIDE any quote
+      TAG_END.lastIndex = pos;
+      if (TAG_END.exec(s)) { pos = TAG_END.lastIndex; break; }
+      ATTR.lastIndex = pos;
+      const a = ATTR.exec(s);
+      if (!a || ATTR.lastIndex === pos) break; // malformed (an unterminated quote, a stray character): give up on this tag
+      pos = ATTR.lastIndex;
+      const name = a[1].toLowerCase();
+      if (TEST_ATTR.test(name) && !seen.has(name)) { seen.add(name); ids.push(a[2] !== undefined ? a[2] : a[3] !== undefined ? a[3] : a[4]); }
+    }
+    if (tag === 'script' || tag === 'style') { // raw text up to the closing tag: nothing in it is the page
+      const closer = tag === 'script' ? CLOSE_SCRIPT : CLOSE_STYLE;
+      closer.lastIndex = pos;
+      const close = closer.exec(s);
+      i = close ? close.index : s.length;
+      continue;
+    }
+    if (ids.length) {
+      const next = s.indexOf('<', pos);
+      const text = s.slice(pos, next === -1 ? s.length : next).replace(/\s+/g, ' ').trim().slice(0, 60);
+      for (const testid of ids) out.push({ testid, tag, text });
+    }
+    i = Math.max(pos, i + 1);
+  }
   return out;
 }
 

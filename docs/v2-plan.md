@@ -43,7 +43,7 @@ Fix what is wrong today and make unattended runs *safe to attempt*.
 - **Hooks resolve from `$CLAUDE_PROJECT_DIR`** in `.claude/settings.json` (F1). Add a bats test that parses `settings.json` and asserts every hook path exists.
 - **Repair the allowlist** (F2): patterns for the new curl flag set, Azure (`-u`), `gh issue comment/create`, and a **lint test** that extracts every `curl`/`gh` line from `.claude/commands/*.md` and asserts it matches an allow rule (extends the existing `wording-lint.bats`).
 - **Enforce mode** (F3): `productionProtection.mode: "warn" | "enforce"` in the schema. `QA_AUTONOMOUS=1` forces `enforce`. In enforce:
-  suspicious-URL heuristic **blocks** (exit 2); empty `prodUrlPatterns` **blocks the session**; missing/unresolvable `qa-config.json` blocks (except the explicit inline-mode carve-out, F6).
+  suspicious-URL heuristic **blocks** (exit 2); empty `prodUrlPatterns` **blocks every command** (a SessionStart hook cannot block a session, so Layer 3 does it); missing/unresolvable `qa-config.json` blocks (the explicit inline-mode carve-out, F6, is a later item below and is not implemented: today an enforce-mode run with no config is simply refused).
   Interactive default stays `warn` (v1 behavior).
 - **`scripts/preflight.sh`**: `QA_HARNESS_DIR` valid, config validates against schema, `prodUrlPatterns` non-empty, staging URL reachable and not matching a prod pattern, required token env vars set, `jq`/`claude` present. Exit non-zero with a fix hint. Runs at the start of every autonomous run.
 - **Close F4**: heuristic in pytest/RSpec/Selenium guards; `ticketSource.bitbucket.username` (+ schema, session-init check, `file-bug.md` auth).

@@ -19,7 +19,7 @@ function create({ settings = {}, env = process.env, fetch, baseUrl, timeoutMs, r
   if (!organization || !project) throw new TrackerError('CONFIG', 'ticketSource.azure.organization and .project must be set');
   const pat = requireToken({ settings, env, defaultVar: 'AZURE_DEVOPS_PAT' });
 
-  const host = checkBaseUrl(baseUrl || settings.host || 'https://dev.azure.com', 'the Azure DevOps host');
+  const host = checkBaseUrl(baseUrl || settings.host || 'https://dev.azure.com', 'the Azure DevOps host', { hosts: ['dev.azure.com'], env });
   const root = `${host}/${encodeURIComponent(organization)}/${encodeURIComponent(project)}`;
   const wit = `${root}/_apis/wit`;
   const auth = `Basic ${Buffer.from(`:${pat}`).toString('base64')}`;

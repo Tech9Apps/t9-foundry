@@ -22,11 +22,12 @@ const VOLATILE = [
   [/(localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0):\d{2,5}/g, '$1:<port>'],
 ];
 
+const MAX_SIGNATURE_INPUT = 8000;
 // minDigits: a run of digits at least this long is masked. Prose uses 5 (an order number, a pid, a port is a different value every run), but
 // the lines that say what was EXPECTED and RECEIVED use 10 (an epoch timestamp): there a five-digit number is usually the data — 12999 cents,
 // not 13999 — and masking it would make two different defects share a fingerprint.
 function normalizeSignature(message, max = 300, { minDigits = 5 } = {}) {
-  let s = stripAnsi(message || '');
+  let s = stripAnsi(message || '').slice(0, MAX_SIGNATURE_INPUT); // capped BEFORE the regexes: a path-like run of tens of thousands of characters is quadratic in the path mask
   for (const [re, to] of VOLATILE) s = s.replace(re, to);
   s = s.replace(new RegExp(`\\b\\d{${minDigits},}\\b`, 'g'), '<n>'); // last: the rules above have already taken the digits they own
   return s.replace(/\s+/g, ' ').trim().slice(0, max);
@@ -49,8 +50,9 @@ const DIAGNOSTIC_LINE = /^\s*(?:Expected|Received|Actual|Locator)\b[^\n]*$/i;
 const COMPARISON_LINE = /^\s*[^\s|>][^\n]{0,150}?\s(?:!==?|===?)\s[^\n]{0,150}$/; // "10 !== 11" (not a code-frame line "  5 | if (a !== b)")
 const CODE_FRAME = /^\s*>?\s*\d+\s*\|/;
 const isDiagnostic = (l) => DIAGNOSTIC_LINE.test(l) || (COMPARISON_LINE.test(l) && !CODE_FRAME.test(l));
+const MAX_DIAGNOSTIC_INPUT = 20000;
 function diagnosticLines(text, { lines = 4 } = {}) {
-  return stripAnsi(text || '').split('\n').filter(isDiagnostic).slice(0, lines).map((l) => l.trim());
+  return stripAnsi(text || '').slice(0, MAX_DIAGNOSTIC_INPUT).split('\n').filter(isDiagnostic).slice(0, lines).map((l) => l.trim());
 }
 const diagnosticHead = (details, opts) => diagnosticLines(details, opts).join(' ');
 
@@ -62,7 +64,10 @@ const expectedActualLines = (e) => [e.expected !== undefined && `Expected: ${e.e
 // defects. Those lines are pulled out of the message and the details alike and kept AFTER the (capped) prose, so a long message cannot push
 // them out of the signature, and a reporter that repeats them in both places does not change the hash.
 function signatureOf(error, max = 500) {
-  const e = error || {};
+  // Masked FIRST: a secret that is different on every run (a rotating bearer token, a session id) would otherwise give the same defect a new signature, and so a
+  // new fingerprint and a new bug, each run, and make two attempts of one failure look like two different errors.
+  const raw = error || {};
+  const e = { ...raw, message: redactSecrets(raw.message), details: redactSecrets(raw.details), ...(raw.expected !== undefined ? { expected: redactSecrets(raw.expected) } : {}), ...(raw.actual !== undefined ? { actual: redactSecrets(raw.actual) } : {}) };
   const message = stripAnsi(e.message || '');
   const diag = [...new Set([...diagnosticLines(message, { lines: 99 }), ...diagnosticLines(e.details, { lines: 99 }), ...expectedActualLines(e)])].slice(0, 6);
   const parts = [normalizeSignature(message, 300), ...diag.map((l) => normalizeSignature(l, 120, { minDigits: 10 }))].filter(Boolean);
@@ -74,9 +79,12 @@ function signatureOf(error, max = 500) {
 // node:test (and plain assert) print a failed status check as "<actual> OP <expected>" — "503 !== 200" — with none of the words Playwright and
 // Jest use ("Received: 503"). Both orders, strict or loose, and never a longer number that merely ends in the code (1503).
 const CMP = '(?:!==?|===?)';
+// the OTHER side of the comparison must itself be a status code that exists: "503 !== 450" or "503 !== 600" is a count or an amount, not a gateway error.
+// (A count that happens to equal a real code, "504 !== 500" rows, still reads as a status: only a status word could tell, and node's own wording has none.)
+const HTTP_STATUS = '(?:200|201|202|203|204|206|301|302|303|304|307|308|400|401|402|403|404|405|406|408|409|410|413|415|418|422|423|425|426|428|429|431|451|500|501|502|503|504|505)';
 const statusComparisons = (codes) => [
-  new RegExp(`(?<![\\d.])(?:${codes})\\s*${CMP}\\s*\\d{3}(?![\\d.])`),
-  new RegExp(`(?<![\\d.])\\d{3}\\s*${CMP}\\s*(?:${codes})(?![\\d.])`),
+  new RegExp(`(?<![\\d.])(?:${codes})\\s*${CMP}\\s*${HTTP_STATUS}(?![\\d.])`),
+  new RegExp(`(?<![\\d.])${HTTP_STATUS}\\s*${CMP}\\s*(?:${codes})(?![\\d.])`),
 ];
 // The source of the first pattern in `patterns` that matches the message (colour codes ignored), or null. Every signal below reads a message this way.
 const firstMatch = (patterns, message) => {
@@ -85,20 +93,27 @@ const firstMatch = (patterns, message) => {
   return hit ? hit.source : null;
 };
 
-const INFRA = [
+// STRONG: the network layer says it could not reach or trust the host. WEAK: an HTTP status or a browser's "failed to fetch", which a CORS rule, a
+// removed route or a real regression produces just as well.
+const INFRA_STRONG = [
   /\bECONNREFUSED\b/, /\bENOTFOUND\b/, /\bECONNRESET\b/, /\bEAI_AGAIN\b/, /\bEHOSTUNREACH\b/, /\bENETUNREACH\b/,
   /\bgetaddrinfo\b/i, /\bERR_(?:CONNECTION|NAME_NOT_RESOLVED|INTERNET_DISCONNECTED|ADDRESS_UNREACHABLE|TIMED_OUT|CERT|SSL|BAD_SSL|EMPTY_RESPONSE|TUNNEL|PROXY|NETWORK)/,
-  /\bBad Gateway\b/i, /\bService Unavailable\b/i, /\bGateway Time-?out\b/i, /\bHTTP (?:status )?(?:502|503|504)\b/i,
-  /\b(?:status|code)[: ]+(?:502|503|504)\b/i, /connect ECONN/i, /socket hang up/i,
-  // a status assertion that RECEIVED a gateway error ("Expected: 200  Received: 503")
-  /\bReceived\b[^\n]{0,30}\b(?:502|503|504)\b/i,
+  /connect ECONN/i, /socket hang up/i,
   // TLS problems with the test environment's certificate (Node and Chromium wording)
   /\b(?:UNABLE_TO_VERIFY_LEAF_SIGNATURE|CERT_HAS_EXPIRED|DEPTH_ZERO_SELF_SIGNED_CERT|SELF_SIGNED_CERT_IN_CHAIN)\b/, /\bself[- ]signed certificate\b/i,
   /\bcertificate (?:has expired|is not yet valid|verify failed)\b/i,
+];
+const INFRA_WEAK = [
+  /\bBad Gateway\b/i, /\bService Unavailable\b/i, /\bGateway Time-?out\b/i, /\bHTTP (?:status )?(?:502|503|504)\b/i,
+  /\b(?:status|code)[: ]+(?:502|503|504)\b/i,
+  // a status assertion that RECEIVED a gateway error ("Expected: 200  Received: 503")
+  /\bReceived\b[^\n]{0,30}\b(?:502|503|504)\b/i,
   // a request that never got an answer: Node's fetch (undici) throws a bare "fetch failed" and hides the cause; browsers say the same in their own words
   /\bfetch failed\b/i, /\bFailed to fetch\b/, /\bNetworkError when attempting to fetch\b/i, /\bLoad failed\b/, /\bNetwork request failed\b/i,
   ...statusComparisons('502|503|504'),
 ];
+const INFRA = [...INFRA_STRONG, ...INFRA_WEAK];
+const infraStrong = (message) => firstMatch(INFRA_STRONG, message) !== null;
 const infraSignal = (message) => firstMatch(INFRA, message);
 
 // "Is this an authentication / session problem?" An expired test account, a login page where the app should be, a 401 where
@@ -152,27 +167,92 @@ function extractTestId(message) {
 // the wording and the stack location are the evidence.
 const CRASH = /\b(?:TypeError|ReferenceError|SyntaxError)\b|Cannot find module|is not a function|is not defined|NameError|AttributeError|NoMethodError|undefined method/;
 const ASSERTION = /\bAssertionError\b|expect\(received\)|\bexpected\b.*\b(?:to|but)\b|!==|Failure\/Error: expect/i;
-const TEST_PATH = /(?:^|[\\/])(?:tests?|specs?|e2e|__tests__|cypress[\\/]e2e)[\\/]|\.(?:test|spec)\.[cm]?[jt]sx?$|_spec\.rb$|(?:^|[\\/])test_[^\\/]*\.py$|_test\.py$/;
+// Crashes that can ONLY be the test's own fault: no response from the app can cause a ReferenceError or a missing module. A TypeError / "is not a function"
+// is different: an API test that reads a response whose shape changed throws one in the test file (the app is remote, so the first frame is always the
+// test), and that is a product regression. Those are still test-bug, but only as a proposal.
+// Only a ReferenceError / SyntaxError / NameError in the test's own code. NOT a missing module (a test that imports the app's file fails when the app renames
+// it), and NOT one the application can cause: a body that is not JSON ("Unexpected token '<'", "Unexpected end of JSON input"), a global the app removed seen
+// through page.evaluate, or an error Cypress says "originated from your application code".
+const STRONG_CRASH = /\b(?:ReferenceError|SyntaxError)\b|is not defined|NameError/;
+const APP_CAUSED = /\bJSON\b|<!DOCTYPE|Unexpected token '?<|Unexpected end of (?:JSON )?input|\b(?:page|locator|frame|elementHandle)\.evaluate\w*:|\bevaluate\w*: |originated from your application|application code/i;
+// A test file is named like one (anywhere), or sits in a tests/ specs/ e2e/ directory BELOW the project root. An ancestor directory of the checkout that
+// happens to be called tests/ says nothing about the file.
+const TEST_FILE = /\.(?:test|spec)\.[cm]?[jt]sx?$|_spec\.rb$|(?:^|[\\/])test_[^\\/]*\.py$|_test\.py$/;
+const TEST_DIR = /(?:^|[\\/])(?:tests?|specs?|e2e|__tests__|cypress[\\/]e2e)[\\/]/;
+function isTestFile(file, root) {
+  if (TEST_FILE.test(file)) return true;
+  const base = root ? path.resolve(root) : '';
+  if (!base || path.parse(base).root === base) return false; // no real project root ("" or "/"): every directory is below it, so the directories prove nothing
+  const rel = path.isAbsolute(file) ? path.relative(base, file) : file;
+  if (rel.startsWith('..') || path.isAbsolute(rel)) return false; // outside the project: only the file name could say "test"
+  return TEST_DIR.test(rel);
+}
 function firstSourceFrame(details) {
-  const m = stripAnsi(details || '').match(/(?:\(|\bat\s+|^\s*)((?:[A-Za-z]:)?[\\/]?[\w.@~+ \\/-]*?[\w.-]+\.(?:[cm]?[jt]sx?|py|rb))(?::(\d+))?(?::\d+)?/m);
+  const m = stripAnsi(details || '').slice(0, MAX_EVIDENCE).match(/(?:\(|\bat\s+|^\s*)((?:[A-Za-z]:)?[\\/]?[\w.@~+ \\/-]*?[\w.-]+\.(?:[cm]?[jt]sx?|py|rb))(?::(\d+))?(?::\d+)?/m);
   return m ? { file: m[1], line: m[2] ? Number(m[2]) : undefined } : null;
 }
-function testCrash(error) {
+function testCrash(error, { root = process.cwd() } = {}) {
   if (!error) return null;
   const head = `${error.message || ''}`;
   if (!CRASH.test(`${head}\n${error.details || ''}`) || ASSERTION.test(head)) return null;
   const frame = firstSourceFrame(error.details);
-  return frame && TEST_PATH.test(frame.file) ? frame : null;
+  return frame && isTestFile(frame.file, root) ? { ...frame, strong: (() => { const all = `${head}\n${error.details || ''}`; return STRONG_CRASH.test(all) && !APP_CAUSED.test(all); })() } : null;
+}
+
+// What a failing test printed can hold a credential (a request dump with its Authorization header, a connection string, an API key in a URL), and the
+// text is copied into the triage report, a comment on a tracker and a bug. Mask what is a secret; leave ordinary failure text alone, because the evidence is
+// the point ("Expected: \"Password: required\"" is an assertion about a validation message, not a leak). Three kinds of rule, from surest to least sure:
+//   - shapes that are secrets wherever they appear (PEM keys, provider tokens, webhook URLs, credentials in a URL, a long bearer token);
+//   - assignment syntax (key=value, "key":"value"): always masked, whatever the value;
+//   - prose ("key: value"): masked only when the value looks like a secret and not like a message about one.
+const WORDS = 'passw(?:or)?d|passphrase|pwd|secret|token|api[_-]?key|apikey|access[_-]?key|private[ _-]?key|session[_-]?id|sessionid|csrf|xsrf|signature|credentials?|secret[_-]?key|signing[_-]?key|encryption[_-]?key|master[_-]?key|app[_-]?secret';
+const KEY = '[\\w-]{0,40}?(?:' + WORDS + ')'; // a prefix of up to 40 characters: aws_secret_access_key, csrf_token, apiToken, my-service-password (unbounded, a long dashed run is quadratic)
+const VALUE = '"[^"\\n]*"|\'[^\'\\n]*\'|[^\\s"\'&;,]+';
+const SCHEME = '(?:Bearer|Basic|Digest|Token|Negotiate|AWS4-HMAC-SHA256)';
+// the first word of a value that is a message ABOUT a secret or a sentence, not a secret
+const BENIGN = /^(?:required|invalid|incorrect|wrong|missing|empty|blank|none|null|undefined|too|not|expired|accepted|rejected|valid|granted|denied|hidden|masked|mismatch(?:ed)?|unchanged|changed|set|unset|the|a|an|is|was|are|must|should|cannot|can't|does|did|field|input|value|to|for|of|and|or|but|has|have|will|would|\*+|<redacted>)\b/i;
+const maskProse = (match, key, sep, value) => {
+  const quoted = /^(["'])(.*)\1$/.exec(value);
+  const raw = (quoted ? quoted[2] : value).trim();
+  if (!raw || BENIGN.test(raw)) return match;
+  if (/^[\d.]{1,8}$/.test(raw.split(/\s+/)[0]) || /\s(?:!==?|===?)\s/.test(raw)) return match; // a number or a comparison of values ("secret: 42 !== 43") is evidence, not a secret
+  if (/passw|passphrase|pwd|secret|private/i.test(key)) return key + sep + (quoted ? quoted[1] + '<redacted>' + quoted[1] : '<redacted>'); // a passphrase can be several words
+  const first = raw.split(/\s+/)[0].replace(/[.,;:!?]+$/, '');
+  if (!(first.length >= 8 || /[\d_\-/+=.]/.test(first))) return match; // a short plain word is a status ("token: expired"), not a token
+  return key + sep + (quoted ? quoted[1] : '') + raw.replace(first, '<redacted>') + (quoted ? quoted[1] : '');
+};
+const SECRET_RULES = [
+  [/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g, '<redacted private key>'],
+  [new RegExp('\\b(authorization|proxy-authorization)(["\']?\\s*[:=]\\s*["\']?)(?=' + SCHEME + '\\s+\\S|\\S*\\d|\\S{20,})(?:' + SCHEME + '\\s+)?[^\\s"\']+', 'gi'), '$1$2<redacted>'], // the scheme and ONE token: whatever follows on the line ("expected 1 to equal 2") is evidence
+  [/\b(cookie|set-cookie)(["']?\s*[:=]\s*["']?)(?=[^\n"']*=)[^\n"']+/gi, '$1$2<redacted>'],
+  [/\b(Bearer)\s+[A-Za-z0-9._~+/=-]{20,}/gi, '$1 <redacted>'],
+  [/\b(Bearer|Basic)\s+(?=[A-Za-z0-9._~+/=-]*[0-9=.])[A-Za-z0-9._~+/=-]{8,}/gi, '$1 <redacted>'],
+  [new RegExp('(["\']\\b' + KEY + '\\b["\']\\s*:\\s*)(?:"[^"\\n]*"|\'[^\'\\n]*\')', 'gi'), '$1"<redacted>"'],
+  [new RegExp('\\b(' + KEY + ')(["\']?\\s*=\\s*)(' + VALUE + ')', 'gi'), (m, key, sep, value) => (/^["']?(?:undefined|null|nil|true|false|none|<redacted>)["']?$/i.test(value) ? m : key + sep + '<redacted>')],
+  [new RegExp('\\b(' + KEY + ')(\\s*:\\s+)("[^"\\n]*"|\'[^\'\\n]*\'|[^\\n"]*)', 'gi'), maskProse],
+  // "label value" with no separator, when the value is token-shaped (a digit and 16+ characters): "using api key abcd1234efgh5678", "token 8f14e45f..."
+  [/\b(api[ _-]?key|secret(?: access)? key|access[ _-]?key|token|secret)(\s+)(?=[A-Za-z0-9+/=_-]*\d)[A-Za-z0-9+/=_-]{16,}\b/gi, '$1$2<redacted>'],
+  [/([?&]key=)[^&\s"']+/gi, '$1<redacted>'],
+  [/\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{10,}|xox[abprs]-[A-Za-z0-9-]{8,}|(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{8,}|sk-[A-Za-z0-9_-]{16,}|npm_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{20,})/g, '<redacted>'],
+  [/(https:\/\/hooks\.slack\.com\/services\/)[A-Za-z0-9/_-]+/g, '$1<redacted>'],
+  [/(https:\/\/discord(?:app)?\.com\/api\/webhooks\/)\d+\/[A-Za-z0-9_-]+/g, '$1<redacted>'],
+  [/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*/g, '<redacted>'],
+  [/(\b[a-z][a-z0-9+.-]*:\/\/)[^\s/@:]+:[^\s/@]+@/gi, '$1<redacted>@'],
+];
+function redactSecrets(text) {
+  let s = String(text == null ? '' : text).slice(0, MAX_DIAGNOSTIC_INPUT);
+  for (const [re, to] of SECRET_RULES) s = s.replace(re, to);
+  return s;
 }
 
 // The runner itself says "error" (an exception, not a failed assertion) and the first source frame is NOT a test file:
 // something in the application threw. Returns the frame, or null when it is not that, or when there is no frame to judge by.
-function appCrash(error) {
+function appCrash(error, { root = process.cwd() } = {}) {
   if (!error || error.kind !== 'error' || isLocatorError(error.message)) return null;
   const frame = firstSourceFrame(error.details);
-  return frame && !TEST_PATH.test(frame.file) && !/node_modules|[\\/]node:|^node:/.test(frame.file) ? frame : null;
+  return frame && !isTestFile(frame.file, root) && !/node_modules|[\\/]node:|^node:/.test(frame.file) ? frame : null;
 }
 
 const baseName = (p) => (p ? path.basename(String(p)) : '');
 
-module.exports = { normalizeSignature, evidenceText, diagnosticHead, diagnosticLines, signatureOf, firstMatch, infraSignal, authSignal, errorPageSignal, isLocatorError, extractTestId, testCrash, appCrash, firstSourceFrame, baseName, INFRA, AUTH, ERROR_PAGE, LOCATOR };
+module.exports = { normalizeSignature, evidenceText, diagnosticHead, diagnosticLines, signatureOf, firstMatch, infraSignal, infraStrong, authSignal, errorPageSignal, isLocatorError, extractTestId, testCrash, appCrash, firstSourceFrame, redactSecrets, baseName, INFRA, AUTH, ERROR_PAGE, LOCATOR };

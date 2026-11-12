@@ -92,6 +92,16 @@ describe('self-heal, end to end (real git, real runner)', () => {
     assert.equal(off.state().branches, 'main');
   });
 
+  test('--heal together with --no-heal is a usage error, whichever comes first', async () => {
+    const p = makeProject();
+    for (const flags of [['--heal', '--no-heal'], ['--no-heal', '--heal']]) {
+      let err = '';
+      const code = await orchestrate({ argv: ['--framework', 'node', '--cwd', p.proj, '--out', path.join(p.proj, 'qa-results'), ...flags], env: baseEnv(), stdout: { write: () => {} }, stderr: { write: (x) => { err += x; } } });
+      assert.equal(code, 2, flags.join(' '));
+      assert.match(err, /--heal and --no-heal contradict each other/);
+    }
+  });
+
   test('a stale reference in a file with NOTHING to edit is still reported (a heal that looks complete must be)', async () => {
     const p = makeProject({ files: { 'tests/helpers/ids.js': "exports.APPLY = 'coupon-apply-btn';\n" } });
     const r = await triage(p);
@@ -637,6 +647,89 @@ describe('heal(): crafted verdicts and validation results', () => {
   });
 });
 
+// What the independent review of this PR found: each of these was a way for a stated guarantee to be false (or an untested guard).
+describe('heal(): hardening from the review', () => {
+  const verdict = (extra = {}) => ({ key: 'DEMO-101/TC-901', test: { name: 'DEMO-101/TC-901: x', ticket: 'DEMO-101', caseId: 'TC-901', file: 'tests/ui.test.js' }, class: 'test-bug', rule: 'TST-1', confidence: 0.85, action: 'act',
+    evidence: ['the test looks for "coupon-apply-btn", which is not on the page, but "coupon-apply" is (similarity 0.8)'], error: { kind: 'failure', message: "locator not found: getByTestId('coupon-apply-btn')" },
+    attempts: [], fingerprint: 'a'.repeat(12), token: `qafp${'a'.repeat(12)}`, signature: 's', proposal: { kind: 'rename-testid', from: 'coupon-apply-btn', to: 'coupon-apply', similarity: 0.8 }, ...extra });
+  const passing = () => ({ totals: { total: 2, passed: 2, failed: 0, skipped: 0 }, tests: [{ name: 'DEMO-101/TC-901: x', ticket: 'DEMO-101', caseId: 'TC-901', file: 'tests/ui.test.js', status: 'passed' }, { name: 'DEMO-101/TC-902: y', ticket: 'DEMO-101', caseId: 'TC-902', file: 'tests/ui.test.js', status: 'passed' }] });
+  const run = (p, v, validate = async () => passing(), opts = {}) => heal({ report: { verdicts: [v] }, cwd: p.proj, runId: 'r1', paths: ['tests'], validate, mainRun: { tests: [] }, ...opts });
+
+  test('a base branch whose name a shell would interpret is refused: the review command and the push steps put it on a command line', async () => {
+    const p = makeProject();
+    git(p.proj, 'switch', '-c', 'x$(touch${IFS}PWNED)');
+    const before = p.state();
+    const r = await run(p, verdict());
+    assert.equal(r.status, 'refused');
+    assert.match(r.reason, /branch name/);
+    assert.deepEqual(p.state(), before);
+    assert.equal(fs.existsSync(path.join(p.proj, 'PWNED')), false);
+  });
+
+  test('a hard-linked test file is not edited: writing it in place would change the file it is linked to, outside any check', async () => {
+    const p = makeProject({ files: { 'src/app.js': "openPage().getByTestId('coupon-apply-btn');\n" } });
+    fs.linkSync(path.join(p.proj, 'src', 'app.js'), path.join(p.proj, 'tests', 'hl.test.js'));
+    git(p.proj, 'add', '-A'); git(p.proj, 'commit', '-q', '-m', 'link');
+    const r = await run(p, verdict());
+    assert.equal(r.status, 'healed', JSON.stringify(r));
+    assert.equal(p.read('src/app.js'), "openPage().getByTestId('coupon-apply-btn');\n", 'the application file is exactly as it was');
+    assert.equal(git(p.proj, 'status', '--porcelain', '--untracked-files=no'), '');
+    assert.ok(r.notScanned.some((n) => n.file === 'tests/hl.test.js' && /hard link/.test(n.reason)), JSON.stringify(r.notScanned));
+    assert.deepEqual(r.changes.map((c) => c.file), ['tests/ui.test.js'], 'only the ordinary file was edited');
+  });
+
+  test('a spec the report names must be inside the test directories, not merely inside the repository (a report is not trusted)', async () => {
+    const p = makeProject({ files: { 'scripts/danger.js': 'throw new Error("must never run");\n' } });
+    const before = p.state();
+    const r = await run(p, verdict({ test: { name: 'x', ticket: 'DEMO-101', caseId: 'TC-901', file: 'scripts/danger.js' } }));
+    assert.equal(r.status, 'refused');
+    assert.match(r.reason, /outside the test directories/);
+    assert.deepEqual(p.state(), before);
+  });
+
+  test('…and a sibling directory that merely starts with the same name is outside the repository, for the spec and for a configured path', async () => {
+    const p = makeProject();
+    const evil = path.join(p.root, 'proj-evil'); fs.mkdirSync(evil); fs.writeFileSync(path.join(evil, 'x.test.js'), "getByTestId('coupon-apply-btn');\n");
+    const viaSpec = await run(p, verdict({ test: { name: 'x', ticket: 'DEMO-101', caseId: 'TC-901', file: '../proj-evil/x.test.js' } }));
+    assert.equal(viaSpec.status, 'refused');
+    assert.match(viaSpec.reason, /outside the repository/);
+    const viaPath = await run(p, verdict(), async () => passing(), { paths: ['../proj-evil'] });
+    assert.equal(viaPath.status, 'refused');
+    assert.match(viaPath.reason, /resolves outside the repository/);
+    assert.equal(fs.readFileSync(path.join(evil, 'x.test.js'), 'utf8'), "getByTestId('coupon-apply-btn');\n");
+  });
+
+  test('a run id with characters a branch name cannot hold is made safe, not refused', async () => {
+    const p = makeProject();
+    const r = await run(p, verdict(), async () => passing(), { runId: 'a b;$(x)' });
+    assert.equal(r.status, 'healed', JSON.stringify(r));
+    assert.equal(r.branch, 'qa/heal-a-b-x');
+  });
+
+  test('when the heal has COMMITTED and a later step fails, its own branch goes too (it holds nothing but the heal\'s commit)', async () => {
+    const p = makeProject();
+    // git reports a failing post-checkout hook as a failed switch: here only the switch back to main, once the heal branch is ahead of it
+    fs.writeFileSync(path.join(p.proj, '.git', 'hooks', 'post-checkout'), '#!/bin/sh\n[ "$(git rev-parse --abbrev-ref HEAD)" = main ] && git rev-parse -q --verify refs/heads/qa/heal-r1 >/dev/null && [ "$(git rev-parse qa/heal-r1)" != "$(git rev-parse main)" ] && exit 1\nexit 0\n', { mode: 0o755 });
+    const r = await run(p, verdict());
+    assert.equal(r.status, 'reverted', JSON.stringify(r));
+    assert.doesNotMatch(p.state().branches, /qa\/heal-r1/, 'the heal\'s own commit and branch are gone');
+    assert.equal(p.state().head, git(p.proj, 'rev-parse', 'main'));
+    assert.match(p.read('tests/ui.test.js'), /coupon-apply-btn/, 'the file holds its original id');
+  });
+
+  test('a commit that is not the heal\'s own is never thrown away with its branch: only a branch at the base, or at the heal\'s own commit, is deleted', async () => {
+    const p = makeProject();
+    const r = await run(p, verdict(), async () => {
+      git(p.proj, 'commit', '--allow-empty', '-q', '-m', 'someone else committed here during the validation');
+      const bad = passing(); bad.tests[0].status = 'failed'; return bad;
+    });
+    assert.equal(r.status, 'reverted');
+    assert.equal(r.restored, true);
+    assert.match(p.state().branches, /qa\/heal-r1/, 'the branch holding that commit is kept');
+    assert.equal(p.state().branch, 'main');
+  });
+});
+
 describe('heal.js never publishes', () => {
   test('there is no code path that runs git push (or any remote operation), in heal.js or its helpers', () => {
     for (const f of ['heal.js', 'lib/heal-core.js', 'lib/run-results.js']) {
@@ -741,28 +834,93 @@ describe('heal CLI', () => {
   });
 
 
-  test('a REAL SIGTERM sent to a running heal.js (a killed agent, a CI timeout) restores the repository before the process exits', async () => {
-    const slow = UI_TEST + "\ntest('slow: keeps the validation re-run busy', async () => { await new Promise((resolve) => setTimeout(resolve, 6000)); });\n";
-    const p = makeProject({ files: { 'tests/ui.test.js': slow } }); const before = p.state(); const original = fs.readFileSync(path.join(p.proj, 'tests', 'ui.test.js'));
+  // A spec that says it has started (a sentinel file outside the repository), then waits: the test knows the validation run is genuinely in
+  // progress instead of guessing with a sleep, and the run is bounded (60 s) if nothing ever kills it.
+  const slowSpec = (started, extra = '') => UI_TEST + `\ntest('slow: keeps the validation re-run busy', async () => { ${extra} require('fs').writeFileSync(${JSON.stringify(started)}, '1'); await new Promise((resolve) => setTimeout(resolve, 60000)); });\n`;
+  const until = async (what, ok, ms = 30000, seen) => { const end = Date.now() + ms; while (Date.now() < end) { if (ok()) return; await new Promise((r) => setTimeout(r, 50)); } assert.fail(`timed out waiting for ${what}${seen ? ` (stdout: ${seen.stdout.slice(0, 600)} stderr: ${seen.stderr.slice(0, 300)})` : ''}`); };
+  const spawnHeal = (p, runId, extraArgs = []) => {
     const mainRun = path.join(p.root, 'main.json'); fs.writeFileSync(mainRun, JSON.stringify({ tests: [] }));
     const script = path.join(__dirname, '..', '..', 'scripts', 'triage', 'heal.js');
-    const child = spawn(process.execPath, [script, '--report', reportFor(p), '--main', mainRun, '--framework', 'node', '--cwd', p.proj, '--paths', 'tests', '--apply', '--enable', '--run-id', 'sig1', '--config', p.cfg({ selfHeal: { enabled: true, paths: ['tests'] } })], { env: baseEnv(), stdio: ['ignore', 'pipe', 'pipe'] });
-    let stderr = ''; child.stderr.on('data', (d) => { stderr += d; });
-    const exited = new Promise((resolve) => child.on('exit', (code, signal) => resolve({ code, signal })));
-    // wait until the heal is genuinely in the middle of it: on its branch, with the edit on disk, the validation run in progress
-    const deadline = Date.now() + 30000; let reached = false;
-    while (Date.now() < deadline && !reached) {
-      await new Promise((r) => setTimeout(r, 100));
-      try { reached = git(p.proj, 'rev-parse', '--abbrev-ref', 'HEAD') === 'qa/heal-sig1' && !fs.readFileSync(path.join(p.proj, 'tests', 'ui.test.js')).equals(original); } catch { /* a git call can race the heal's own */ }
-    }
-    assert.ok(reached, `the heal never got to its validation (stderr: ${stderr})`);
+    const child = spawn(process.execPath, [script, '--report', reportFor(p), '--main', mainRun, '--framework', 'node', '--cwd', p.proj, '--paths', 'tests', '--apply', '--enable', '--run-id', runId, '--config', EMPTY_CFG, ...extraArgs], { env: baseEnv(), stdio: ['ignore', 'pipe', 'pipe'] });
+    const seen = { stderr: '', stdout: '' }; child.stderr.on('data', (d) => { seen.stderr += d; }); child.stdout.on('data', (d) => { seen.stdout += d; });
+    seen.exited = new Promise((resolve) => child.on('exit', (code, signal) => resolve({ code, signal })));
+    return { child, seen };
+  };
+
+  test('a REAL SIGTERM sent to a running heal.js (a killed agent, a CI timeout) restores the repository before the process exits', async () => {
+    const started = path.join(fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), 'qa-heal-sig-')), 'started');
+    const p = makeProject({ files: { 'tests/ui.test.js': slowSpec(started) } }); const before = p.state(); const original = fs.readFileSync(path.join(p.proj, 'tests', 'ui.test.js'));
+    const { child, seen } = spawnHeal(p, 'sig1');
+    await until('the validation run to start', () => fs.existsSync(started), 30000, seen);
     child.kill('SIGTERM');
-    const { code, signal } = await exited;
+    const { code, signal } = await seen.exited;
     assert.deepEqual([code, signal], [143, null], 'it reverted and exited by itself with 128 + SIGTERM, instead of being killed with the repository mid-change');
-    assert.match(stderr, /heal: interrupted by SIGTERM; the repository was restored exactly as found/);
+    assert.match(seen.stderr, /heal: interrupted by SIGTERM; the repository was restored exactly as found/);
     assert.deepEqual(p.state(), before);
     assert.ok(fs.readFileSync(path.join(p.proj, 'tests', 'ui.test.js')).equals(original), 'the file holds its original bytes');
     assert.equal(git(p.proj, 'status', '--porcelain', '--untracked-files=no'), '');
+  });
+
+  test('a runner that IGNORES SIGTERM is still stopped before the repository is put back, so it cannot write into it afterwards', async () => {
+    const dir = fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), 'qa-heal-trap-'));
+    const started = path.join(dir, 'started'); const late = path.join(dir, 'late-write');
+    const trap = `process.on('SIGTERM', () => {}); setTimeout(() => require('fs').writeFileSync(${JSON.stringify(late)}, 'x'), 2500);`;
+    const p = makeProject({ files: { 'tests/ui.test.js': slowSpec(started, trap) } });
+    const { child, seen } = spawnHeal(p, 'trap1');
+    await until('the validation run to start', () => fs.existsSync(started), 30000, seen);
+    child.kill('SIGTERM');
+    assert.deepEqual(await seen.exited, { code: 143, signal: null });
+    await new Promise((r) => setTimeout(r, 3500));
+    assert.equal(fs.existsSync(late), false, 'the runner outlived the revert and wrote after it');
+  });
+
+  test('a SIGTERM that arrives DURING the revert after a failed validation is not fatal: the revert finishes, then the process exits', async () => {
+    const dir = fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), 'qa-heal-rev-'));
+    const marker = path.join(dir, 'validated'); const running = path.join(dir, 'reverting');
+    // the second test fails, so the validation fails and the heal is reverted; the hook then makes every checkout slow, but only once the validation has run
+    const failing = UI_TEST + `\ntest('fails: forces the validation to fail', () => { require('fs').writeFileSync(${JSON.stringify(marker)}, '1'); throw new Error('boom'); });\n`;
+    const p = makeProject({ files: { 'tests/ui.test.js': failing } }); const before = p.state();
+    fs.writeFileSync(path.join(p.proj, '.git', 'hooks', 'post-checkout'), `#!/bin/sh\nif [ -f ${JSON.stringify(marker)} ]; then touch ${JSON.stringify(running)}; sleep 1; fi\n`, { mode: 0o755 });
+    const { child, seen } = spawnHeal(p, 'rev1');
+    await until('the revert to begin', () => fs.existsSync(running), 30000, seen);
+    child.kill('SIGTERM');
+    const { code, signal } = await seen.exited;
+    assert.deepEqual([code, signal], [143, null], `the interrupt waited for the revert instead of killing the process in the middle of it (stdout: ${seen.stdout.slice(0, 500)} stderr: ${seen.stderr.slice(0, 300)})`);
+    assert.match(seen.stderr, /interrupted by SIGTERM; the repository was restored exactly as found/);
+    assert.deepEqual(p.state(), before);
+  });
+
+  test('a report with no runner format is refused for --apply: removing "format" must not skip the project\'s trust setting', async () => {
+    const p = makeProject();
+    const doc = JSON.parse(fs.readFileSync(reportFor(p), 'utf8')); delete doc.data.format; delete doc.data.trusted;
+    const f = path.join(p.root, 'no-format.json'); fs.writeFileSync(f, JSON.stringify(doc));
+    const mainRun = path.join(p.root, 'main.json'); fs.writeFileSync(mainRun, JSON.stringify({ tests: [] }));
+    const before = p.state();
+    const r = await cli(['--report', f, '--main', mainRun, '--framework', 'node', '--cwd', p.proj, '--paths', 'tests', '--apply', '--enable'], async () => assert.fail('nothing may be re-run for a refused heal'));
+    assert.equal(r.code, 1);
+    assert.match(r.json.data.reason, /does not say which runner format/);
+    assert.deepEqual(p.state(), before);
+  });
+
+  test('--paths may narrow the configured test directories but never name one the config does not: a flag cannot lift the scope', async () => {
+    const p = makeProject({ files: { 'e2e/extra.test.js': '// x\n' } });
+    const cfg = p.cfg({ selfHeal: { paths: ['tests'] } });
+    const outside = await cli(['--report', reportFor(p), '--cwd', p.proj, '--config', cfg, '--paths', 'app']);
+    assert.equal(outside.code, 2);
+    assert.match(outside.err, /--paths app is not inside the test directories the config names \(tests\)/);
+    const sibling = await cli(['--report', reportFor(p), '--cwd', p.proj, '--config', cfg, '--paths', 'tests-evil']);
+    assert.equal(sibling.code, 2, 'a name that merely starts with a configured one is not inside it');
+    assert.notEqual((await cli(['--report', reportFor(p), '--cwd', p.proj, '--config', cfg, '--paths', 'tests'])).code, 2);
+    assert.notEqual((await cli(['--report', reportFor(p), '--cwd', p.proj, '--config', cfg, '--paths', 'tests/sub'])).code, 2, 'a subdirectory narrows it');
+  });
+
+  test('--max-lines cannot lift the configured cap: the lower of the two applies', async () => {
+    const twice = UI_TEST + "\ntest('DEMO-101/TC-903: again', () => { openPage().getByTestId('coupon-apply-btn'); });\n";
+    const p = makeProject({ files: { 'tests/ui.test.js': twice } });
+    const cfg = p.cfg({ selfHeal: { paths: ['tests'], maxLines: 1 } });
+    const r = await cli(['--report', reportFor(p), '--cwd', p.proj, '--config', cfg, '--max-lines', '50']);
+    assert.equal(r.json.data.status, 'refused');
+    assert.match(r.json.data.reason, /more than the limit of 1 \(triage\.selfHeal\.maxLines\)/);
   });
 
   test('a refusal exits 1 with the reason; bad input exits 2 or 1 naming the file', async () => {
