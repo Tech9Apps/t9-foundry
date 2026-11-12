@@ -2,7 +2,7 @@
 
 const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
-const { infraSignal, isLocatorError, extractTestId, testCrash, firstSourceFrame } = require('../../scripts/triage/lib/text');
+const { infraSignal, isLocatorError, extractTestId, testCrash, appCrash, firstSourceFrame } = require('../../scripts/triage/lib/text');
 
 describe('infraSignal', () => {
   test('recognises connection and gateway failures', () => {
@@ -68,5 +68,22 @@ describe('firstSourceFrame', () => {
   test('finds the first frame that names a source file, skipping node internals', () => {
     assert.deepEqual(firstSourceFrame('Test.run (node:internal/test_runner/test:1047:25)\n at x (/w/a.js:3:4)'), { file: '/w/a.js', line: 3 });
     assert.equal(firstSourceFrame('no frames here'), null);
+  });
+});
+
+describe('appCrash', () => {
+  const app = (message, details, kind = 'error') => appCrash({ kind, message, details });
+  test('the runner says "error" and the first source frame is application code → the frame', () => {
+    assert.deepEqual(app('TypeError: x', 'at totals (/work/app/src/pricing.js:30:11)'), { file: '/work/app/src/pricing.js', line: 30 });
+  });
+  test('a test-file frame, a library frame, no frame, or a non-error kind is not "the app threw"', () => {
+    assert.equal(app('TypeError: x', 'at f (/w/tests/a.test.js:1:1)'), null);
+    assert.equal(app('Error: boom', 'at f (/w/node_modules/lib/index.js:1:1)'), null);
+    assert.equal(app('Error: boom', ''), null);
+    assert.equal(app('TypeError: x', 'at f (/w/app/src/a.js:1:1)', 'failure'), null);
+    assert.equal(appCrash(undefined), null);
+  });
+  test('a missing-element error is never an application crash', () => {
+    assert.equal(app("locator not found: getByTestId('x')", 'at f (/w/app/src/page.js:1:1)'), null);
   });
 });

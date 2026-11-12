@@ -14,8 +14,13 @@ setup() {
   cp "$REPO_ROOT/.claude/memory/failure-triage-rules.md" "$REPO_ROOT/.claude/memory/ai-usage-rules.md" "$TEST_TMP/.claude/memory/"
   cp -R "$REPO_ROOT/.claude/commands" "$REPO_ROOT/.claude/agents" "$REPO_ROOT/.claude/skills" "$TEST_TMP/.claude/"
   cp -R "$REPO_ROOT/scripts/triage" "$REPO_ROOT/scripts/results" "$REPO_ROOT/scripts/tracker" "$REPO_ROOT/scripts/preflight.sh" "$TEST_TMP/scripts/"
+  cp "$REPO_ROOT/qa-config.schema.json" "$TEST_TMP/"   # the prose names config keys; the checks verify them against the schema
 }
-teardown() { rm -rf "$TEST_TMP"; }
+teardown() {
+  # a failing node suite run through `run` shows only "status -eq 0 failed": print what failed (CI is the only place some of these ever fail)
+  if [ -z "${BATS_TEST_COMPLETED:-}" ] && [ -n "${output:-}" ]; then printf '%s\n' "$output" | grep -A14 'not ok' | head -80 >&3; fi
+  rm -rf "$TEST_TMP"
+}
 
 node_tests() { cd "$REPO_ROOT" && env -u NODE_TEST_CONTEXT node --test --test-reporter=tap "tests/triage/$1" 2>&1; }
 
@@ -75,20 +80,46 @@ node_tests() { cd "$REPO_ROOT" && env -u NODE_TEST_CONTEXT node --test --test-re
   [[ "$output" =~ "# fail 0" ]]
 }
 
+@test "the triage settings in qa-config.json: precedence, validation, and the schema agreeing with the loader" {
+  run node_tests config.test.js
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "# fail 0" ]]
+}
+
+@test "self-heal's pure core: id validation, locator patterns, the substitution guard, what may be edited" {
+  run node_tests heal-core.test.js
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "# fail 0" ]]
+}
+
+@test "self-heal end to end on real git repositories: heals, refuses, reverts, and never publishes" {
+  run node_tests heal.test.js
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "# fail 0" ]]
+}
+
+@test "self-heal's second review: tags, spec containment, branch errors, what it could not see, the config as a floor, and a real SIGTERM that also stops the runner" {
+  run node_tests heal-review2.test.js
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "# fail 0" ]]
+}
+
 @test "the triage scripts depend on nothing but Node built-ins" {
   mods=$(grep -rhoE "require\('[^']+'\)" "$REPO_ROOT/scripts/triage" | sed -E "s/require\('([^']+)'\)/\1/" | grep -v '^\.' | sort -u)
   for m in $mods; do
-    case "$m" in fs|path|crypto) ;; *) echo "unexpected dependency: $m"; false ;; esac
+    case "$m" in fs|path|os|crypto|child_process) ;; *) echo "unexpected dependency: $m"; false ;; esac
   done
 }
 
 @test "classify.js, run as a real process on real demo output, proposes then acts as re-runs confirm" {
   cd "$REPO_ROOT"
+  # hermetic: without --config the CLI discovers ./qa-config.json, which a developer may have set (triage.confidenceThreshold, trustedFormats…)
+  echo '{}' > "$TEST_TMP/empty-config.json"
   node scripts/results/normalize.js tests/fixtures/results/node-test.tap --out "$TEST_TMP/run.json" >/dev/null
-  run node scripts/triage/classify.js --run "$TEST_TMP/run.json"
+  run node scripts/triage/classify.js --run "$TEST_TMP/run.json" --config "$TEST_TMP/empty-config.json"
   [ "$status" -eq 0 ]
   [ "$(echo "$output" | jq -r '[.data.verdicts[] | "\(.rule):\(.action)"] | join(",")')" = "PRD-3:propose,PRD-3:propose" ]
-  run node scripts/triage/classify.js --run "$TEST_TMP/run.json" --rerun "$TEST_TMP/run.json" --rerun "$TEST_TMP/run.json"
+  run node scripts/triage/classify.js --run "$TEST_TMP/run.json" --rerun "$TEST_TMP/run.json" --rerun "$TEST_TMP/run.json" --config "$TEST_TMP/empty-config.json"
   [ "$(echo "$output" | jq -r '[.data.verdicts[] | "\(.rule):\(.action)"] | join(",")')" = "PRD-1:act,PRD-1:act" ]
 }
 
@@ -171,6 +202,39 @@ node_tests() { cd "$REPO_ROOT" && env -u NODE_TEST_CONTEXT node --test --test-re
   run env DRIFT_ROOT="$TEST_TMP" node "$CHECK"
   [ "$status" -eq 1 ]
   [[ "$output" =~ "--preflite" ]]
+}
+
+@test "drift: an undetermined reason with a different confidence in the rubric is caught" {
+  sed -i.bak 's#| `CONSISTENT_TIMEOUT` | 0.50 |#| `CONSISTENT_TIMEOUT` | 0.90 |#' "$TEST_TMP/.claude/memory/failure-triage-rules.md"
+  run env DRIFT_ROOT="$TEST_TMP" node "$CHECK"
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "reason CONSISTENT_TIMEOUT has confidence 0.9 in the prose but 0.5 in the code" ]]
+}
+
+@test "drift: an undetermined reason dropped from the rubric, or invented in it, is caught (it is a closed list)" {
+  grep -v '^| `UNSTABLE_ERRORS` ' "$TEST_TMP/.claude/memory/failure-triage-rules.md" > "$TEST_TMP/x" && mv "$TEST_TMP/x" "$TEST_TMP/.claude/memory/failure-triage-rules.md"
+  run env DRIFT_ROOT="$TEST_TMP" node "$CHECK"
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "undetermined reason UNSTABLE_ERRORS, which the prose does not document" ]]
+  cp "$REPO_ROOT/.claude/memory/failure-triage-rules.md" "$TEST_TMP/.claude/memory/"
+  sed -i.bak 's#^| `UNCLASSIFIED` |#| `SOMETHING_ELSE` | 0.30 | made up |\n| `UNCLASSIFIED` |#' "$TEST_TMP/.claude/memory/failure-triage-rules.md"
+  run env DRIFT_ROOT="$TEST_TMP" node "$CHECK"
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "SOMETHING_ELSE, which the code does not have" ]]
+}
+
+@test "drift: the rubric no longer saying an undetermined verdict never acts is caught" {
+  sed -i.bak 's#never acts#sometimes acts#' "$TEST_TMP/.claude/memory/failure-triage-rules.md"
+  run env DRIFT_ROOT="$TEST_TMP" node "$CHECK"
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "no longer says an undetermined verdict never acts" ]]
+}
+
+@test "orchestrator drift: the command naming an undetermined reason the code does not have is caught" {
+  sed -i.bak 's#`LOCATOR_NO_EVIDENCE`#`LOCATOR_UNKNOWN`#g; s#"LOCATOR_NO_EVIDENCE"#"LOCATOR_UNKNOWN"#g' "$(CMD_COPY)"
+  orch_check
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "LOCATOR_UNKNOWN, which the code does not have" ]]
 }
 
 @test "the memory README lists the triage rules" {
@@ -377,6 +441,60 @@ corrupt() { # <file> <from> <to>
   [[ "$output" =~ "does not point at .claude/commands/run-and-triage.md" ]]
 }
 
+# ── self-heal: the claims that must not drift ─────────────────────────────────────
+
+@test "drift: a self-heal cap stated in the rubric that is not the default is caught" {
+  sed -i.bak 's#at most 5 files and 20 changed lines#at most 9 files and 20 changed lines#' "$TEST_TMP/.claude/memory/failure-triage-rules.md"
+  run env DRIFT_ROOT="$TEST_TMP" node "$CHECK"
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "touches at most 9 files but the default cap is 5" ]]
+}
+
+@test "drift: the rubric no longer saying self-heal never pushes, or needs an explicit yes, is caught" {
+  sed -i.bak 's#It never pushes#It rarely pushes#' "$TEST_TMP/.claude/memory/failure-triage-rules.md"
+  run env DRIFT_ROOT="$TEST_TMP" node "$CHECK"
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "no longer says self-heal never pushes" ]]
+  cp "$REPO_ROOT/.claude/memory/failure-triage-rules.md" "$TEST_TMP/.claude/memory/"
+  sed -i.bak 's#explicit yes#nod#g' "$TEST_TMP/.claude/memory/failure-triage-rules.md"
+  run env DRIFT_ROOT="$TEST_TMP" node "$CHECK"
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "never published without the user's explicit yes" ]]
+}
+
+@test "orchestrator drift: pushing a heal branch without tying it to the user's explicit yes is caught" {
+  sed -i.bak 's#Only on their explicit yes#When convenient#' "$(CMD_COPY)"
+  orch_check
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "no longer tied to \"Only on their explicit yes\"" ]]
+}
+
+@test "orchestrator drift: a heal status the table does not explain, or one that never happens, is caught" {
+  grep -v '^| `reverted` ' "$(CMD_COPY)" > "$TEST_TMP/x" && mv "$TEST_TMP/x" "$(CMD_COPY)"
+  orch_check
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "can end in \"reverted\" but the table does not explain it" ]]
+  cp "$REPO_ROOT/.claude/commands/run-and-triage.md" "$(CMD_COPY)"
+  sed -i.bak 's#^| `nothing-to-heal` |#| `partially-healed` | some of it | go on |\n| `nothing-to-heal` |#' "$(CMD_COPY)"
+  orch_check
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "documents \"partially-healed\", which a heal never ends in" ]]
+}
+
+@test "orchestrator drift: no longer telling the model not to retry or hand-edit a refused heal is caught" {
+  sed -i.bak 's#Do not retry, and do not edit by hand#Try again#g' "$(CMD_COPY)"
+  orch_check
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "no longer tells the model not to retry or hand-edit" ]]
+}
+
+@test "orchestrator drift: the agent no longer saying a heal needs an explicit yes is caught" {
+  sed -i.bak 's#explicit yes#nod#g' "$(AGENT_COPY)"
+  orch_check
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "no longer says a heal is never published without the user's explicit yes" ]]
+}
+
 # ── the safety prose and the agent's tools are pinned, not just the flags ──
 # (the third review corrupted each of these in a copy and the checks still printed OK)
 
@@ -453,7 +571,7 @@ pinned() { # <file> <from> <to> <expected text in the report>
 }
 
 @test "pins: propose-test-fix saying 'Edit nothing' is caught when changed to a fix" {
-  pinned "$(CMD_COPY)" '**Edit nothing**' 'Fix the stale selector in the page object' "propose-test-fix"
+  pinned "$(CMD_COPY)" '**You edit nothing.**' 'Fix the stale selector in the page object.' "propose-test-fix"
 }
 
 @test "pins: the production prohibition is caught when removed from the command, the agent or the rubric" {
@@ -479,7 +597,7 @@ pinned() { # <file> <from> <to> <expected text in the report>
 }
 
 @test "pins: the rubric's never-edit, never-present-a-propose, autonomy and only-product-bug sentences are caught when flipped" {
-  pinned "$(RUBRIC_COPY)" 'Never edit a test, a page object, or the app as part of triage.' 'Edit tests as needed.' "Never edit a test"
+  pinned "$(RUBRIC_COPY)" 'Never edit a test, a page object, or the app yourself.' 'Edit tests as needed.' "Never edit a test"
   cp "$REPO_ROOT/.claude/memory/failure-triage-rules.md" "$(RUBRIC_COPY)"
   pinned "$(RUBRIC_COPY)" 'Never present a `propose` as a decision.' 'Present a propose as a decision.' "Never present"
   cp "$REPO_ROOT/.claude/memory/failure-triage-rules.md" "$(RUBRIC_COPY)"

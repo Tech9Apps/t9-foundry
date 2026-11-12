@@ -1,7 +1,7 @@
 # Phase 2 design: run → triage → act
 
-Status: **first implementation checkpoint done** on `v2/phase-2-closed-loop` (stacked on Phase 1, PR #8). Everything
-below is built and tested except self-heal, which is **not** built and is an open decision (see Questions).
+Status: **built and tested.** The first checkpoint is on `v2/phase-2-closed-loop` (PR #9); the user's decisions (strict `undetermined`,
+configurable re-runs, self-heal in v2.0) are on `v2/phase-2-self-heal`, stacked on it.
 
 ## What was built, and where the build changed the design
 
@@ -69,15 +69,33 @@ from) and `action: "act" | "propose"`: **`act` only when `confidence ≥ thresho
 | FLK-1 | flaky | attempts contain both a pass and a fail (flip), or the runner itself flagged `flaky` | 0.90 / 0.85 |
 | TST-1 | test-bug | locator-not-found in every failing attempt **and** evidence names exactly one candidate element under a different selector | 0.85 |
 | TST-2 | test-bug | the test **crashed** (not an assertion) and the first stack frame is in a test file below the project root. a plain `ReferenceError`/`SyntaxError`/"is not defined" in the test's own code: 0.80; anything the app can cause (`TypeError`, "is not a function", `Cannot find module`, a "not valid JSON" `SyntaxError`, a `ReferenceError` through `page.evaluate` or "originated from your application code"): 0.65 | 0.80 / 0.65 |
+| TST-3 | test-bug | locator-not-found in every failing attempt, DOM evidence shows the id is absent and **two or more** elements resemble it — renamed, but which? | 0.55 |
 | ENV-3 | environment | ≥ 3 tests and ≥ 50% of the run failed, and one error signature accounts for ≥ 80% of those failures (blast radius) — could equally be a real suite-wide regression, so it is only a proposal | 0.60 |
 | PRD-1 | product-bug | every attempt failed (≥ 2), assertion failures (`kind: failure`) with the **same signature**, test traceable to a manual case (`caseId`) | 0.85 |
 | PRD-2 | product-bug | as PRD-1 but not traceable to a case | 0.75 |
 | PRD-3 | product-bug | a **single** attempt (no re-run was done), assertion failure — a flake cannot be ruled out | 0.60 |
-| UND-1 | undetermined | locator-not-found with no evidence / several candidates / none; consistent timeouts with no infrastructure signature; anything else | ≤ 0.50 |
+| PRD-4 | product-bug | the **application threw**: an error (not an assertion) whose first stack frame is application code — consistent, or seen once | 0.55 |
+| UND-1 | undetermined | **nothing above found any positive evidence**, for one named reason (see "Undetermined is strict") | 0.50 / 0.40 / 0.30 |
 
 Why the order: environment signatures and flips are the cheapest, most reliable evidence, so they go first; a consistent
 assertion failure is the *weakest* positive claim ("the app is wrong" rather than "the test is wrong"), so it goes last
 and is capped lower when it cannot be tied to a documented expectation.
+
+## Undetermined is strict
+
+Decided with the user: keep the class, but make it hard to reach — "we don't want to jump straight to undetermined every time
+something is different." So:
+
+1. **A closed list of reasons**, each with its own confidence: `LOCATOR_NO_EVIDENCE`, `LOCATOR_PRESENT`, `LOCATOR_GONE`,
+   `CONSISTENT_TIMEOUT`, `NOT_RERUN`, `UNSTABLE_ERRORS`, `UNATTRIBUTED_CRASH`, `UNCLASSIFIED`. Every undetermined verdict carries exactly one.
+2. **Positive evidence wins.** Two weak rules (TST-3, PRD-4) give the common "different" cases a class at a low confidence instead:
+   a renamed locator with several lookalikes is a `test-bug`, an exception thrown in application code is a `product-bug`. Both are
+   proposals. Only when no rule finds any positive evidence is a verdict undetermined.
+3. **Never acts**, whatever the threshold (even set below its confidence).
+4. **Evidence first.** `LOCATOR_NO_EVIDENCE` and `NOT_RERUN` mean "go and get the evidence": the agent must capture the DOM snapshot or
+   re-run, and re-classify, *before* reporting.
+5. **A witness.** If at least 3 failures and at least half of a run's failures are undetermined, the output carries a warning that
+   the evidence or the rules are missing for this suite and that these are not findings. A high share is a signal about the rules.
 
 ## Fingerprints and bug dedupe
 
@@ -156,17 +174,72 @@ Verified: the classifier, fingerprints and planner on real node:test output and 
 of those tools' messages, not from a corpus), tracker search behavior on real services, the orchestrator agent's prose
 under a live model. The rubric thresholds are starting values, not tuned ones.
 
-## Questions for the user
+## Self-heal (v2.0)
 
-1. **Self-heal: v2.0 or v2.1?** This design stops at *propose* for `test-bug` (it names the candidate selector; nothing
-   is edited). Self-heal adds a branch `qa/heal-<run-id>`, edits to page objects only, re-run validation, a PR, attempt
-   caps. It is the riskiest part and shares the "agent edits code" boundary with Phase 4's tiers.
-2. **Is a fifth class, `undetermined`, acceptable?** The plan listed four.
-3. **A closed bug with the same fingerprint:** file a new regression bug that links it (this design), or comment on the
-   closed one? There is no "reopen" operation in the adapters.
-4. **Re-run budget:** default 2 re-runs of each failing spec, including product-bug candidates (it is what separates PRD-1
-   from PRD-3). More cost, much better signal. OK?
-5. **Flaky tests:** report-only in Phase 2 (this design), or tag/quarantine them now?
+The user decided self-heal ships in v2.0. It is the one place the harness edits code, so it is built **narrow enough to verify
+mechanically**, not to trust a model's judgement.
+
+**Scope: one fix.** A `TST-1` verdict (a locator was not found, the DOM evidence says the test-id is absent, **exactly one**
+element resembles it) at `act` confidence → an exact **test-id rename** inside locator expressions in test code. `TST-2` (a crashed
+test), `TST-3` (several lookalikes) and everything else stay proposals: they need judgement.
+
+**Off by default.** `triage.selfHeal.enabled` (or `--heal`; `--no-heal` overrides the config). When off, the verdict still carries a
+concrete `proposal` (`rename-testid: from → to`), so the report says exactly what the fix would be.
+
+**What it may touch.** Only files under `triage.selfHeal.paths` (default `testFramework.testDir`, relative to the run directory, which must be
+inside the git repository), with test-code extensions, never `node_modules`/`.git`/build output, never through a symlink. Application source
+is never in scope, and nothing enforces that beyond the directories you name — so a path that is the repository root (`.`, or `testDir: "."`) is **refused**: name the test
+directories. **Only files git tracks:** a heal is committed and undone through git, so an untracked or ignored file in those paths that
+also holds the old id makes it refuse rather than leave the heal half-done.
+
+**The edit, and the guard that makes it safe:**
+- Only the id inside a locator expression changes: `getByTestId('x')`, `get_by_test_id("x")`, `[data-testid=x]` and its `data-cy`/`data-test-id`/`data-qa`
+  forms, in any quoting. A bare string that merely equals the id (a constant) is **not** edited, and is reported as left untouched; neither is a line that is only a comment
+  (`//`, `#`, `*`, `/*`), even a commented-out locator. This is a line test, not a parser: a locator inside a string literal, or after code on the same line,
+  is still treated as code, and the validation re-run (below) is what catches a rename that changed behaviour. **Not scanned, and said so:** a symlink or a file over
+  1 MB is listed under `notScanned`, and lines that still mention the old id are listed under `leftovers` even when there was nothing to edit (an id that lives only in a constant).
+- Both ids must match `^[A-Za-z0-9_:.-]+$`. The new id comes from the page's HTML, which is not trusted: a quote or a bracket in it
+  would be code injection into a test file, so it is refused.
+- **Every changed line must equal the original line with only `new` swapped for `old`** (checked by reversing the substitution on the whole line). If a
+  matcher, an expected value, or anything else differs, the heal is refused. This is the mechanical meaning of "never edits assertions".
+- Caps: at most `maxFiles` files (default 5) and `maxLines` changed lines (default 20), else the heal is **refused**, not applied.
+- **Chained renames are refused:** `step-1 → step-2` together with `step-2 → step-3`, applied in turn, would turn `step-1` into `step-3`.
+- **Text only if it round-trips:** a file that is not valid UTF-8 is refused (decoding it and writing it back would replace bytes on lines the heal
+  never meant to touch); valid non-ASCII text and a BOM survive byte for byte.
+- **The report is not taken on trust:** a verdict must be TST-1 at 0.85, not held at propose, about the id being renamed, with both ids in its
+  evidence. The spec files it will re-run come from the report, so each must be inside the repository (a report cannot make the runner execute a file elsewhere).
+  `heal.js --apply` also needs `triage.selfHeal.enabled` (or `--enable`), and treats the project's config as a floor: a report from a runner format that
+  `triage.trustedFormats` does not list, or a verdict below `triage.confidenceThreshold`, is refused, and `--max-files` / `--max-lines` can tighten the configured caps but never lift them.
+  Pass `--spec` (once per spec) to say what the main run ran: when a shared helper was edited, that selection, not the project's default suite, is re-run.
+
+**Git, and the rules around it:**
+1. Requires the repository's tracked files to be clean and a named branch (not detached). Otherwise refused — it never mixes its edits with yours. The branch
+   is read with `git branch --show-current`: a tag called like the branch makes `rev-parse --abbrev-ref` print `heads/main`, and switching back to that fails.
+2. Works on a new branch `qa/heal-<runId>` (the prefix is always under `qa/`, so it can never be a default branch). The branch must not already exist; if git
+   cannot create it (a run id it rejects, a branch called `qa`) the heal is **refused**, having changed nothing.
+3. Applies the edit, then **validates by re-running** the failing specs **and every spec file it edited** (a rename can fix one page and break another). If a
+   shared helper such as a page object was edited, any spec may be affected, so the whole selection is re-run. Every healed test must pass, and no test
+   that was not already failing may fail (one that never ran before counts: there is no baseline to excuse it).
+4. Pass → commit (only the edited paths, hooks respected) and return to the original branch. Fail, or any error → **revert everything**: restore the files, return to the
+   original branch, delete the branch it created. **An interrupt (SIGINT, SIGTERM, SIGHUP) stops the validation run first and then does the same before the process exits** (a killed agent or a CI
+   timeout used to leave the user on the heal branch with edited files, and the runner kept writing into the project afterwards). The restore keeps each file's original bytes in memory and writes them back itself if
+   git cannot, then **checks** the result (clean tree, back on the original branch); if it could not fully restore, the result says `restored: false` and why, and the orchestrator repeats that as a warning instead of saying "restored".
+5. **It never pushes**, and it has no code path that does. A branch exists locally; opening a PR needs the user's explicit approval, and the agent
+   asks for it with the diff in view.
+6. One attempt per failing test per run, no retry loop. A cross-run attempt cap needs the Phase 3 ledger.
+
+**Not verified:** healing against real Playwright/Cypress projects (the locator patterns come from those tools' documented APIs; the real
+run is `node --test` against a throwaway repository), any git workflow that rewrites hooks/identity in unusual ways, and signal handling on Windows
+(it is tested with a real SIGTERM on macOS/Linux only).
+
+## Decisions (the user's answers)
+
+1. **Self-heal: in v2.0.** Designed below, built on its own branch.
+2. **Undetermined: keep it, but strict** (above).
+3. **A closed bug with the same fingerprint: file a new regression bug that links it** (as designed).
+4. **Re-runs: default 2, configurable** — `triage.reruns` in `qa-config.json` (0–5) or `--reruns`; a flag beats the config.
+   The confidence threshold is configurable the same way (`triage.confidenceThreshold`, `--threshold`).
+5. **Flaky tests: report-only for now.**
 
 ## What review of the first version changed
 
@@ -211,7 +284,9 @@ were places where a real product bug could be reported as something else at a co
 - **Idempotency keys** cannot collide across run ids; the tracker lookup reports what it could not read or see; failure text is redacted;
   a verdict token that is not a fingerprint token is refused (it names a file).
 - **The drift checks** pin the agent's exact tool allowlist and the human-gate sentences.
-- `triage.trustedFormats` never existed; the prose said it did. `--trusted-formats` is the only mechanism.
+- `triage.trustedFormats` did not exist when the prose first said it did; the self-heal work (#10) makes it a real `qa-config.json` setting. Worth knowing when you
+  review it: widening which formats may act is then a line in a committed config, which a profile copied in by `/switch-project` or a prompt-injected edit of that
+  file can change, whereas `--trusted-formats` was a decision made at the command line by the person running the tools.
 - **Second pass over those fixes** (the re-review found the same mistakes in other forms, and one regression of mine): clearing earlier runs' files
   is by ownership (name AND JSON shape), never by name alone, so a user's `snapshots/` or `plan.json` in `--out` survives; TST-2 "strong" excludes
   everything the app can cause (a body that is not JSON, `page.evaluate`, "originated from your application", a missing module), and a project root of
@@ -224,3 +299,38 @@ were places where a real product bug could be reported as something else at a co
   section that contradicts a gate; the hash can. The price is that editing those files means re-pinning them, on purpose.)
 - **Accepted, documented:** results of a re-run repeat whole spec files (side effects included); trust is keyed on the format name, not the runner, so
   a TAP report from another producer fed straight to `classify.js` inherits TAP's privilege (the orchestrator only produces TAP from `node`).
+
+## What the review of self-heal changed (#10)
+
+An independent review of the self-heal branch (about 60 real-git scenarios, 100 timed signals, a 40000-case differential of `classify` against `main`, 77 mutants)
+found no blocker: nothing loses uncommitted work, pushes, or acts without a yes. It found stated guarantees that were false in narrow windows, and these are fixed:
+
+- **An interrupt during the failure-path revert** killed the process half way (the handlers were removed before the revert ran). They now stay armed until it finishes;
+  the signal waits (the revert is synchronous) and the process exits with 128 + the signal afterwards.
+- **A runner that ignores SIGTERM** survived the revert and wrote into the project afterwards. The interrupt path now sends SIGKILL to the run's whole process group.
+- **A hard-linked test file** was written in place, which edits every other path to the same file (an application file, or one outside the repository), and
+  the revert did not know about them. Files with more than one link are reported under `notScanned` and never edited.
+- **A shell-unsafe base branch name** (`x$(…)`, which git allows, and a fork's pull request can carry) went onto the `review` command and the push steps the agent is
+  told to run. A base branch with anything but letters, digits and `. _ - /` is refused.
+- **The report's specs** must be inside the configured test directories, not just inside the repository (a forged `scripts/build.js` would have been run by the validation), and
+  a report with **no `format`** is refused for `--apply` instead of skipping the project's trust setting.
+- **`--paths`** may narrow the configured test directories, never name one the config does not.
+- **The heal's branch** is deleted on a revert only when it is at the base or at the heal's own commit, so a commit anyone else made there is never thrown away; and
+  `--heal --no-heal` (either order) is a usage error instead of "the last one wins".
+- The **flaky SIGTERM test** waited a fixed 6 s; the slow spec now writes a sentinel file when it starts, and the test waits for that.
+
+**Accepted, documented, not fixed:**
+- **Nothing recovers from SIGKILL, SIGQUIT or a crash of the process itself.** The repository is left on the heal branch with the edit; the next run says "uncommitted changes".
+  A journal in `.git/` and a `--recover` would fix it; until then `git switch <base> && git checkout -- <file> && git branch -D qa/heal-<id>` is the manual recovery.
+- **A report is not authenticated.** A hand-edited report whose `proposal.to` is another existing id on the page (with evidence rewritten to match) heals: the guards check
+  the report is consistent with itself and with the classifier's rules, the edit is confined to the id, and the re-run must pass, but nothing proves the *right* id was chosen.
+  An HMAC over the report would be the fix; a human reads the diff before anything is merged.
+- **The config decides the scope.** `triage.selfHeal.paths` may name `src` (only the repository root is refused), and the config is found from the process's directory
+  (`CLAUDE_PROJECT_DIR`, then `./`, `../`, `../../`), not `--cwd`. A prompt-injected edit of `qa-config.json` can turn self-heal on or widen it; the PR's prose does not
+  forbid editing it beyond "you edit nothing".
+- **A global `--snapshot` is page-agnostic:** evidence is tied to the id, not the page, so a wrong-page snapshot can produce a TST-1 `act`; only the validation re-run stops it.
+- **The user's working tree is on the heal branch for the whole validation** (up to the 30-minute run timeout), and two heals in one repository are not guarded against each other.
+  A `git worktree` would isolate it.
+- A Ctrl-C landing between two of the heal's own git calls left `qa/heal-*` behind in 2 of about 40 attempts; the result still said `restored: true` for the files.
+- **`Bash(gh api *)` in `.claude/settings.json` predates this PR**, and lets the agent call write endpoints (refs, commits, PRs) without a prompt, which bypasses the push gate this PR describes.
+  Removing it is a decision for the owner of that file.

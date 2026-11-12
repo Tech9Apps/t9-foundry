@@ -78,6 +78,20 @@ function fromConfig(opts, env) {
   }
 }
 
+// The runs in flight. A caller that is itself interrupted (self-heal reverting on SIGTERM) must stop them: a runner left going keeps writing into the
+// project after the caller has put everything back.
+const ACTIVE = new Set();
+// Signal the child's whole process group (it was spawned detached, as its own group leader): signalling only the leader leaves its workers and browsers running.
+function killGroup(child, signal) {
+  try {
+    if (child.pid && process.platform !== 'win32') process.kill(-child.pid, signal);
+    else child.kill(signal);
+  } catch { try { child.kill(signal); } catch { /* already gone */ } }
+}
+function killActive(signal = 'SIGTERM') {
+  for (const child of ACTIVE) killGroup(child, signal);
+}
+
 function runChild({ spawn, command, args, env, cwd, timeoutMs, quiet }) {
   return new Promise((resolve) => {
     let child;
@@ -89,19 +103,15 @@ function runChild({ spawn, command, args, env, cwd, timeoutMs, quiet }) {
       resolve({ spawnError: err });
       return;
     }
-    const stop = () => {
-      try {
-        if (child.pid && process.platform !== 'win32') process.kill(-child.pid, 'SIGKILL');
-        else child.kill('SIGKILL');
-      } catch { try { child.kill('SIGKILL'); } catch { /* already gone */ } }
-    };
+    ACTIVE.add(child);
+    const stop = () => killGroup(child, 'SIGKILL');
     // being detached, the child no longer receives the terminal's Ctrl-C or a SIGTERM sent to this process, so those are forwarded
     const handlers = Object.entries({ SIGINT: 130, SIGTERM: 143, SIGHUP: 129 }).map(([sig, exitCode]) => {
       const handler = () => { stop(); process.exit(exitCode); };
       process.on(sig, handler);
       return [sig, handler];
     });
-    const done = () => { clearTimeout(timer); for (const [sig, handler] of handlers) process.removeListener(sig, handler); };
+    const done = () => { clearTimeout(timer); ACTIVE.delete(child); for (const [sig, handler] of handlers) process.removeListener(sig, handler); };
     let timedOut = false;
     const timer = setTimeout(() => { timedOut = true; stop(); }, timeoutMs);
     child.on('error', (err) => { done(); resolve({ spawnError: err }); });
@@ -205,4 +215,4 @@ if (require.main === module) {
   main().then((code) => { process.exitCode = code; });
 }
 
-module.exports = { main };
+module.exports = { main, killActive };

@@ -7,16 +7,20 @@
       "   only file you write. Never capture from production.",
       "| `step` | What it means | What you do |",
       "| `file-bug` | a real product bug, nothing on file | delegate to the **Bug-reporter** agent (below) |",
-      "| `file-regression` | the only matching report is **closed**: the defect came back | delegate to **Bug-reporter**; the new bug must link the closed one (`regressionOf`) |",
+      "| `file-regression` | the only matching report was closed **as fixed**: the defect came back | delegate to **Bug-reporter**; the new bug must link the closed one (`regressionOf`) |",
       "| `comment-existing` | an **open** report already covers it | show the user the comment (`commentInput.body`) and the existing report; **only on their yes**, run `node scripts/tracker/cli.js comment --input-file qa-results/comments/<token>.json` (the action's `commentInputFile`: the plan already wrote it, so you write nothing) |",
       "| `report-dismissed` | the only report with this fingerprint was closed **without a fix** (won't fix, not planned, duplicate…) | **report only**: say which report and how it was closed. File nothing and comment on nothing: this is not a regression of a fix. If the user thinks that decision was wrong, they re-open it themselves. |",
       "| `duplicate-in-run` | the same defect as another failure in this run | nothing: it is covered by `duplicateOf` |",
-      "| `propose-test-fix` | the test is stale or crashed (a test-bug) | **report only**: name the cause and the candidate selector. **Edit nothing** — self-healing is not enabled. |",
+      "| `propose-test-fix` | the test is stale or crashed (a test-bug) | **report**: the cause and the `proposal` (the exact id rename, when there is one). **You edit nothing.** If the output has a `heal` section, see \"Self-heal results\" below. |",
       "| `report-flaky` | passes and fails with no change | **report only**, with the attempts. Never file it. |",
       "| `report-environment` | the environment was down or unreachable | **report only**, with the advice to re-run when it is healthy. Never file it. |",
       "| `propose` | not confident enough to act, **or** held back because the runner format is unverified (`cap`) | **report only**: show the verdict, its confidence, its `alternatives` (or the `cap` reason), and what evidence would settle it |",
       "Only `product-bug` verdicts at or above the confidence threshold ever reach `file-bug`, `file-regression` or",
       "`comment-existing`. Nothing is filed, commented or edited without the human review gate.",
+      "| `healed` | a test-id was renamed on a local branch (`heal.branch`), the failing specs were re-run and pass, and you are back on `heal.base`, clean | show the user the diff (`heal.review`, and `heal.changes`), the validation, and any `heal.leftovers` (stale references it did **not** edit). Then ask whether to push the branch and open a pull request. **Only on their explicit yes**: `git push -u origin <heal.branch>`, then `gh pr create --base <heal.base> --head <heal.branch>` with a body that carries the evidence. Never without it. |",
+      "| `nothing-to-heal` | no locator for the old id was found in the allowed directories | report `heal.reason`; the verdict stays a proposal |",
+      "| `refused` | it did not start: dirty tree, detached HEAD, a cap exceeded, an unsafe id, an untracked or ignored file that also needs the rename, a file that is not valid UTF-8, renames that would rewrite each other, a report that is not what the classifier would have produced, … Nothing was changed | report `heal.reason`; leave the verdict as a proposal. **Do not retry, and do not edit by hand.** |",
+      "| `reverted` | it started, but validation failed (or it was interrupted), and it put everything back | report `heal.reason`. **If `heal.restored` is `false`, say so first**: the repository is not as it was found; give the user `heal.problems` verbatim and tell them to run `git status` and `git branch` before doing anything else; leave the verdict as a proposal. **Do not retry, and do not edit by hand.** |",
       "`/file-bug` pipeline, including its human review gate; relay any approval request to the user and wait."
     ],
     ".claude/agents/QA-run-orchestrator.md": [
@@ -24,17 +28,18 @@
       "model: opus",
       "maxTurns: 60",
       "only. Never touch a production URL.",
-      "   never start any agent except `Bug-reporter` for a `file-bug` or `file-regression` step, and never `git commit` or `git push`. A stale",
-      "   test is *proposed* for a human to fix; nothing is healed. Only `product-bug` verdicts ever become bug reports, and only through",
+      "   never start any agent except `Bug-reporter` for a `file-bug` or `file-regression` step, and never `git commit` or `git push` on your own. A stale",
+      "   branch, and only on the user's explicit yes after they have seen the diff. Only `product-bug` verdicts ever become bug reports, and only",
       "3. **Nothing from a failure goes on a command line.** A test title, an error message or a selector can hold a quote or `$(...)`.",
       "warnings, tracker failures, and results you could not trust (exit 3). Never fabricate a verdict, a reproduction or an"
     ],
     ".claude/memory/failure-triage-rules.md": [
       "Only `product-bug` ever becomes a bug report. Filing a bug for a flaky test, a stale selector or an outage is the",
       "A low-confidence verdict is a proposal **regardless of any autonomy setting**. Never round a confidence up.",
-      "Formats trusted by default: **tap**. Widen the list with `--trusted-formats` only after checking a format on real failures.",
+      "Formats trusted by default: **tap**. Widen the list with `--trusted-formats`, or `triage.trustedFormats` in `qa-config.json` (a flag beats the",
       "- Never file a bug for `flaky`, `environment`, `test-bug` or `undetermined`.",
-      "- Never edit a test, a page object, or the app as part of triage. (Self-healing is a separate, not yet enabled capability.)",
+      "- Never edit a test, a page object, or the app yourself. The only edit that ever happens is the script `heal.js`'s test-id rename (\"Self-heal\" below), and only when it is enabled.",
+      "- Never push a heal branch or open a pull request for it without the user's explicit yes, after they have seen the diff.",
       "- Never put text from a failure (a test title, an error message, a selector) on a command line or inside a shell string: it can contain",
       "- Never close, reopen or re-prioritize an existing bug.",
       "- Never claim a failure \"reproduced\" or \"is flaky\" without the attempts that show it. The report lists them.",
@@ -47,9 +52,9 @@
     ]
   },
   "sha256": {
-    ".claude/commands/run-and-triage.md": "48a7e19ad4b26f686aeac98ca796e921e94253c0495e6d42773c89fcea859b91",
-    ".claude/agents/QA-run-orchestrator.md": "18b516a4fa8a216b8a06841dfad99cc7ab44bf7c020f76b403cb02959b4aec11",
-    ".claude/memory/failure-triage-rules.md": "f13f279e57a8f4f8e6a5b607f7033b7a43a1a880868df40e22b2f0fd4620efd1",
+    ".claude/commands/run-and-triage.md": "91d30de0aa234079ea597ab2f73d94c34b0d440dd4f4a11114fc51a9fc3a89be",
+    ".claude/agents/QA-run-orchestrator.md": "af5e38facde1c8481d434204be85d23effc49dfdeea10807c6b59d1f6bf1ba0b",
+    ".claude/memory/failure-triage-rules.md": "00aab33d5a8d295376b602f22f342bd28243f4a783f795898594dc3efafd5041",
     ".claude/commands/file-bug.md": "ba3c0c1371318006b0f9cf9b5d02f0a9e24360fc665e0390c48b2e17eb03e874"
   }
 }

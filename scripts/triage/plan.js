@@ -40,7 +40,7 @@ const STEPS = ['file-bug', 'file-regression', 'report-dismissed', 'comment-exist
 
 const usage = (message) => Object.assign(new Error(message), { isUsage: true });
 const MAX_CANDIDATES = 5;
-const CAP_REASON = 'held at propose: classification of this runner format has not been verified on real failures (a person widens the trusted formats with --trusted-formats), so a person decides';
+const CAP_REASON = 'held at propose: classification of this runner format has not been verified on real failures (a person widens the trusted formats, with triage.trustedFormats or --trusted-formats), so a person decides';
 const sanitize = (s) => String(s).replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
 // The run's part of an idempotency key. A short id made of safe characters is used as it is (readable, and what an operator would type). Anything else
 // (long, or with characters that would fold together: "a/b" and "a-b") keeps a readable prefix and adds a hash of the WHOLE id, so two different run
@@ -126,7 +126,7 @@ async function plan({ report, runId, adapter, trackerWarning, commentsDir }) {
     const base = { key: v.key, test: v.test.name, class: v.class, rule: v.rule, confidence: v.confidence, fingerprint: v.fingerprint, token: v.token };
     if (v.class === 'flaky') { actions.push({ ...base, step: v.action === 'act' ? 'report-flaky' : 'propose', reason: 'a flaky test is reported, never filed' }); continue; }
     if (v.class === 'environment') { actions.push({ ...base, step: v.action === 'act' ? 'report-environment' : 'propose', reason: 'environment problems are reported with a re-run advice, never filed' }); continue; }
-    if (v.class === 'test-bug') { actions.push({ ...base, step: v.action === 'act' ? 'propose-test-fix' : 'propose', reason: v.cap ? CAP_REASON : 'self-heal is not enabled: the cause is named, nothing is edited', evidence: v.evidence }); continue; }
+    if (v.class === 'test-bug') { actions.push({ ...base, step: v.action === 'act' ? 'propose-test-fix' : 'propose', reason: v.cap ? CAP_REASON : 'the cause is named and, unless self-heal is enabled and succeeds, nothing is edited', evidence: v.evidence, ...(v.proposal ? { proposal: v.proposal } : {}) }); continue; }
     if (v.class === 'undetermined') { actions.push({ ...base, step: 'propose', reason: 'no rule has enough evidence', evidence: v.evidence }); continue; }
 
     // product-bug

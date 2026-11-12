@@ -29,9 +29,12 @@ function scripted(answers) {
   };
   return { runResults, calls };
 }
+// Hermetic: config discovery would otherwise pick up a developer's own qa-config.json from the working directory, so every
+// test gets an explicit (empty) config unless it brings one. `reruns: 2` is passed like a flag; a test of the config sets it undefined.
+const cfgFile = (obj = {}) => { const f = path.join(tmp(), 'qa-config.json'); fs.writeFileSync(f, JSON.stringify(obj)); return f; };
 const go = async (args, deps) => {
   const out = tmp();
-  const o = { specs: [], reruns: 2, out, ...args };
+  const o = { specs: [], reruns: 2, out, config: cfgFile(), ...args };
   const r = await orchestrate(o, { env: {}, ...deps });
   return { ...r, out };
 };
@@ -165,17 +168,95 @@ describe('orchestrate: the loop', () => {
     assert.equal(mock.createdItems().length, 0, 'orchestrating files nothing');
   });
 
+  test('when most failures are undetermined the report says so (the evidence is missing, not the failures), and a few do not trigger it', async () => {
+    const slow = (n) => T(`slow ${n}`, 'failed', { file: `/w/tests/s${n}.test.js`, error: E(`Timeout 30000ms exceeded on page ${n}`, 'timeout') }); // distinct messages: identical ones would be a blast-radius pattern (ENV-3), not unknowns
+    const many = await go({ framework: 'node', noPlan: true }, { runResults: scripted(() => ({ doc: result(slow(1), slow(2), slow(3), T('ok', 'passed')) })).runResults });
+    assert.equal(many.doc.data.summary.byClass.undetermined, 3);
+    assert.match(many.doc.data.warnings.at(-1), /3 of 3 failures are undetermined \(CONSISTENT_TIMEOUT ×3\).*Do not treat these as findings/);
+    const few = await go({ framework: 'node', noPlan: true }, { runResults: scripted(() => ({ doc: result(slow(1), slow(2), T('ok', 'passed')) })).runResults });
+    assert.equal(few.doc.data.warnings, undefined, 'two is not "most of a suite"');
+    const minority = await go({ framework: 'node', noPlan: true }, { runResults: scripted(() => ({ doc: result(slow(1), slow(2), slow(3), T('DEMO-101/TC-005: x', 'failed', { ...ids(5), error: ASSERT }), T('DEMO-101/TC-006: y', 'failed', { ...ids(6), error: ASSERT }), T('DEMO-101/TC-007: z', 'failed', { ...ids(7), error: ASSERT }), T('DEMO-101/TC-008: w', 'failed', { ...ids(8), error: ASSERT })) })).runResults });
+    assert.equal(minority.doc.data.summary.byClass.undetermined, 3);
+    assert.equal(minority.doc.data.warnings, undefined, '3 of 7 is under half');
+  });
+
   test('--config and the runner flags are passed through to the results runner; the runner is always --quiet', async () => {
     const s = scripted({ main: { doc: result(T('a', 'passed')) } });
-    await go({ framework: 'playwright', testDir: 'e2e', configFile: 'pw.config.ts', cwd: '/proj', config: '/proj/qa-config.json', timeoutMs: 5000 }, { runResults: s.runResults });
+    const config = cfgFile();
+    await go({ framework: 'playwright', testDir: 'e2e', configFile: 'pw.config.ts', cwd: '/proj', config, timeoutMs: 5000 }, { runResults: s.runResults });
     const a = s.calls[0].argv;
-    for (const [flag, v] of [['--framework', 'playwright'], ['--test-dir', 'e2e'], ['--config-file', 'pw.config.ts'], ['--cwd', '/proj'], ['--config', '/proj/qa-config.json'], ['--timeout-ms', '5000']]) assert.equal(a[a.indexOf(flag) + 1], v, flag);
+    for (const [flag, v] of [['--framework', 'playwright'], ['--test-dir', 'e2e'], ['--config-file', 'pw.config.ts'], ['--cwd', '/proj'], ['--config', config], ['--timeout-ms', '5000']]) assert.equal(a[a.indexOf(flag) + 1], v, flag);
     assert.ok(a.includes('--quiet'));
+  });
+});
+
+describe('orchestrate: settings come from flag > qa-config.json > default', () => {
+  const failing = () => scripted(() => ({ doc: result(T('DEMO-101/TC-005: x', 'failed', { ...ids(5), error: ASSERT })) }));
+
+  test('with nothing set, 2 re-runs and a 0.8 threshold, both reported as defaults', async () => {
+    const s = failing();
+    const r = await go({ framework: 'node', reruns: undefined, noPlan: true }, { runResults: s.runResults });
+    assert.equal(s.calls.length, 3);
+    assert.deepEqual(r.doc.data.settings, { reruns: { value: 2, from: 'default' }, confidenceThreshold: { value: 0.8, from: 'default' }, trustedFormats: { value: ['tap'], from: 'default' }, selfHeal: { value: false, from: 'default' } });
+  });
+
+  test('trusted formats come from the flag, then qa-config.json, then the default — and the output says which', async () => {
+    const doc = () => { const d = result(T('DEMO-101/TC-005: x', 'failed', { ...ids(5), error: E('expect(locator).toHaveCount(expected)', 'failure', 'Locator: getByTestId(\'cart-line\')\nExpected: 3\nReceived: 0') })); d.data.format = 'playwright-json'; return d; };
+    const run = async (args) => (await go({ framework: 'playwright', noPlan: true, ...args }, { runResults: scripted(() => ({ doc: doc() })).runResults })).doc.data;
+    const byDefault = await run({});
+    assert.deepEqual([byDefault.settings.trustedFormats, byDefault.verdicts[0].action, byDefault.verdicts[0].cap], [{ value: ['tap'], from: 'default' }, 'propose', 'unverified-format']);
+    const fromConfig = await run({ config: cfgFile({ triage: { trustedFormats: ['tap', 'playwright-json'] } }) });
+    assert.deepEqual([fromConfig.settings.trustedFormats, fromConfig.verdicts[0].action], [{ value: ['tap', 'playwright-json'], from: 'config' }, 'act']);
+    const flagWins = await run({ config: cfgFile({ triage: { trustedFormats: ['tap', 'playwright-json'] } }), trustedFormats: [] });
+    assert.deepEqual([flagWins.settings.trustedFormats, flagWins.verdicts[0].action], [{ value: [], from: 'flag' }, 'propose'], 'a flag overrides the config, and an empty list means nothing may act');
+  });
+
+  test('triage.reruns in qa-config.json sets the number of re-runs', async () => {
+    const s = failing();
+    const r = await go({ framework: 'node', reruns: undefined, noPlan: true, config: cfgFile({ triage: { reruns: 4 } }) }, { runResults: s.runResults });
+    assert.deepEqual(s.calls.map((c) => c.name), ['main', 'rerun-1', 'rerun-2', 'rerun-3', 'rerun-4']);
+    assert.deepEqual(r.doc.data.settings.reruns, { value: 4, from: 'config' });
+  });
+
+  test('--reruns beats the config, including --reruns 0 against a config that asks for more', async () => {
+    const s = failing();
+    const r = await go({ framework: 'node', reruns: 0, noPlan: true, config: cfgFile({ triage: { reruns: 4 } }) }, { runResults: s.runResults });
+    assert.equal(s.calls.length, 1);
+    assert.deepEqual(r.doc.data.settings.reruns, { value: 0, from: 'flag' });
+    assert.deepEqual(r.doc.data.verdicts.map((v) => v.rule), ['PRD-3']);
+  });
+
+  test('a config of 0 re-runs means none (the zero is a setting, not "missing")', async () => {
+    const s = failing();
+    await go({ framework: 'node', reruns: undefined, noPlan: true, config: cfgFile({ triage: { reruns: 0 } }) }, { runResults: s.runResults });
+    assert.equal(s.calls.length, 1);
+  });
+
+  test('triage.confidenceThreshold moves the line between act and propose; --threshold beats it', async () => {
+    const noCase = () => scripted(() => ({ doc: result(T('checkout total is wrong', 'failed', { file: '/w/tests/x.test.js', error: ASSERT })) })); // PRD-2: 0.75
+    const lowered = await go({ framework: 'node', reruns: undefined, noPlan: true, config: cfgFile({ triage: { confidenceThreshold: 0.7 } }) }, { runResults: noCase().runResults });
+    assert.deepEqual(lowered.doc.data.verdicts.map((v) => [v.rule, v.action]), [['PRD-2', 'act']]);
+    assert.deepEqual(lowered.doc.data.settings.confidenceThreshold, { value: 0.7, from: 'config' });
+    const flagWins = await go({ framework: 'node', reruns: undefined, threshold: 0.9, noPlan: true, config: cfgFile({ triage: { confidenceThreshold: 0.7 } }) }, { runResults: noCase().runResults });
+    assert.deepEqual(flagWins.doc.data.verdicts.map((v) => v.action), ['propose']);
+    assert.equal(flagWins.doc.data.settings.confidenceThreshold.from, 'flag');
   });
 });
 
 describe('orchestrate CLI', () => {
   const cli = async (argv) => { let out = ''; let e = ''; const code = await main({ argv, env: {}, stdout: { write: (s) => { out += s; } }, stderr: { write: (s) => { e += s; } }, runResults: async () => ({ code: 3, doc: noReport }) }); return { code, err: e, json: out ? JSON.parse(out) : null }; };
+
+  test('an invalid triage block in qa-config.json is a usage error (exit 2) that names the key, before anything runs', async () => {
+    let called = false;
+    for (const [triage, re] of [[{ reruns: 9 }, /triage\.reruns/], [{ confidenceThreshold: 2 }, /triage\.confidenceThreshold/], [{ rerun: 2 }, /unknown key "triage\.rerun"/]]) {
+      let err = ''; let out = '';
+      const code = await main({ argv: ['--framework', 'node', '--config', cfgFile({ triage }), '--out', tmp()], env: {}, stdout: { write: (x) => { out += x; } }, stderr: { write: (x) => { err += x; } }, runResults: async () => { called = true; return { code: 3, doc: noReport }; } });
+      assert.equal(code, 2);
+      assert.match(err, re);
+      assert.equal(out, '');
+    }
+    assert.equal(called, false, 'nothing ran');
+  });
 
   test('exit 3 when there is no trustworthy main run; exit 2 for bad invocations', async () => {
     assert.equal((await cli(['--framework', 'node', '--out', tmp()])).code, 3);
@@ -332,7 +413,7 @@ describe('orchestrate: what the second review of PR #9 found', () => {
     assert.deepEqual(dflt.doc.data.verdicts.map((v) => v.action), ['act']);
     const strict = await go({ framework: 'node', noPlan: true, threshold: 0.9 }, { runResults: scripted(() => ({ doc: result(failing()) })).runResults });
     assert.deepEqual(strict.doc.data.verdicts.map((v) => v.action), ['propose']);
-    const cli = async (argv) => { let out = ''; await main({ argv: ['--framework', 'node', '--out', tmp(), '--no-plan', ...argv], env: {}, stdout: { write: (x) => { out += x; } }, stderr: { write: () => {} }, runResults: scripted(() => ({ doc: result(failing()) })).runResults }); return JSON.parse(out); };
+    const cli = async (argv) => { let out = ''; await main({ argv: ['--framework', 'node', '--out', tmp(), '--no-plan', '--config', cfgFile(), ...argv], env: {}, stdout: { write: (x) => { out += x; } }, stderr: { write: () => {} }, runResults: scripted(() => ({ doc: result(failing()) })).runResults }); return JSON.parse(out); };
     assert.deepEqual((await cli(['--threshold', '0.9'])).data.verdicts.map((v) => v.action), ['propose'], 'through the command line too');
     assert.deepEqual((await cli([])).data.verdicts.map((v) => v.action), ['act']);
   });
