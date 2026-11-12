@@ -16,7 +16,11 @@ setup() {
   cp -R "$REPO_ROOT/scripts/triage" "$REPO_ROOT/scripts/results" "$REPO_ROOT/scripts/tracker" "$REPO_ROOT/scripts/preflight.sh" "$TEST_TMP/scripts/"
   cp "$REPO_ROOT/qa-config.schema.json" "$TEST_TMP/"   # the prose names config keys; the checks verify them against the schema
 }
-teardown() { rm -rf "$TEST_TMP"; }
+teardown() {
+  # a failing node suite run through `run` shows only "status -eq 0 failed": print what failed (CI is the only place some of these ever fail)
+  if [ -z "${BATS_TEST_COMPLETED:-}" ] && [ -n "${output:-}" ]; then printf '%s\n' "$output" | grep -A14 'not ok' | head -80 >&3; fi
+  rm -rf "$TEST_TMP"
+}
 
 node_tests() { cd "$REPO_ROOT" && env -u NODE_TEST_CONTEXT node --test --test-reporter=tap "tests/triage/$1" 2>&1; }
 
