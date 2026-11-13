@@ -283,3 +283,17 @@ in-process `fetch` mocks, as in Phase 1).
 2. Should `audit.jsonl` get the hash chain (tamper-evidence) in this phase?
 3. Default heal cap: 1 attempt per fingerprint per 7 days. Too tight, too loose?
 4. Should the ticket comment from `report.js` be an input file only (proposed), or may a later tier post it directly?
+
+## What the build changed
+
+Written as the build goes, below the plan, which is left as it was.
+
+### Slice 1: the ledger core
+
+- **The proposed defaults were accepted as planned** (2026-11-13: "continue with phase 3 as planned"): `.qa-ledger/` gitignored, 90 days of run files, 400 days of keys, Slack only to `hooks.slack.com`. The open questions (hash chain on `audit.jsonl`, heal cap, report comment) stay open and are taken up in the slice that needs each.
+- **Taking over a failed claim or a stale lock was first built wrong, and a race test caught it.** The first version moved the old file aside and then created the new one. In that gap the path is empty, so a third caller could claim it the ordinary way, and the caller that had just moved a *fresh* claim aside could not put it back: two callers each believed they had won (2 winners out of 8 in the first race test). It is now a **guarded, atomic replace**: one caller at a time holds `<file>.guard` (created with `O_EXCL`), re-reads the file to confirm it is still the failed claim or stale lock it judged, and renames a temp file over it, so the path is never empty and everyone else's ordinary claim (`O_EXCL` create) can only lose. Tests: eight real processes racing for one failed key and for one stale lock (exactly one winner each), and two tests that change the file between "judged stale" and "took the guard".
+  What is left, and documented: a guard older than a minute is treated as a dead holder's and removed once; a live owner whose TTL ran out can still release at the very moment it is replaced.
+- **The run-id helpers moved** from `scripts/triage/plan.js` to `scripts/lib/ids.js` (the planner re-exports them), so the planner's keys and the ledger's file names follow one rule. Moving them also corrected a stale comment (a hashed run part is 37 characters, not 33).
+- **File names fold case.** On a case-insensitive disk (macOS) the run ids `Run` and `run` would share a file; any id with an upper-case letter now gets a hash suffix. This was not in the plan.
+- **Only the `ledger` config block landed in this slice.** `budget` and `triage.selfHeal.maxAttemptsPerFingerprint` are added with the slices that read them (4 and 2): a documented key nothing reads is worse than none, and the config tests hold the schema to the loader.
+- **`docs/ledger.md`** (the operator's guide) comes with slice 5, when the behaviour it describes is complete.

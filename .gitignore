@@ -20,3 +20,6 @@ demo/app/test-results/
 
 # Structured test results written by scripts/results/run.js
 qa-results/
+
+# The run ledger (scripts/ledger/): per-run detail that churns; CI persists it between runs
+.qa-ledger/
