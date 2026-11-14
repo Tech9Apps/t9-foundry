@@ -24,6 +24,12 @@ teardown() {
   [[ "$output" =~ "# fail 0" ]]
 }
 
+@test "what the independent review of the ledger found stays fixed (torn tails, first writers, damaged files, symlinks, validation, prune, envelope)" {
+  run node_tests review.test.js
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "# fail 0" ]]
+}
+
 @test "run-id helpers shared with the triage planner pass their tests" {
   run node_tests ids.test.js
   [ "$status" -eq 0 ]

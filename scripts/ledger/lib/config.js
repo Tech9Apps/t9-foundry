@@ -24,7 +24,12 @@ function validate(block, where) {
 // the directory the command runs in, like every other output folder.
 function ledgerConfig({ configPath, env = process.env } = {}) {
   const file = findConfig(configPath, env);
-  const raw = file ? readJson(file, { fail: usage }).ledger : undefined;
+  let raw;
+  if (file) {
+    const doc = readJson(file, { fail: usage });
+    if (doc === null || typeof doc !== 'object' || Array.isArray(doc)) throw usage(`${file}: the config must be a JSON object`);
+    raw = doc.ledger;
+  }
   const v = validate(raw, file || 'qa-config.json');
   return {
     file: file || null,

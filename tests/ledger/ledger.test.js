@@ -152,7 +152,7 @@ describe('reading a damaged ledger never throws', () => {
   test('a record of a type this version does not know (a newer writer) is skipped and counted, not an error', () => {
     const { events, warnings } = parseEvents('{"v":2,"ts":"2027-01-01T00:00:00.000Z","runId":"r","type":"future.thing","x":1}\n', 'run r');
     assert.deepEqual(events, []);
-    assert.match(warnings[0], /1 record of a type this version does not know/);
+    assert.match(warnings[0], /1 record this version does not understand/);
   });
 
   test('a record with the right type but the wrong shape is skipped with the reason', () => {
