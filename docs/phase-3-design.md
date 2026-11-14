@@ -283,3 +283,34 @@ in-process `fetch` mocks, as in Phase 1).
 2. Should `audit.jsonl` get the hash chain (tamper-evidence) in this phase?
 3. Default heal cap: 1 attempt per fingerprint per 7 days. Too tight, too loose?
 4. Should the ticket comment from `report.js` be an input file only (proposed), or may a later tier post it directly?
+
+## What the build changed
+
+Written as the build goes, below the plan, which is left as it was.
+
+### Slice 1: the ledger core
+
+- **The proposed defaults were accepted as planned** (2026-11-13: "continue with phase 3 as planned"): `.qa-ledger/` gitignored, 90 days of run files, 400 days of keys, Slack only to `hooks.slack.com`. The open questions (hash chain on `audit.jsonl`, heal cap, report comment) stay open and are taken up in the slice that needs each.
+- **Taking over a failed claim or a stale lock was first built wrong, and a race test caught it.** The first version moved the old file aside and then created the new one. In that gap the path is empty, so a third caller could claim it the ordinary way, and the caller that had just moved a *fresh* claim aside could not put it back: two callers each believed they had won (2 winners out of 8 in the first race test). It is now a **guarded, atomic replace**: one caller at a time holds `<file>.guard` (created with `O_EXCL`), re-reads the file to confirm it is still the failed claim or stale lock it judged, and renames a temp file over it, so the path is never empty and everyone else's ordinary claim (`O_EXCL` create) can only lose. Tests: eight real processes racing for one failed key and for one stale lock (exactly one winner each), and two tests that change the file between "judged stale" and "took the guard".
+  What is left, and documented: a guard older than a minute is treated as a dead holder's and removed once; a live owner whose TTL ran out can still release at the very moment it is replaced.
+- **The run-id helpers moved** from `scripts/triage/plan.js` to `scripts/lib/ids.js` (the planner re-exports them), so the planner's keys and the ledger's file names follow one rule. Moving them also corrected a stale comment (a hashed run part is 37 characters, not 33).
+- **File names fold case.** On a case-insensitive disk (macOS) the run ids `Run` and `run` would share a file; any id with an upper-case letter now gets a hash suffix. This was not in the plan.
+- **Only the `ledger` config block landed in this slice.** `budget` and `triage.selfHeal.maxAttemptsPerFingerprint` are added with the slices that read them (4 and 2): a documented key nothing reads is worse than none, and the config tests hold the schema to the loader.
+- **`docs/ledger.md`** (the operator's guide) comes with slice 5, when the behaviour it describes is complete.
+
+### Slice 1, after an independent review
+
+A fresh reviewer attacked the slice (about 125 rounds of 8 racing processes, damaged and hostile files of every kind, 71 mutants). **No blocker:** no double winner, nothing escapes the folder, nothing grants permission. It found guarantees that were false in narrow cases, now fixed, each with a test that fails on the old code (28 of the 45 new tests do):
+
+- **A cut-off line swallowed the next record.** After a crash mid-write, a resumed run's `run.end` was glued onto the fragment and both were lost, so the run looked crashed forever. An append now starts a new line when the file does not end in one.
+- **The first two writers of a brand-new ledger could fail.** `VERSION` was created empty and then filled, and a second first-time writer read the empty file as "a layout I do not understand" and refused. It is now created complete (a hard link of a finished temp file), and an empty one left by a dead writer is repaired.
+- **"Reading never throws" was false** for a directory, a symlink loop, a named pipe (which *hung* the reader), an unreadable file, or a 700 MB file where a file belongs. Every read now `lstat`s first, never follows a symlink, opens only regular files under a size cap, and turns anything else into a warning or an "unreadable" entry. A claim file that is valid JSON but names no key no longer wedges its key as a "collision".
+- **A dangling symlink at a claim or lock path recursed until the stack overflowed**, and appends followed symlinks to files outside the ledger. Retries are now bounded, and appends use `O_NOFOLLOW`.
+- **Claims, locks and run ids bypassed validation.** Keys, run ids and lock scopes written into claim and lock files were unmasked and uncapped, a run id over 128 characters made a record unreachable, and a TTL of `-1` let any run steal a live lock. Run ids, keys and scopes are now validated, and **one that looks like a credential is refused** (masking would change the name and silently stop deduplicating); object keys are masked too; claim results are capped; a TTL must be a positive number; circular, BigInt and over-deep values are a coded refusal.
+- **`prune` ignored the layout version** (it deleted from a newer ledger) and treated `NaN` or `null` as "everything is old". It now refuses both, judges a symlink by itself rather than its target, and reports an entry it cannot remove instead of throwing.
+- **The envelope was looser than the schema** (`v: 2` or a garbage timestamp was accepted). A record from a newer layout is now skipped as newer, and the code and the schema are tested against each other on `v` and `ts`.
+- **`complete` after `fail` is refused**, because a failed claim may already be someone else's to take over.
+
+Of 35 mutants of the riskiest lines run against the fixed code, 34 are killed. The survivor, a `__proto__` key that is not skipped, is equivalent: assigning to that key changes the new object's prototype, which never reaches the written record. (The first set of tests left 32 of 71 survivors; the gaps were the takeover's recheck, each field of the lock-holder comparison, the one-minute grace for an unfinished lock, stale-guard reaping, the `EPERM` rule and the file modes.) `QA_NO_FIFO_TEST=1` switches off the one test that creates a named pipe, for anyone who runs the tests against a deliberately broken ledger, where it would block the process.
+
+**Accepted, not fixed:** `complete` and `fail` do not check who owns the claim (slice 3's resume has one run adopt another's in-flight claim on purpose), and `complete` is a read-then-write outside the guard, so a late `complete` racing a takeover can lose either update; a reused process id, or a changed hostname, makes a dead owner look alive, so its lock is held until the TTL (this fails safe); existing folders and files are not tightened to 0700 and 0600; `claim` and `show` print whatever fields a hand-edited claim file holds, so consumers must treat them as data.

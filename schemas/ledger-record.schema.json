@@ -1,0 +1,537 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "ledger-record.schema.json",
+  "title": "Run ledger record (.qa-ledger/runs/<run>.jsonl and audit.jsonl, one per line)",
+  "description": "The run ledger (docs/phase-3-design.md). Every line is one of the records below. scripts/ledger/lib/ledger.js validates what it writes and reads against its own table, and a test holds that table to this file.",
+  "oneOf": [
+    {
+      "$ref": "#/definitions/run_start"
+    },
+    {
+      "$ref": "#/definitions/test_result"
+    },
+    {
+      "$ref": "#/definitions/verdict"
+    },
+    {
+      "$ref": "#/definitions/action_claimed"
+    },
+    {
+      "$ref": "#/definitions/action_done"
+    },
+    {
+      "$ref": "#/definitions/action_failed"
+    },
+    {
+      "$ref": "#/definitions/heal_begin"
+    },
+    {
+      "$ref": "#/definitions/heal_end"
+    },
+    {
+      "$ref": "#/definitions/budget"
+    },
+    {
+      "$ref": "#/definitions/run_end"
+    },
+    {
+      "$ref": "#/definitions/lock_stolen"
+    }
+  ],
+  "definitions": {
+    "run_start": {
+      "description": "A run began. Written once, first.",
+      "type": "object",
+      "required": [
+        "v",
+        "ts",
+        "runId",
+        "type",
+        "pid",
+        "host"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "ts": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$"
+        },
+        "runId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "const": "run.start"
+        },
+        "truncated": {
+          "type": "boolean",
+          "description": "true when the record was shrunk to fit the 8 KB line limit"
+        },
+        "framework": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "ticket": {
+          "type": "string"
+        },
+        "pid": {
+          "type": "number"
+        },
+        "host": {
+          "type": "string"
+        },
+        "config": {
+          "type": "object"
+        }
+      }
+    },
+    "test_result": {
+      "description": "One test outcome in one phase of the run (the main run, or a re-run).",
+      "type": "object",
+      "required": [
+        "v",
+        "ts",
+        "runId",
+        "type",
+        "spec",
+        "name",
+        "status",
+        "phase"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "ts": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$"
+        },
+        "runId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "const": "test.result"
+        },
+        "truncated": {
+          "type": "boolean",
+          "description": "true when the record was shrunk to fit the 8 KB line limit"
+        },
+        "spec": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "phase": {
+          "type": "string"
+        },
+        "durationMs": {
+          "type": "number"
+        }
+      }
+    },
+    "verdict": {
+      "description": "The triage verdict for one failing test.",
+      "type": "object",
+      "required": [
+        "v",
+        "ts",
+        "runId",
+        "type",
+        "token",
+        "class",
+        "confidence",
+        "action"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "ts": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$"
+        },
+        "runId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "const": "verdict"
+        },
+        "truncated": {
+          "type": "boolean",
+          "description": "true when the record was shrunk to fit the 8 KB line limit"
+        },
+        "token": {
+          "type": "string"
+        },
+        "class": {
+          "type": "string"
+        },
+        "confidence": {
+          "type": "number"
+        },
+        "action": {
+          "type": "string"
+        },
+        "step": {
+          "type": "string"
+        }
+      }
+    },
+    "action_claimed": {
+      "description": "An external write was about to be attempted under this idempotency key.",
+      "type": "object",
+      "required": [
+        "v",
+        "ts",
+        "runId",
+        "type",
+        "key",
+        "step"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "ts": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$"
+        },
+        "runId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "const": "action.claimed"
+        },
+        "truncated": {
+          "type": "boolean",
+          "description": "true when the record was shrunk to fit the 8 KB line limit"
+        },
+        "key": {
+          "type": "string"
+        },
+        "step": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        }
+      }
+    },
+    "action_done": {
+      "description": "The external write for that key happened (or was found already done: deduplicated).",
+      "type": "object",
+      "required": [
+        "v",
+        "ts",
+        "runId",
+        "type",
+        "key"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "ts": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$"
+        },
+        "runId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "const": "action.done"
+        },
+        "truncated": {
+          "type": "boolean",
+          "description": "true when the record was shrunk to fit the 8 KB line limit"
+        },
+        "key": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "deduplicated": {
+          "type": "boolean"
+        }
+      }
+    },
+    "action_failed": {
+      "description": "The external write for that key failed. Only a code and a masked, truncated message: never a raw error.",
+      "type": "object",
+      "required": [
+        "v",
+        "ts",
+        "runId",
+        "type",
+        "key",
+        "code"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "ts": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$"
+        },
+        "runId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "const": "action.failed"
+        },
+        "truncated": {
+          "type": "boolean",
+          "description": "true when the record was shrunk to fit the 8 KB line limit"
+        },
+        "key": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      }
+    },
+    "heal_begin": {
+      "description": "Self-heal started on a local branch. A heal.begin with no heal.end means the run died there.",
+      "type": "object",
+      "required": [
+        "v",
+        "ts",
+        "runId",
+        "type",
+        "branch",
+        "baseSha"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "ts": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$"
+        },
+        "runId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "const": "heal.begin"
+        },
+        "truncated": {
+          "type": "boolean",
+          "description": "true when the record was shrunk to fit the 8 KB line limit"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "baseSha": {
+          "type": "string"
+        },
+        "token": {
+          "type": "string"
+        }
+      }
+    },
+    "heal_end": {
+      "description": "Self-heal finished: the branch was kept, reverted, or the run was interrupted.",
+      "type": "object",
+      "required": [
+        "v",
+        "ts",
+        "runId",
+        "type",
+        "branch",
+        "outcome"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "ts": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$"
+        },
+        "runId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "const": "heal.end"
+        },
+        "truncated": {
+          "type": "boolean",
+          "description": "true when the record was shrunk to fit the 8 KB line limit"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "outcome": {
+          "enum": [
+            "kept",
+            "reverted",
+            "interrupted"
+          ]
+        }
+      }
+    },
+    "budget": {
+      "description": "What the run spent. Fields are only present when the caller measured them.",
+      "type": "object",
+      "required": [
+        "v",
+        "ts",
+        "runId",
+        "type"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "ts": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$"
+        },
+        "runId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "const": "budget"
+        },
+        "truncated": {
+          "type": "boolean",
+          "description": "true when the record was shrunk to fit the 8 KB line limit"
+        },
+        "wallClockMs": {
+          "type": "number"
+        },
+        "turns": {
+          "type": "number"
+        },
+        "costUsd": {
+          "type": "number"
+        },
+        "exceeded": {
+          "type": "string"
+        }
+      }
+    },
+    "run_end": {
+      "description": "The run finished. A run file with no run.end did not finish, whatever else is in it.",
+      "type": "object",
+      "required": [
+        "v",
+        "ts",
+        "runId",
+        "type",
+        "exit",
+        "complete"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "ts": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$"
+        },
+        "runId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "const": "run.end"
+        },
+        "truncated": {
+          "type": "boolean",
+          "description": "true when the record was shrunk to fit the 8 KB line limit"
+        },
+        "exit": {
+          "type": "number"
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "counts": {
+          "type": "object"
+        }
+      }
+    },
+    "lock_stolen": {
+      "description": "A stale lock was taken over (its owner was gone or it had expired). Written to audit.jsonl.",
+      "type": "object",
+      "required": [
+        "v",
+        "ts",
+        "runId",
+        "type",
+        "scope",
+        "reason"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "ts": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$"
+        },
+        "runId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "const": "lock.stolen"
+        },
+        "truncated": {
+          "type": "boolean",
+          "description": "true when the record was shrunk to fit the 8 KB line limit"
+        },
+        "scope": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "previousRunId": {
+          "type": "string"
+        },
+        "previousPid": {
+          "type": "number"
+        }
+      }
+    }
+  }
+}

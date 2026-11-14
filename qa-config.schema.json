@@ -204,6 +204,15 @@
         }
       }
     },
+    "ledger": {
+      "type": "object",
+      "description": "The run ledger (scripts/ledger/, docs/phase-3-design.md): what each run did, kept as plain files so a crash, a retry or a second run can see it. Every key is optional.",
+      "additionalProperties": false,
+      "properties": {
+        "dir": { "type": "string", "minLength": 1, "default": ".qa-ledger", "description": "Where the ledger lives, relative to the directory the command runs in. Gitignored by default: it holds per-run detail that churns, and a committed audit log invites edits that look legitimate in a diff." },
+        "retentionDays": { "type": "integer", "minimum": 1, "maximum": 3650, "default": 90, "description": "Run files older than this are removed by `ledger prune`. Idempotency keys are kept 400 days regardless (a key must outlive the longest retry window)." }
+      }
+    },
     "dataManagement": {
       "type": "object",
       "properties": {
