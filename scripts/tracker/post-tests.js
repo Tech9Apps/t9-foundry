@@ -21,8 +21,10 @@
 //   * one failing case does not stop the others — but a failure that would hit every remaining case
 //     the same way (credentials revoked mid-run, rate limiting) stops the run and marks the rest skipped.
 //
+// With a run ledger the ticket is LOCKED while its cases are posted, so two runs do not post one ticket's tests at the same time.
+//
 // Output: one JSON document on stdout. Exit 0 = every case created/found AND linked; 1 = something
-// failed or was skipped (the keys file says exactly what); 2 = bad invocation.
+// failed or was skipped (the keys file says exactly what); 2 = bad invocation; 4 = refused, nothing was posted: another run holds this ticket (IN_PROGRESS).
 
 const fs = require('fs');
 const path = require('path');
@@ -31,6 +33,7 @@ const { connect, CONNECT_FLAGS } = require('./lib/connect');
 const { runOnce, ledgerKey } = require('./lib/once');
 const { enabledLedger } = require('../ledger/lib/enable');
 const { isValidRunId } = require('../lib/ids');
+const { scopesFor, acquireAll, guardSignals } = require('../ledger/lib/locks');
 const { usage, parseFlags, jsonPrinter } = require('../lib/cli');
 const { TrackerError } = require('./lib/errors');
 const { parseTestCases, lintTestCases } = require('./lib/test-cases');
@@ -111,6 +114,20 @@ async function main({ argv = process.argv.slice(2), env = process.env, stdout = 
     // Without one, the adapter's own idempotency key is what makes a re-run safe, as before. A bad ledger setting stops the run before anything is created.
     const led = enabledLedger({ configPath: opts.config, env, ledgerDir: opts.ledgerDir, now });
     const ledgerWarnings = [];
+    // One run at a time per ticket. Taken before anything is read from or written to the tracker; given back however the run ends, including when it is killed.
+    // Bookkeeping never blocks a run: a ledger that cannot take the lock is a warning, and the run goes ahead unprotected (the adapter's marker still dedupes).
+    let locks = null;
+    let disarm = null;
+    if (led) {
+      try { locks = acquireAll(led.ledger, scopesFor({ ticket: opts.parent }), { runId: opts.runId || `post-tests-${process.pid}` }); } catch (e) { ledgerWarnings.push(`ledger: could not take the ticket lock (${e.message}); this run is not protected from a concurrent one`); }
+      if (locks && !locks.ok) {
+        const h = locks.holder || {};
+        out({ ok: false, error: new TrackerError('IN_PROGRESS', `the test cases of ${opts.parent} are being posted by run ${h.runId || '(unknown)'} since ${h.startedAt || '(unknown)'} (${locks.scope}); nothing was posted`, { details: { scope: locks.scope, runId: h.runId || null, pid: h.pid || null, startedAt: h.startedAt || null } }).toJSON() });
+        return 4;
+      }
+      if (locks) disarm = guardSignals({ release: locks.release });
+    }
+    try {
     const adapter = connect({ configPath: opts.config, source: opts.source, baseUrl: opts.baseUrl, timeoutMs: opts.timeoutMs, env, fetch });
 
     // Check the parent exists (and the credentials work) BEFORE creating anything. Some trackers only
@@ -179,6 +196,10 @@ async function main({ argv = process.argv.slice(2), env = process.env, stdout = 
     const ok = summary.failed === 0 && summary.skipped === 0 && summary.linkFailed === 0;
     out({ ok, parent: opts.parent, source: adapter.source, total: selected.length, ...summary, keysFile, tests: mine, ...(ledgerWarnings.length ? { warnings: ledgerWarnings } : {}) });
     return ok ? 0 : 1;
+    } finally {
+      if (disarm) disarm();
+      if (locks && locks.ok) locks.release();
+    }
   } catch (err) {
     if (err && err.isUsage) {
       stderr.write(`post-tests.js: ${err.message}\n`);

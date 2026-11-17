@@ -36,8 +36,10 @@ describe('the orchestrator records its run when asked', () => {
   test('a green run: run.start, one test.result per test, run.end with the totals', async () => {
     const r = await go({}, { runResults: answerAll(result(T('a', 'passed', { file: 'a.test.js' }), T('b', 'passed', { file: 'b.test.js' }))) });
     assert.equal(r.code, 0);
-    assert.deepEqual(r.events().map((e) => e.type), ['run.start', 'test.result', 'test.result', 'run.end']);
-    const [start, , , end] = r.events();
+    assert.deepEqual(r.events().map((e) => e.type), ['run.start', 'test.result', 'test.result', 'budget', 'run.end']);
+    const start = r.events()[0];
+    const end = r.events().at(-1);
+    assert.equal(typeof r.events().find((e) => e.type === 'budget').wallClockMs, 'number', 'what the run spent, as far as the scripts can see');
     assert.deepEqual([start.framework, start.pid, typeof start.host], ['node', process.pid, 'string']);
     assert.equal(start.config.reruns.value, 2, 'the settings this run used, and where each came from');
     assert.deepEqual([end.exit, end.complete, end.counts], [0, true, { total: 2, passed: 2, failed: 0 }]);
@@ -48,7 +50,7 @@ describe('the orchestrator records its run when asked', () => {
     const r = await go({}, { runResults: answerAll(result(...FAILING)) });
     assert.equal(r.code, 0);
     const ev = r.events();
-    assert.deepEqual(ev.map((e) => e.type), ['run.start', ...Array(6).fill('test.result'), 'verdict', 'run.end']);
+    assert.deepEqual(ev.map((e) => e.type), ['run.start', ...Array(6).fill('test.result'), 'verdict', 'budget', 'run.end']);
     assert.deepEqual(ev.filter((e) => e.type === 'test.result').map((e) => [e.phase, e.name, e.status]), [
       ['main', 'DEMO-101/TC-005: x', 'failed'], ['main', 'ok', 'passed'], ['rerun-1', 'DEMO-101/TC-005: x', 'failed'], ['rerun-1', 'ok', 'passed'], ['rerun-2', 'DEMO-101/TC-005: x', 'failed'], ['rerun-2', 'ok', 'passed'],
     ]);
@@ -73,8 +75,8 @@ describe('the orchestrator records its run when asked', () => {
   test('a run with no trustworthy main run still ends in the ledger: run.end exit 3, not complete', async () => {
     const r = await go({}, { runResults: async () => ({ code: 3, doc: { ok: false, error: { code: 'NO_REPORT', message: 'wrote nothing' } } }) });
     assert.equal(r.code, 3);
-    assert.deepEqual(r.events().map((e) => e.type), ['run.start', 'run.end']);
-    assert.deepEqual([r.events()[1].exit, r.events()[1].complete], [3, false]);
+    assert.deepEqual(r.events().map((e) => e.type), ['run.start', 'budget', 'run.end']);
+    assert.deepEqual([r.events().at(-1).exit, r.events().at(-1).complete], [3, false]);
   });
 
   test('an unexpected exception still writes run.end before it propagates', async () => {
@@ -133,7 +135,7 @@ describe('recording is opt-in, and bookkeeping never changes the run', () => {
     const cwdBefore = fs.existsSync('.qa-ledger');
     const r = await orchestrate({ specs: [], reruns: 2, out: tmp(), config: path.join(root, 'qa-config.json'), noPlan: true, framework: 'node', runId: 'run-1' }, { env: {}, runResults: answerAll(result(T('a', 'passed', { file: 'a.test.js' }))) });
     assert.equal(r.code, 0);
-    assert.equal(openLedger({ dir: path.join(root, '.qa-ledger') }).readRun('run-1').events.length, 3);
+    assert.equal(openLedger({ dir: path.join(root, '.qa-ledger') }).readRun('run-1').events.length, 4);
     assert.equal(fs.existsSync('.qa-ledger'), cwdBefore, 'nothing appeared in the working directory');
   });
 

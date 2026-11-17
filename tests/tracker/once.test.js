@@ -144,7 +144,9 @@ for (const type of Object.keys(MOCKS)) {
       assert.equal(r.code, 0, r.out);
       assert.equal(r.json.created, N);
       assert.ok(r.json.warnings.some((m) => /^ledger: /.test(m)), JSON.stringify(r.json.warnings));
-      assert.equal(r.json.warnings.length, 1, 'said once, not once per case');
+      assert.equal(r.json.warnings.length, 2, 'two things went wrong, each said once: the lock could not be taken, and the claims could not be made (not once per case)');
+      assert.equal(new Set(r.json.warnings).size, 2);
+      assert.ok(r.json.warnings.some((m) => /could not take the ticket lock/.test(m)));
       const again = await w.post(withLedger(w));
       assert.equal(again.json.deduplicated, N);
       assert.equal(w.mock.createdItems().length, N);

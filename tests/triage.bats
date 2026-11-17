@@ -98,6 +98,18 @@ node_tests() { cd "$REPO_ROOT" && env -u NODE_TEST_CONTEXT node --test --test-re
   [[ "$output" =~ "# fail 0" ]]
 }
 
+@test "the orchestrator's locks, per-ticket cooldown and wall-clock budget: refusals leave nothing behind, a stop says what it skipped" {
+  run node_tests orchestrate-budget.test.js
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "# fail 0" ]]
+}
+
+@test "REAL signals: a SIGTERM stops the runner and gives the locks back, self-heal still restores the repository, a killed run's locks are taken over" {
+  run node_tests orchestrate-signals.test.js
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "# fail 0" ]]
+}
+
 @test "the orchestrator's run is remembered in the run ledger when asked, and never changes the run (events, opt-in, a real SIGKILL, write failures)" {
   run node_tests orchestrate-ledger.test.js
   [ "$status" -eq 0 ]

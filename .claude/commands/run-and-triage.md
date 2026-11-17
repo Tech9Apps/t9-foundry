@@ -54,6 +54,8 @@ It prints one JSON document and writes `qa-results/triage.json`, `plan.json` and
 | 0, `status: "triaged"` | some tests failed or flaked | go to step 3 |
 | 3 | **no trustworthy result**: the runner could not start, hung, wrote nothing, listed zero tests, or its exit code contradicted its report | report `error.message` and `warnings` exactly. **Do not call it a pass, and do not guess verdicts.** |
 | 2 | bad invocation | fix the arguments |
+| 4 | **refused, nothing was started**: the ticket is inside its cooldown, or another run holds the environment or the ticket (`error.code` is `COOLDOWN` or `LOCKED`) | report `error.message` exactly, and stop. **Do not retry, do not start another run, and do not remove a lock**: it is another run's, or a limit the project set. |
+| 5 | **stopped by its wall-clock budget**: `data.budget` lists the steps that were not run, so the result is partial | report `data.budget` and `warnings` exactly. If `data.budget.skipped` includes `plan`, **file and comment nothing from this run**; otherwise go to step 3 for the plan that was written, and say plainly that the run is partial. Do not run the skipped steps yourself. |
 
 A `warnings` entry saying that most failures are **undetermined** means the evidence or the rules are missing for this suite:
 lead your report with it, and do not present those verdicts as findings. `warnings` can also mean the tracker could not be

@@ -30,6 +30,12 @@ teardown() {
   [[ "$output" =~ "# fail 0" ]]
 }
 
+@test "the budget settings, the run locks (all or none, released on a signal), the cooldown view and budget-check / budget-record pass their tests" {
+  run node_tests budget.test.js
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "# fail 0" ]]
+}
+
 @test "the cross-run views (flake rate, heal attempts, stale heals), the heal journal and the opt-in switch pass their tests" {
   run node_tests views.test.js
   [ "$status" -eq 0 ]

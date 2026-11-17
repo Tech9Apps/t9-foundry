@@ -65,4 +65,16 @@ function flakeRates(ledger, { window = 20, includeStable = false } = {}) {
   return { window, runsConsidered: runs.length, tests };
 }
 
-module.exports = { staleHeals, healAttempts, flakeRates, DAY_MS };
+// The run of a ticket that ended most recently (any run.end counts, complete or not): { runId, endedAt, exit, complete } or null. What the cooldown reads.
+function lastRunEnd(ledger, { ticket }) {
+  let best = null;
+  for (const run of ledger.readAllRuns({ types: [] })) { // run.start and run.end are always kept: they are all this needs
+    const start = run.events.find((e) => e.type === 'run.start');
+    const end = run.events.find((e) => e.type === 'run.end');
+    if (!start || !end || start.ticket !== ticket) continue;
+    if (!best || end.ts > best.endedAt) best = { runId: run.runId, endedAt: end.ts, exit: end.exit, complete: end.complete };
+  }
+  return best;
+}
+
+module.exports = { staleHeals, healAttempts, flakeRates, lastRunEnd, DAY_MS };

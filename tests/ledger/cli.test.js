@@ -155,7 +155,7 @@ describe('ledger CLI', () => {
 
   test('FLAGS is the table the drift checks read: every flag has a key, and every operation is listed', () => {
     for (const [flag, spec] of Object.entries(FLAGS)) assert.ok(flag.startsWith('--') && spec.key, flag);
-    assert.deepEqual([...OPS].sort(), ['claim', 'complete', 'fail', 'flake-rate', 'forget', 'prune', 'show', 'status']);
+    assert.deepEqual([...OPS].sort(), ['budget-check', 'budget-record', 'claim', 'complete', 'fail', 'flake-rate', 'forget', 'prune', 'show', 'status']);
   });
 });
 

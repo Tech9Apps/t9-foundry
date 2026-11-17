@@ -11,7 +11,7 @@ function restore(state, saved) {
   state.created = saved.created; state.nextNumber = saved.nextNumber; state.nextCommentId = saved.nextCommentId; state.unindexed = new Set(saved.unindexed);
 }
 
-// A mock backed by `file`. onRequest({ method, path, count }) runs AFTER the request was committed and saved, and before the caller hears the answer:
+// A mock backed by `file`. onRequest({ method, path, count }) (it may return a promise, and a promise that never settles hangs the caller) runs AFTER the request was committed and saved, and before the caller hears the answer:
 // the exact window in which a write has happened and nobody knows it.
 function fileBackedGithub(file, { onRequest } = {}) {
   const mock = createGithubMock();
@@ -22,7 +22,7 @@ function fileBackedGithub(file, { onRequest } = {}) {
     const res = await mock.fetch(url, init);
     save();
     count += 1;
-    if (onRequest) onRequest({ method: (init.method || 'GET').toUpperCase(), path: new URL(url).pathname, count });
+    if (onRequest) await onRequest({ method: (init.method || 'GET').toUpperCase(), path: new URL(url).pathname, count }); // may hang on purpose
     return res;
   };
   return { ...mock, fetch, save };
