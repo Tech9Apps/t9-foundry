@@ -127,6 +127,146 @@ describe('flake rate', () => {
   });
 });
 
+describe('what the review of slice 2 found in the views', () => {
+  const runWith = (l, id, events, { end = { exit: 0, complete: true } } = {}) => {
+    clock += 60 * 1000;
+    l.record(id, 'run.start', START);
+    for (const [spec, name, status, phase, extra] of events) l.record(id, 'test.result', { spec, name, status, phase, ...(extra || {}) });
+    if (end) l.record(id, 'run.end', end);
+  };
+
+  test('a run id used twice leaves two runs in one file, and they are not read as one: no flip across runs', () => {
+    const l = open();
+    runWith(l, 'same-second', [['a.js', 'login', P, 'main']]);
+    runWith(l, 'same-second', [['a.js', 'login', F, 'main']]);
+    const runs = open().readAllRuns({ types: ['test.result'] });
+    assert.deepEqual(runs.map((r) => [r.runId, r.events.filter((e) => e.type === 'test.result').length, r.complete]), [['same-second', 1, true], ['same-second', 1, true]]);
+    const r = flakeRates(open(), { includeStable: true });
+    assert.deepEqual([r.runsConsidered, r.tests[0].runsSeen, r.tests[0].flips], [2, 2, 0], 'two runs that each saw one status are not a flip');
+  });
+
+  test('two tests that share a title and disagree in the SAME phase are not a flip; a pass in the main run and a fail in a re-run is', () => {
+    const l = open();
+    runWith(l, 'dup', [['a.js', 'same title', P, 'main'], ['a.js', 'same title', F, 'main']]);
+    assert.equal(flakeRates(open(), { includeStable: true }).tests[0].flips, 0);
+    runWith(l, 'real', [['a.js', 'same title', P, 'main'], ['a.js', 'same title', F, 'rerun-1']]);
+    assert.equal(flakeRates(open(), { includeStable: true }).tests[0].flips, 1);
+  });
+
+  test('the runner\'s own "flaky" mark (it passed after retries) is a flip even when every phase passed', () => {
+    const l = open();
+    runWith(l, 'retry', [['a.js', 'retried', P, 'main', { flaky: true }], ['a.js', 'retried', P, 'rerun-1']]);
+    const t = flakeRates(open(), {}).tests;
+    assert.deepEqual(t.map((x) => [x.name, x.flips]), [['retried', 1]]);
+  });
+
+  test('a run that ended without completing (an exception, no trustworthy main run) is not counted, though it has a run.end', () => {
+    const l = open();
+    runWith(l, 'failed-run', [['a.js', 'x', F, 'main']], { end: { exit: 3, complete: false } });
+    runWith(l, 'good-run', [['a.js', 'x', P, 'main']]);
+    const r = flakeRates(open(), { includeStable: true });
+    assert.deepEqual([r.runsConsidered, r.tests[0].runsSeen], [1, 1]);
+  });
+
+  test('lastFlipAt is the LAST flip, not the first', () => {
+    const l = open();
+    for (const id of ['f1', 'f2', 'f3']) runWith(l, id, [['a.js', 'x', F, 'main'], ['a.js', 'x', P, 'rerun-1']]);
+    const t = flakeRates(open(), {}).tests[0];
+    assert.equal(t.flips, 3);
+    assert.equal(t.lastFlipAt, '2026-11-13T10:03:00.000Z');
+  });
+
+  test('the same title in two files whose names run together (a.js + "xy" against a.jsx + "y") are two tests', () => {
+    const l = open();
+    runWith(l, 'k', [['a.js', 'xy', F, 'main'], ['a.js', 'xy', P, 'rerun-1'], ['a.jsx', 'y', P, 'main']]);
+    assert.deepEqual(flakeRates(open(), { includeStable: true }).tests.map((t) => [t.spec, t.name, t.flips]).sort(), [['a.js', 'xy', 1], ['a.jsx', 'y', 0]]);
+  });
+
+  test('runs are ordered by when they STARTED, not by their last event', () => {
+    const l = open();
+    clock = T0;
+    l.record('early', 'run.start', START);
+    clock = T0 + 60 * 1000;
+    l.record('late', 'run.start', START);
+    clock = T0 + 120 * 1000;
+    l.record('late', 'run.end', { exit: 0, complete: true });
+    clock = T0 + 180 * 1000;
+    l.record('early', 'run.end', { exit: 0, complete: true }); // the early run FINISHED last
+    assert.deepEqual(open().readAllRuns().map((r) => r.runId), ['early', 'late']);
+  });
+
+  test('readAllRuns keeps only the types asked for (and run.start/run.end, which tell runs apart), and events before a run.start are a run of their own', () => {
+    const l = open();
+    l.record('orphan', 'heal.begin', { branch: 'qa/heal-o', baseSha: 'abc' });
+    runWith(l, 'full', [['a.js', 'x', P, 'main']]);
+    const kept = open().readAllRuns({ types: ['heal.begin'] });
+    assert.deepEqual(kept.map((r) => [r.runId, r.events.map((e) => e.type)]), [['orphan', ['heal.begin']], ['full', ['run.start', 'run.end']]]);
+  });
+
+  test('a heal.begin with no tokens is still listed as unfinished, with an empty token list', () => {
+    const l = open();
+    l.record('r', 'heal.begin', { branch: 'qa/heal-r', baseSha: 'abc' });
+    assert.deepEqual(staleHeals(open()).map((h) => h.tokens), [[]]);
+  });
+
+  test('one heal is one attempt, even if its record names a token twice; the window edge is inclusive', () => {
+    const l = open();
+    clock = T0 - 7 * DAY_MS;
+    l.record('r', 'heal.begin', { branch: 'qa/heal-r', baseSha: 'abc', tokens: ['qafp000000000001', 'qafp000000000001'] });
+    assert.equal(healAttempts(open(), { sinceMs: T0 - 7 * DAY_MS, tokens: ['qafp000000000001'] }).qafp000000000001, 1, 'exactly on the edge still counts, and once');
+    assert.equal(healAttempts(open(), { sinceMs: T0 - 7 * DAY_MS + 1, tokens: ['qafp000000000001'] }).qafp000000000001, 0, 'a millisecond later it is outside the window');
+  });
+
+  test('a run file over 16 MB is still read: its heal.begin counts, and the cap is not silently blind to a busy run', { timeout: 60000 }, () => {
+    const l = open();
+    l.record('big', 'run.start', START);
+    l.record('big', 'heal.begin', { branch: 'qa/heal-big', baseSha: 'abc', tokens: ['qafp000000000001'] });
+    const file = path.join(dir, 'runs', fs.readdirSync(path.join(dir, 'runs'))[0]);
+    const line = JSON.stringify({ v: 1, ts: '2026-11-13T10:00:00.000Z', runId: 'big', type: 'test.result', spec: 's'.repeat(80), name: 'n'.repeat(80), status: 'passed', phase: 'main' }) + '\n';
+    fs.appendFileSync(file, line.repeat(Math.ceil((17 * 1024 * 1024) / line.length)));
+    assert.ok(fs.statSync(file).size > 16 * 1024 * 1024);
+    assert.equal(healAttempts(open(), { sinceMs: 0, tokens: ['qafp000000000001'] }).qafp000000000001, 1);
+    assert.equal(staleHeals(open()).length, 1, 'and its unfinished heal is still reported');
+    assert.match(open().readRun('big').warnings.join('\n'), /larger than/, 'the whole-file reader still refuses it; the views do not rely on it');
+  });
+
+  test('a line too long to be a record is skipped with a warning, and the lines after it are read', () => {
+    const l = open();
+    l.record('long', 'run.start', START);
+    const file = path.join(dir, 'runs', fs.readdirSync(path.join(dir, 'runs'))[0]);
+    fs.appendFileSync(file, `${'x'.repeat(2 * 1024 * 1024)}\n`);
+    l.record('long', 'heal.begin', { branch: 'qa/heal-long', baseSha: 'abc', tokens: ['qafp000000000001'] });
+    const [run] = open().readAllRuns({ types: ['heal.begin'] });
+    assert.deepEqual(run.events.map((e) => e.type), ['run.start', 'heal.begin']);
+    assert.match(run.warnings.join('\n'), /1 line longer than 1048576 bytes skipped/);
+  });
+
+  test('a line only just over the limit (it arrives complete inside one buffer, not as a growing remainder) is skipped too', () => {
+    const l = open();
+    l.record('edge', 'run.start', START);
+    const file = path.join(dir, 'runs', fs.readdirSync(path.join(dir, 'runs'))[0]);
+    fs.appendFileSync(file, `${'y'.repeat(1024 * 1024 + 100 * 1024)}\n`); // 1.1 MB: over the 1 MB limit, under the 1.25 MB a full buffer can hold
+    l.record('edge', 'heal.begin', { branch: 'qa/heal-edge', baseSha: 'abc', tokens: ['qafp000000000001'] });
+    const [run] = open().readAllRuns({ types: ['heal.begin'] });
+    assert.deepEqual(run.events.map((e) => e.type), ['run.start', 'heal.begin']);
+    assert.match(run.warnings.join('\n'), /1 line longer than 1048576 bytes skipped/);
+  });
+
+  test('the streaming reader skips a torn last line and reads a UTF-8 name that straddles a chunk boundary', () => {
+    const l = open();
+    l.record('u', 'run.start', START);
+    const file = path.join(dir, 'runs', fs.readdirSync(path.join(dir, 'runs'))[0]);
+    const pad = JSON.stringify({ v: 1, ts: '2026-11-13T10:00:00.000Z', runId: 'u', type: 'test.result', spec: 's', name: 'é'.repeat(70), status: 'passed', phase: 'main' }) + '\n';
+    fs.appendFileSync(file, pad.repeat(Math.ceil((300 * 1024) / pad.length)));
+    fs.appendFileSync(file, '{"v":1,"ts"');
+    const [run] = open().readAllRuns({ types: ['test.result'] });
+    const names = new Set(run.events.filter((e) => e.type === 'test.result').map((e) => e.name));
+    assert.deepEqual([...names], ['é'.repeat(70)], 'no name was cut in the middle of a character');
+    assert.deepEqual(run.warnings, [], 'a filtered read cannot know the type of a line it could not parse, so it says nothing about it');
+    assert.match(open().readAllRuns()[0].warnings.join('\n'), /torn final line/, 'the unfiltered read reports it');
+  });
+});
+
 describe('heal attempts and stale heals', () => {
   const begin = (l, id, tokens, branch = `qa/heal-${id}`) => l.record(id, 'heal.begin', { branch, baseSha: 'abc12345', tokens });
   const end = (l, id, outcome, branch = `qa/heal-${id}`) => l.record(id, 'heal.end', { branch, outcome });
@@ -201,19 +341,21 @@ describe('when a run is recorded', () => {
     assert.equal(fs.existsSync(path.join(work, '.qa-ledger')), false);
   });
 
-  test('a ledger block, even an empty one, turns it on; --ledger-dir turns it on and beats the configured dir; --no-ledger beats both', () => {
-    const empty = enabledLedger({ configPath: cfg({ ledger: {} }), env: {} });
-    assert.equal(empty.ledger.dir, path.resolve('.qa-ledger'));
+  test('a ledger block, even an empty one, turns it on (beside the config file); --ledger-dir alone turns it on too', () => {
+    assert.equal(enabledLedger({ configPath: cfg({ ledger: {} }), env: {} }).ledger.dir, path.join(work, '.qa-ledger'));
     assert.equal(enabledLedger({ configPath: cfg({ ledger: { dir } }), env: {} }).ledger.dir, dir);
     assert.equal(enabledLedger({ configPath: cfg({}), env: {}, ledgerDir: dir }).ledger.dir, dir);
-    assert.equal(enabledLedger({ configPath: cfg({ ledger: { dir: '/elsewhere' } }), env: {}, ledgerDir: dir }).ledger.dir, dir);
-    assert.equal(enabledLedger({ configPath: cfg({ ledger: { dir } }), env: {}, noLedger: true }), null);
   });
 
-  test('--ledger-dir with --no-ledger is a usage error; a bad ledger block is too, unless --no-ledger skips it', () => {
-    assert.throws(() => enabledLedger({ configPath: cfg({}), env: {}, ledgerDir: dir, noLedger: true }), /contradict/);
+  test('a project that HAS a ledger cannot be diverted from it by a flag: the heal attempt cap lives there, and a flag may not lift it', () => {
+    const c = cfg({ ledger: { dir } });
+    assert.equal(enabledLedger({ configPath: c, env: {}, ledgerDir: dir }).ledger.dir, dir, 'naming the same ledger is fine');
+    assert.throws(() => enabledLedger({ configPath: c, env: {}, ledgerDir: path.join(work, 'elsewhere') }), /not the ledger .* names .*heal attempt cap/);
+  });
+
+  test('a bad ledger block is a usage error naming the key; an empty or odd --ledger-dir is one too', () => {
     assert.throws(() => enabledLedger({ configPath: cfg({ ledger: { retentionDays: 0 } }), env: {} }), /ledger.retentionDays/);
-    assert.equal(enabledLedger({ configPath: cfg({ ledger: { retentionDays: 0 } }), env: {}, noLedger: true }), null);
+    for (const bad of ['', 'a\nb', 5]) assert.throws(() => enabledLedger({ configPath: cfg({}), env: {}, ledgerDir: bad }), /--ledger-dir needs a folder path/, JSON.stringify(bad));
   });
 });
 

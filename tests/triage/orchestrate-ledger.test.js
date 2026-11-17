@@ -127,14 +127,26 @@ describe('recording is opt-in, and bookkeeping never changes the run', () => {
     assert.equal(r.doc.data.warnings, undefined);
   });
 
-  test('a ledger block in qa-config.json turns it on; --no-ledger turns it off again', async () => {
-    const dir = path.join(tmp(), 'cfg-ledger');
-    const on = await go({ ledgerDir: undefined, config: cfgFile({ ledger: { dir } }) }, { runResults: answerAll(result(T('a', 'passed', { file: 'a.test.js' }))) });
-    assert.equal(openLedger({ dir }).readRun('run-1').events.length, 3);
-    const dir2 = path.join(tmp(), 'cfg-ledger-2');
-    await go({ ledgerDir: undefined, noLedger: true, config: cfgFile({ ledger: { dir: dir2 } }) }, { runResults: answerAll(result(T('a', 'passed', { file: 'a.test.js' }))) });
-    assert.equal(fs.existsSync(dir2), false);
-    assert.equal(on.code, 0);
+  test('a ledger block in qa-config.json turns it on, and its folder is beside the config file, not wherever the command ran', async () => {
+    const root = tmp();
+    fs.writeFileSync(path.join(root, 'qa-config.json'), JSON.stringify({ ledger: {} }));
+    const cwdBefore = fs.existsSync('.qa-ledger');
+    const r = await orchestrate({ specs: [], reruns: 2, out: tmp(), config: path.join(root, 'qa-config.json'), noPlan: true, framework: 'node', runId: 'run-1' }, { env: {}, runResults: answerAll(result(T('a', 'passed', { file: 'a.test.js' }))) });
+    assert.equal(r.code, 0);
+    assert.equal(openLedger({ dir: path.join(root, '.qa-ledger') }).readRun('run-1').events.length, 3);
+    assert.equal(fs.existsSync('.qa-ledger'), cwdBefore, 'nothing appeared in the working directory');
+  });
+
+  test('a project with a ledger cannot be diverted from it by --ledger-dir (the heal attempt cap lives there): naming the same one is fine', async () => {
+    const root = tmp();
+    const dir = path.join(root, 'the-ledger');
+    const config = path.join(root, 'qa-config.json');
+    fs.writeFileSync(config, JSON.stringify({ ledger: { dir } }));
+    const base = { specs: [], reruns: 2, out: tmp(), config, noPlan: true, framework: 'node', runId: 'run-1' };
+    const deps = { env: {}, runResults: answerAll(result(T('a', 'passed', { file: 'a.test.js' }))) };
+    await assert.rejects(() => orchestrate({ ...base, ledgerDir: path.join(root, 'other') }, deps), (e) => e.isUsage && /not the ledger .* names/.test(e.message));
+    assert.equal(fs.existsSync(path.join(root, 'other')), false);
+    assert.equal((await orchestrate({ ...base, ledgerDir: dir }, deps)).code, 0);
   });
 
   test('the result is the same with and without the ledger, except for what the ledger adds', async () => {
@@ -175,11 +187,13 @@ describe('recording is opt-in, and bookkeeping never changes the run', () => {
     assert.match(w, /git branch --list 'qa\/heal-\*'/);
   });
 
-  test('--ledger-dir with --no-ledger is a usage error (exit 2)', async () => {
-    let err = '';
-    const code = await main({ argv: ['--framework', 'node', '--ledger-dir', 'x', '--no-ledger', '--config', cfgFile()], env: {}, stdout: { write: () => {} }, stderr: { write: (t) => { err += t; } } });
-    assert.equal(code, 2);
-    assert.match(err, /--ledger-dir and --no-ledger contradict each other/);
+  test('there is no --no-ledger (a flag may not turn off what the project set); an empty --ledger-dir is a usage error, exit 2', async () => {
+    for (const [argv, re] of [[['--no-ledger'], /unknown option --no-ledger/], [['--ledger-dir', ''], /--ledger-dir needs a folder path/]]) {
+      let err = '';
+      const code = await main({ argv: ['--framework', 'node', ...argv, '--config', cfgFile()], env: {}, stdout: { write: () => {} }, stderr: { write: (t) => { err += t; } } });
+      assert.equal(code, 2, argv.join(' '));
+      assert.match(err, re);
+    }
   });
 
   test('a bad ledger block is a usage error naming the key, before any test is run', async () => {
@@ -189,5 +203,54 @@ describe('recording is opt-in, and bookkeeping never changes the run', () => {
     assert.equal(code, 2);
     assert.equal(ran, false);
     assert.match(err, /ledger.retentionDays/);
+  });
+});
+
+describe('what the review of slice 2 found in the orchestrator', () => {
+  test('a project WITHOUT a ledger sees no new warning, however many results a run has (the counter counted for nobody)', async () => {
+    const many = Array.from({ length: 5003 }, (_, i) => T(`t${i}`, 'passed', { file: 'big.test.js' }));
+    const out = tmp();
+    const r = await orchestrate({ specs: [], reruns: 2, out, config: cfgFile(), noPlan: true, framework: 'node', runId: 'run-1' }, { env: {}, runResults: answerAll(result(...many)) });
+    assert.equal(r.code, 0);
+    assert.equal(r.doc.data.warnings, undefined);
+  });
+
+  test('a usage error thrown after the run began is recorded as exit 2; one before it began leaves no run at all', async () => {
+    const dir = path.join(tmp(), 'ledger');
+    const usageErr = Object.assign(new Error('bad flag'), { isUsage: true });
+    await assert.rejects(() => go({}, { runResults: async () => { throw usageErr; } }, dir), /bad flag/);
+    const ev = openLedger({ dir }).readRun('run-1').events;
+    assert.deepEqual(ev.map((e) => [e.type, e.exit]), [['run.start', undefined], ['run.end', 2]]);
+    // a bad triage setting is refused before run.start: nothing was started, so nothing is ended
+    const dir2 = path.join(tmp(), 'ledger');
+    await assert.rejects(() => go({ config: cfgFile({ triage: { reruns: 99 } }) }, { runResults: answerAll(result()) }, dir2), (e) => e.isUsage);
+    assert.deepEqual(openLedger({ dir: dir2 }).listRuns(), []);
+  });
+
+  test('only the first 2000 verdicts are recorded, and the run says so', async () => {
+    const failing = Array.from({ length: 2003 }, (_, i) => T(`DEMO-101/TC-${String(i).padStart(4, '0')}: t${i}`, 'failed', { ticket: 'DEMO-101', caseId: `TC-${String(i).padStart(4, '0')}`, file: `/w/tests/c${i}.test.js`, error: { kind: 'failure', message: `expected ${i} to equal ${i + 1}`, details: '' } }));
+    const r = await go({ reruns: 0 }, { runResults: answerAll(result(...failing)) });
+    const ev = r.events();
+    assert.equal(ev.filter((e) => e.type === 'verdict').length, 2000);
+    assert.ok(r.doc.data.warnings.some((w) => /holds only the first 2000 verdicts/.test(w)), JSON.stringify(r.doc.data.warnings));
+    assert.equal(ev.at(-1).type, 'run.end');
+  });
+
+  test('a test the runner itself called flaky is recorded as flaky, and counts as a flip in the flake rate even though every phase passed', async () => {
+    const flaky = T('DEMO-101/TC-005: x', 'passed', { ...withFile(5), flaky: true });
+    const r = await go({}, { runResults: answerAll(result(flaky)) });
+    assert.deepEqual(r.events().filter((e) => e.type === 'test.result').map((e) => [e.phase, e.status, e.flaky]), [['main', 'passed', true], ['rerun-1', 'passed', true], ['rerun-2', 'passed', true]]);
+    const { flakeRates } = require('../../scripts/ledger/lib/views');
+    assert.deepEqual(flakeRates(openLedger({ dir: r.dir }), {}).tests.map((t) => [t.name, t.flips]), [['DEMO-101/TC-005: x', 1]]);
+  });
+
+  test('two runs that share a run id (a resume, or two started in the same second) are two runs in the ledger, and a pass in one and a fail in the other is not a flip', async () => {
+    const dir = path.join(tmp(), 'ledger');
+    await go({ reruns: 0 }, { runResults: answerAll(result(T('login', 'passed', { file: 'a.test.js' }))) }, dir);
+    await go({ reruns: 0 }, { runResults: answerAll(result(T('login', 'failed', { file: 'a.test.js', error: ASSERT }))) }, dir);
+    const l = openLedger({ dir });
+    assert.equal(l.readAllRuns().length, 2);
+    const { flakeRates } = require('../../scripts/ledger/lib/views');
+    assert.deepEqual(flakeRates(l, { includeStable: true }).tests.map((t) => [t.runsSeen, t.flips]), [[2, 0]]);
   });
 });

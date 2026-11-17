@@ -319,6 +319,49 @@ describe('heal(): crafted verdicts and validation results', () => {
     assert.equal(git(p.proj, 'rev-list', '--count', 'main..qa/heal-r1'), '1');
   });
 
+  // ── the heal journal (the run ledger's side), against heal() directly ──
+  const stub = (used = {}) => { const calls = []; return { calls, maxAttempts: 1, windowDays: 7, attempts: () => used, begin: (f) => calls.push(['begin', f]), end: (f) => calls.push(['end', f]) }; };
+  const second = (token) => verdict({ key: 'DEMO-101/TC-903', test: { name: 'DEMO-101/TC-903: z', ticket: 'DEMO-101', caseId: 'TC-903', file: 'tests/ui.test.js' }, token });
+  const both = () => { const b = ok(); b.tests.push({ name: 'DEMO-101/TC-903: z', ticket: 'DEMO-101', caseId: 'TC-903', file: 'tests/ui.test.js', status: 'passed' }); return b; };
+
+  test('two failures that share a token are one attempt: heal.begin names the token once', async () => {
+    const p = makeProject();
+    const j = stub();
+    const r = await run(p, rep(verdict(), second(verdict().token)), async () => both(), { journal: j });
+    assert.equal(r.status, 'healed');
+    assert.deepEqual(j.calls.map((c) => c[0]), ['begin', 'end']);
+    assert.deepEqual(j.calls[0][1].tokens, [verdict().token]);
+    assert.deepEqual(j.calls[1][1], { branch: 'qa/heal-r1', outcome: 'kept' });
+  });
+
+  test('when one of two failures is at the limit the WHOLE heal is refused, and the reason names every capped failure with its count', async () => {
+    const p = makeProject(); const before = p.state();
+    const tokB = `qafp${'b'.repeat(12)}`;
+    const j = stub({ [verdict().token]: 3, [tokB]: 1 });
+    const r = await run(p, rep(verdict(), second(tokB)), async () => both(), { journal: j });
+    assert.equal(r.status, 'refused');
+    assert.equal(r.capped, true);
+    assert.match(r.reason, new RegExp(`${verdict().token} \\(3 time\\(s\\)\\), ${tokB} \\(1 time\\(s\\)\\)`));
+    assert.match(r.reason, /The whole heal is refused, including any failure that is not at the limit/);
+    assert.deepEqual(p.state(), before);
+    assert.deepEqual(j.calls, [], 'a refusal began nothing');
+    const onlyOne = await run(p, rep(verdict(), second(tokB)), async () => both(), { journal: stub({ [tokB]: 1 }) });
+    assert.match(onlyOne.reason, new RegExp(tokB));
+    assert.doesNotMatch(onlyOne.reason, new RegExp(verdict().token), 'only the capped failure is named');
+  });
+
+  test('heal.begin is written BEFORE the first edit, on the heal branch: a heal that dies after it is findable', async () => {
+    const p = makeProject();
+    let seen = null;
+    const j = stub();
+    j.begin = (f) => { seen = { branch: git(p.proj, 'branch', '--show-current'), file: p.read('tests/ui.test.js'), f }; };
+    const r = await run(p, rep(verdict()), async () => ok(), { journal: j });
+    assert.equal(r.status, 'healed');
+    assert.equal(seen.branch, 'qa/heal-r1', 'the branch exists when it is recorded');
+    assert.match(seen.file, /coupon-apply-btn/, 'and the file is still unedited');
+    assert.equal(seen.f.baseSha, git(p.proj, 'rev-parse', 'main'));
+  });
+
   test('only a TST-1 verdict at act confidence with an exact proposal is ever eligible', () => {
     const cases = [verdict({ rule: 'TST-2' }), verdict({ rule: 'TST-3' }), verdict({ action: 'propose' }), verdict({ proposal: undefined }), verdict({ class: 'product-bug', rule: 'PRD-1' }), verdict({ proposal: { kind: 'something-else', from: 'a', to: 'b' } })];
     for (const v of cases) assert.deepEqual(eligible(rep(v)), [], JSON.stringify([v.rule, v.action]));
@@ -803,7 +846,7 @@ describe('heal CLI', () => {
       assert.equal(r.code, 1);
       assert.equal(r.json.data.status, 'refused');
       assert.equal(r.json.data.capped, true);
-      assert.match(r.json.data.reason, /already begun 1 time\(s\) for qafp[0-9a-f]{12} in the last 7 day\(s\); the limit is 1 \(triage\.selfHeal\.maxAttemptsPerFingerprint\)/);
+      assert.match(r.json.data.reason, /already begun for qafp[0-9a-f]{12} \(1 time\(s\)\) in the last 7 day\(s\); the limit is 1 \(triage\.selfHeal\.maxAttemptsPerFingerprint\)/);
       assert.deepEqual(p.state(), before);
       assert.deepEqual(openLedger({ dir: ledgerDir }).readRun('capped').events, [], 'a refusal began nothing, so it records nothing');
     });
@@ -833,16 +876,52 @@ describe('heal CLI', () => {
       assert.equal(r3.json.data.status, 'refused', 'a 30-day window still holds the 10-day-old attempt');
     });
 
-    test('--no-ledger switches the cap off for this call, and --ledger-dir with --no-ledger is a usage error', async () => {
+    test('a flag cannot lift the cap: there is no --no-ledger, and --ledger-dir may not name a different ledger than the config\'s', async () => {
       const p = makeProject();
       const report = reportFor(p);
       const ledgerDir = path.join(p.root, 'ledger');
       openLedger({ dir: ledgerDir }).record('earlier', 'heal.begin', { branch: 'qa/heal-earlier', baseSha: 'abc', tokens: [tokenOf(report)] });
-      const r = await cli(argvFor(p, report, ['--run-id', 'skip', '--no-ledger']), pass);
+      const cfg = path.join(p.root, 'with-ledger.json');
+      fs.writeFileSync(cfg, JSON.stringify({ triage: { selfHeal: { enabled: true, paths: ['tests'] } }, ledger: { dir: ledgerDir } }));
+      const before = p.state();
+      const gone = await cli(argvFor(p, report, ['--run-id', 'a', '--no-ledger', '--config', cfg]), pass);
+      assert.equal(gone.code, 2);
+      assert.match(gone.err, /unknown option --no-ledger/);
+      const elsewhere = await cli(argvFor(p, report, ['--run-id', 'b', '--ledger-dir', path.join(p.root, 'empty-ledger'), '--config', cfg]), pass);
+      assert.equal(elsewhere.code, 2);
+      assert.match(elsewhere.err, /not the ledger .* names .*heal attempt cap/);
+      assert.deepEqual(p.state(), before, 'nothing was healed');
+      // the configured ledger, named explicitly or by the config alone, applies the cap
+      const same = await cli(argvFor(p, report, ['--run-id', 'c', '--ledger-dir', ledgerDir, '--config', cfg]), pass);
+      assert.equal(same.json.data.capped, true);
+      const byConfig = await cli(argvFor(p, report, ['--run-id', 'd', '--config', cfg]), pass);
+      assert.equal(byConfig.json.data.capped, true);
+    });
+
+    test('a report whose verdicts carry no fingerprint token (hand-edited) is still capped, by the failure\'s key', async () => {
+      const p = makeProject();
+      const report = reportFor(p);
+      const doc = JSON.parse(fs.readFileSync(report, 'utf8'));
+      for (const v of doc.data.verdicts) delete v.token;
+      fs.writeFileSync(report, JSON.stringify(doc));
+      const ledgerDir = path.join(p.root, 'ledger');
+      const q = makeProject();
+      const first = await cli(argvFor(p, report, ['--run-id', 'one', '--ledger-dir', ledgerDir]), pass);
+      assert.equal(first.json.data.status, 'healed', JSON.stringify(first.json));
+      assert.deepEqual(openLedger({ dir: ledgerDir }).readRun('one').events.find((e) => e.type === 'heal.begin').tokens, ['DEMO-101/TC-901']);
+      const again = await cli(argvFor(p, report, ['--run-id', 'two', '--ledger-dir', ledgerDir]), pass);
+      assert.equal(again.json.data.capped, true, 'removing the token from the report did not remove the cap');
+      assert.ok(q);
+    });
+
+    test('a ledger that cannot be written to is a warning in the heal result, and the heal still lands', async () => {
+      const p = makeProject();
+      const report = reportFor(p);
+      const notADir = path.join(p.root, 'a-file');
+      fs.writeFileSync(notADir, 'x');
+      const r = await cli(argvFor(p, report, ['--run-id', 'warn', '--ledger-dir', path.join(notADir, 'ledger')]), pass);
       assert.equal(r.json.data.status, 'healed', JSON.stringify(r.json));
-      const bad = await cli(argvFor(p, report, ['--run-id', 'x', '--no-ledger', '--ledger-dir', ledgerDir]), pass);
-      assert.equal(bad.code, 2);
-      assert.match(bad.err, /contradict/);
+      assert.ok(r.json.data.warnings.some((w) => /^ledger: /.test(w)), JSON.stringify(r.json.data.warnings));
     });
 
     test('a preview (no --apply) neither reads nor writes the ledger', async () => {
@@ -1073,7 +1152,7 @@ describe('self-heal and the run ledger, through the orchestrator', () => {
     const before = p.state();
     const r = await heals(p, 'c2', ['--ledger-dir', ledger]);
     assert.equal(r.json.data.heal.status, 'refused');
-    assert.match(r.json.data.heal.reason, /already begun 1 time\(s\)/);
+    assert.match(r.json.data.heal.reason, /already begun for qafp[0-9a-f]{12} \(1 time\(s\)\)/);
     assert.ok(r.json.data.warnings.some((w) => /^self-heal refused: self-heal has already begun/.test(w)), JSON.stringify(r.json.data.warnings));
     assert.deepEqual(p.state(), before, 'no second branch, nothing touched');
     assert.equal(events(ledger, 'c2').filter((e) => e.type.startsWith('heal.')).length, 0);
@@ -1087,6 +1166,32 @@ describe('self-heal and the run ledger, through the orchestrator', () => {
     assert.equal((await triage(p, { triageCfg: cfg, extra: ['--run-id', 'm2', '--ledger-dir', ledger] })).json.data.heal.status, 'healed');
     assert.match(p.state().branches, /qa\/heal-m1/);
     assert.match(p.state().branches, /qa\/heal-m2/);
+  });
+
+  test('the attempt window comes from triage.selfHeal.attemptWindowDays: a 10-day-old attempt is outside the default 7 days and inside 30', async () => {
+    const seed = async (p, ledger) => {
+      await triage(p, { extra: ['--no-heal', '--run-id', 'probe'] });
+      const token = JSON.parse(fs.readFileSync(path.join(p.proj, 'qa-results', 'triage.json'), 'utf8')).data.verdicts[0].token;
+      openLedger({ dir: ledger, now: () => Date.now() - 10 * 24 * 60 * 60 * 1000 }).record('old', 'heal.begin', { branch: 'qa/heal-old', baseSha: 'abc', tokens: [token] });
+    };
+    const a = makeProject(); const la = path.join(a.root, 'ledger'); await seed(a, la);
+    assert.equal((await triage(a, { extra: ['--run-id', 'w7', '--ledger-dir', la] })).json.data.heal.status, 'healed', 'the default 7-day window has forgotten it');
+    const b = makeProject(); const lb = path.join(b.root, 'ledger'); await seed(b, lb);
+    const wide = { selfHeal: { enabled: true, paths: ['tests'], attemptWindowDays: 30 } };
+    const r = await triage(b, { triageCfg: wide, extra: ['--run-id', 'w30', '--ledger-dir', lb] });
+    assert.equal(r.json.data.heal.status, 'refused');
+    assert.equal(r.json.data.heal.capped, true);
+  });
+
+  test('the ledger folder is beside the config file: the same project from another directory is the same ledger, and the cap holds', async () => {
+    const p = makeProject();
+    const cfg = path.join(p.root, 'qa-config.json');
+    fs.writeFileSync(cfg, JSON.stringify({ triage: { selfHeal: { enabled: true, paths: ['tests'] } }, ledger: {} }));
+    assert.equal((await triage(p, { extra: ['--config', cfg, '--run-id', 'rel1'] })).json.data.heal.status, 'healed');
+    assert.equal(fs.existsSync(path.join(p.root, '.qa-ledger', 'runs')), true, 'beside the config file');
+    assert.equal(fs.existsSync(path.join(p.proj, '.qa-ledger')), false, 'not in the project folder the command was pointed at');
+    const r2 = await triage(p, { extra: ['--config', cfg, '--run-id', 'rel2'] });
+    assert.equal(r2.json.data.heal.capped, true);
   });
 
   test('without a ledger there is no cap and no event: the one-attempt-per-run rule is all that applies (as before)', async () => {

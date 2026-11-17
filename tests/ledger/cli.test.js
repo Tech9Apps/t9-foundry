@@ -155,7 +155,7 @@ describe('the ledger block of qa-config.json', () => {
     process.chdir(work); // discovery looks in the working directory and the two above it: none of them has a qa-config.json
     try {
       const c = ledgerConfig({ env: {} });
-      assert.deepEqual([c.file, c.dir, c.retentionDays, c.explicit], [null, DEFAULTS.dir, DEFAULTS.retentionDays, { dir: false, retentionDays: false }]);
+      assert.deepEqual([c.file, c.dir, c.retentionDays, c.explicit], [null, path.join(fs.realpathSync(work), DEFAULTS.dir), DEFAULTS.retentionDays, { dir: false, retentionDays: false }]);
     } finally { process.chdir(here); }
   });
 
@@ -163,14 +163,40 @@ describe('the ledger block of qa-config.json', () => {
     const f = path.join(work, 'qa-config.json');
     fs.writeFileSync(f, '{}');
     const c = ledgerConfig({ configPath: f, env: {} });
-    assert.deepEqual([c.dir, c.retentionDays, c.keyRetentionDays, c.explicit], [DEFAULTS.dir, DEFAULTS.retentionDays, DEFAULTS.keyRetentionDays, { dir: false, retentionDays: false }]);
+    assert.deepEqual([c.dir, c.retentionDays, c.keyRetentionDays, c.explicit, c.present], [path.join(work, DEFAULTS.dir), DEFAULTS.retentionDays, DEFAULTS.keyRetentionDays, { dir: false, retentionDays: false }, false]);
   });
 
   test('configured values are used and marked explicit', () => {
     const f = path.join(work, 'qa-config.json');
     fs.writeFileSync(f, JSON.stringify({ ledger: { dir: 'x/y', retentionDays: 30 } }));
     const c = ledgerConfig({ configPath: f, env: {} });
-    assert.deepEqual([c.dir, c.retentionDays, c.explicit], ['x/y', 30, { dir: true, retentionDays: true }]);
+    assert.deepEqual([c.dir, c.retentionDays, c.explicit, c.present], [path.join(work, 'x', 'y'), 30, { dir: true, retentionDays: true }, true]);
+  });
+
+  test('a relative dir belongs to the config file that names it, wherever the command runs (discovery looks up to two folders above)', () => {
+    const project = path.join(work, 'project');
+    fs.mkdirSync(path.join(project, 'tests', 'deep'), { recursive: true });
+    fs.writeFileSync(path.join(project, 'qa-config.json'), JSON.stringify({ ledger: {} }));
+    const here = process.cwd();
+    const dirs = [];
+    try {
+      for (const cwd of [project, path.join(project, 'tests'), path.join(project, 'tests', 'deep')]) { process.chdir(cwd); dirs.push(ledgerConfig({ env: {} }).dir); }
+    } finally { process.chdir(here); }
+    const real = fs.realpathSync(project);
+    assert.deepEqual(dirs.map((d) => fs.realpathSync(path.dirname(d))), [real, real, real], 'the same ledger from every directory');
+    assert.equal(path.basename(dirs[0]), '.qa-ledger');
+    fs.writeFileSync(path.join(project, 'qa-config.json'), JSON.stringify({ ledger: { dir: 'state/runs-ledger' } }));
+    assert.equal(ledgerConfig({ configPath: path.join(project, 'qa-config.json'), env: {} }).dir, path.join(project, 'state', 'runs-ledger'));
+    assert.equal(ledgerConfig({ configPath: path.join(project, 'qa-config.json'), env: {} }).file, path.join(project, 'qa-config.json'));
+  });
+
+  test('a config that is not an object has no ledger block (the other loaders refuse it; this one must not change what they do)', () => {
+    for (const body of ['[]', 'null', '"text"', '5']) {
+      const f = path.join(work, 'qa-config.json');
+      fs.writeFileSync(f, body);
+      const c = ledgerConfig({ configPath: f, env: {} });
+      assert.equal(c.present, false, body);
+    }
   });
 
   test('the loader and qa-config.schema.json agree on the keys, the bounds and the defaults', () => {

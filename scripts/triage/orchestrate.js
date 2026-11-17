@@ -7,7 +7,7 @@
 //
 //   node scripts/triage/orchestrate.js --framework <f> [--spec S]... [--test-dir D] [--config-file C] [--cwd D]
 //        [--reruns N] [--preflight ok|failed|unknown] [--snapshot page.html] [--out qa-results] [--run-id ID]
-//        [--threshold T] [--trusted-formats tap] [--timeout-ms N] [--no-plan] [--heal | --no-heal] [--ledger-dir D | --no-ledger] [--config qa-config.json] [--source T] [--base-url U]
+//        [--threshold T] [--trusted-formats tap] [--timeout-ms N] [--no-plan] [--heal | --no-heal] [--ledger-dir D] [--config qa-config.json] [--source T] [--base-url U]
 //
 // Steps (each tool is the one documented elsewhere; this only wires them):
 //   1. scripts/results/run.js   the main run                       → <out>/main/
@@ -21,7 +21,7 @@
 // let a product-bug or test-bug verdict ACT; every other format is held at propose) can also be set once in qa-config.json under "triage"
 // (reruns, confidenceThreshold, trustedFormats); a flag overrides the config. The output says which source each setting came from.
 // The run is REMEMBERED (events in the run ledger, docs/phase-3-design.md) only when the project asks: a `ledger` block in qa-config.json, or
-// --ledger-dir; --no-ledger turns it off. Without either the run behaves exactly as it did before the ledger existed.
+// --ledger-dir (which may not name a different ledger than the config's). Without either the run behaves exactly as it did before the ledger existed.
 // A green run ends after step 1. Output: { ok, data } with the verdict and step for every failure.
 // Exit: 0 = completed (green, or triaged — failures are data) · 2 = bad invocation · 3 = no trustworthy main run
 // (see scripts/results/run.js: could not start, hung, wrote nothing, zero tests, or exit code contradicting the report).
@@ -42,6 +42,7 @@ const { healJournal } = require('../ledger/lib/journal');
 const { staleHeals } = require('../ledger/lib/views');
 
 const MAX_RECORDED_RESULTS = 5000;
+const MAX_RECORDED_VERDICTS = 2000;
 const UND_ALARM_MIN = 3; // at least this many undetermined verdicts, and at least this share of the triaged failures,
 const UND_ALARM_SHARE = 0.5; // before the report says the rules lack what they need for this suite
 
@@ -66,7 +67,6 @@ const FLAGS = {
   '--source': { key: 'source' },
   '--base-url': { key: 'baseUrl' },
   '--ledger-dir': { key: 'ledgerDir' },
-  '--no-ledger': { key: 'noLedger', set: true },
 };
 
 function parseArgs(argv) {
@@ -151,10 +151,11 @@ async function runLoop(opts, { env = process.env, fetch = globalThis.fetch, runR
   // what the ledger remembers of each test: every result of the main run and of the re-runs, up to a cap (a 50 000-test suite must not write 50 000 lines)
   let recorded = 0;
   const recordResults = (phase, tests) => {
+    if (!ctx.ledger) return; // nothing is recorded, so nothing is counted and nothing is said (a project without a ledger sees no new warning)
     for (const t of tests) {
       if (recorded >= MAX_RECORDED_RESULTS) { if (recorded === MAX_RECORDED_RESULTS) { recorded += 1; ctx.warn(`the ledger holds only the first ${MAX_RECORDED_RESULTS} test results of this run`); } return; }
       recorded += 1;
-      ctx.record('test.result', { spec: t.file || '', name: t.name, status: t.status, phase, ...(Number.isFinite(t.durationMs) ? { durationMs: t.durationMs } : {}) });
+      ctx.record('test.result', { spec: t.file || '', name: t.name, status: t.status, phase, ...(Number.isFinite(t.durationMs) ? { durationMs: t.durationMs } : {}), ...(t.flaky ? { flaky: true } : {}) });
     }
   };
 
@@ -240,7 +241,15 @@ async function runLoop(opts, { env = process.env, fetch = globalThis.fetch, runR
 
   // what was decided about each failure, and what the plan says to do about it
   const plannedStep = new Map((actions || []).map((a) => [a.key, a.step]));
-  for (const v of report.verdicts) if (v.token) ctx.record('verdict', { token: v.token, class: v.class, confidence: v.confidence, action: v.action, ...(plannedStep.has(v.key) ? { step: plannedStep.get(v.key) } : {}) });
+  if (ctx.ledger) {
+    let n = 0;
+    for (const v of report.verdicts) {
+      if (!v.token) continue;
+      if (n >= MAX_RECORDED_VERDICTS) { ctx.warn(`the ledger holds only the first ${MAX_RECORDED_VERDICTS} verdicts of this run`); break; }
+      n += 1;
+      ctx.record('verdict', { token: v.token, class: v.class, confidence: v.confidence, action: v.action, ...(plannedStep.has(v.key) ? { step: plannedStep.get(v.key) } : {}) });
+    }
+  }
 
   // 6. self-heal (only if enabled): rename a stale test-id on a local branch, validated by re-run, reverted on any failure. Never pushes.
   let healResult = null;
@@ -283,26 +292,30 @@ async function orchestrate(opts, deps = {}) {
   const env = deps.env || process.env;
   const now = deps.now || Date.now;
   const runId = opts.runId || new Date(now()).toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
-  const led = enabledLedger({ configPath: opts.config, env, ledgerDir: opts.ledgerDir, noLedger: opts.noLedger, now });
+  const led = enabledLedger({ configPath: opts.config, env, ledgerDir: opts.ledgerDir, now });
   const warnings = [];
   let writeFailed = false;
   const ctx = {
     ledger: led && led.ledger,
+    began: false, // run.start is in the ledger: only then is there a run for run.end to end
     warn: (m) => { warnings.push(m); },
     record: (type, fields) => {
       if (!ctx.ledger) return;
-      try { ctx.ledger.record(runId, type, fields); } catch (e) {
+      try { ctx.ledger.record(runId, type, fields); if (type === 'run.start') ctx.began = true; } catch (e) {
         if (!writeFailed) { writeFailed = true; warnings.push(`ledger: could not record (${e.message}); this run is missing from the ledger from here on`); }
       }
     },
   };
   if (ctx.ledger) {
     // a heal that began and never said how it ended: the run died on its branch, which may still exist
-    for (const h of staleHeals(ctx.ledger)) warnings.push(`ledger: run ${h.runId} began a self-heal on ${h.branch} (from ${String(h.baseSha).slice(0, 8)}) and never recorded how it ended; that branch may still exist (git branch --list 'qa/heal-*')`);
+    let stale = [];
+    try { stale = staleHeals(ctx.ledger); } catch (e) { warnings.push(`ledger: could not look for unfinished heals (${e.message})`); }
+    for (const h of stale) warnings.push(`ledger: run ${h.runId} began a self-heal on ${h.branch} (from ${String(h.baseSha).slice(0, 8)}) and never recorded how it ended; that branch may still exist (git branch --list 'qa/heal-*')`);
   }
   let result;
   try { result = await runLoop({ ...opts, runId }, deps, ctx); } catch (e) {
-    ctx.record('run.end', { exit: 3, complete: false });
+    // an invocation mistake exits 2 and an unexpected error 3 (what main() does with them); and a run that never began has nothing to end
+    if (ctx.began) ctx.record('run.end', { exit: e && e.isUsage ? 2 : 3, complete: false });
     throw e;
   }
   const { doc } = result;

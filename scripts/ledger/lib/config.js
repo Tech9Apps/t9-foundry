@@ -2,6 +2,7 @@
 
 // The `ledger` block of qa-config.json (schema: qa-config.schema.json). Every key is optional; a command-line flag beats the config, and the
 // config beats the default. Checked here with the schema's bounds so a bad value fails naming the key, like the triage block.
+const path = require('path');
 const { findConfig } = require('../../tracker/lib/connect');
 const { usage, readJson } = require('../../lib/cli');
 
@@ -20,21 +21,21 @@ function validate(block, where) {
   return b;
 }
 
-// { file, present, dir, retentionDays, keyRetentionDays, explicit }. No config file at all is fine: everything is the default. `dir` is relative to
-// the directory the command runs in, like every other output folder.
+// { file, present, dir, retentionDays, keyRetentionDays, explicit }. No config file at all is fine: everything is the default. `dir` is made absolute
+// against the folder of the config file that holds it (and the working directory when there is none): config discovery looks in the working directory
+// and the two above it, so a dir relative to where the command happened to run would put one project's ledger in different places.
 function ledgerConfig({ configPath, env = process.env } = {}) {
   const file = findConfig(configPath, env);
   let raw;
   if (file) {
     const doc = readJson(file, { fail: usage });
-    if (doc === null || typeof doc !== 'object' || Array.isArray(doc)) throw usage(`${file}: the config must be a JSON object`);
-    raw = doc.ledger;
+    raw = doc !== null && typeof doc === 'object' && !Array.isArray(doc) ? doc.ledger : undefined; // a config that is not an object is the other loaders' to refuse, not a reason to stop here
   }
   const v = validate(raw, file || 'qa-config.json');
   return {
     file: file || null,
     present: raw !== undefined, // a `ledger` block, even an empty one, is how a project says it wants runs recorded
-    dir: v.dir === undefined ? DEFAULTS.dir : v.dir,
+    dir: path.resolve(file ? path.dirname(path.resolve(file)) : process.cwd(), v.dir === undefined ? DEFAULTS.dir : v.dir),
     retentionDays: v.retentionDays === undefined ? DEFAULTS.retentionDays : v.retentionDays,
     keyRetentionDays: DEFAULTS.keyRetentionDays,
     explicit: { dir: v.dir !== undefined, retentionDays: v.retentionDays !== undefined },

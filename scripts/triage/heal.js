@@ -161,11 +161,12 @@ async function heal({ report, cwd, runId, paths, maxFiles = 5, maxLines = 20, br
   if (!/^qa\/[A-Za-z0-9._-]*$/.test(branchPrefix)) return { status: 'refused', reason: `the heal branch prefix "${branchPrefix}" must start with "qa/"` };
   // The cross-run cap: a failure that has already been healed (or begun to be) this many times lately is not tried again without a person. It needs the
   // run ledger; without one nothing remembers earlier runs, and there is no cap (the one-attempt-per-run rule still holds).
-  const tokens = [...new Set(healed.map((v) => v.token).filter(Boolean))];
+  const tokens = [...new Set(healed.map((v) => v.token || v.key).filter(Boolean))]; // a report is not trusted: a verdict without a token is counted under its key, not skipped
   if (journal) {
     const used = journal.attempts(tokens);
     const over = tokens.filter((t) => (used[t] || 0) >= journal.maxAttempts);
-    if (over.length) return { status: 'refused', capped: true, reason: `self-heal has already begun ${used[over[0]]} time(s) for ${over.join(', ')} in the last ${journal.windowDays} day(s); the limit is ${journal.maxAttempts} (triage.selfHeal.maxAttemptsPerFingerprint), so a person decides whether to try it again` };
+    // the whole heal is refused, not just the capped part: the renames are planned and checked together, and a partial heal is not what was validated
+    if (over.length) return { status: 'refused', capped: true, reason: `self-heal has already begun for ${over.map((t) => `${t} (${used[t]} time(s))`).join(', ')} in the last ${journal.windowDays} day(s); the limit is ${journal.maxAttempts} (triage.selfHeal.maxAttemptsPerFingerprint), so a person decides whether to try again. The whole heal is refused, including any failure that is not at the limit` };
   }
   const root = planned.root;
   // the specs to re-run come from the REPORT, which is not trusted: one outside the repository would make the runner execute a file the heal has no
@@ -313,7 +314,6 @@ const FLAGS = {
   '--out': { key: 'out' },
   '--config': { key: 'config' },
   '--ledger-dir': { key: 'ledgerDir' },
-  '--no-ledger': { key: 'noLedger', set: true },
 };
 
 function parseArgs(argv) {
@@ -354,7 +354,7 @@ async function main({ argv = process.argv.slice(2), env = process.env, stdout = 
   const out = jsonPrinter(stdout);
   try {
     if (!argv.length || argv[0] === '-h' || argv[0] === '--help') {
-      stderr.write('Usage: heal.js --report <triage.json> [--main <result.json> --framework F] [--cwd D] [--paths a,b] [--spec S]... [--apply [--enable]] [--run-id ID] [--max-files N] [--max-lines N] [--out FILE] [--config P] [--ledger-dir D | --no-ledger]\n');
+      stderr.write('Usage: heal.js --report <triage.json> [--main <result.json> --framework F] [--cwd D] [--paths a,b] [--spec S]... [--apply [--enable]] [--run-id ID] [--max-files N] [--max-lines N] [--out FILE] [--config P] [--ledger-dir D]\n');
       return argv.length ? 0 : 2;
     }
     const opts = parseArgs(argv);
@@ -388,7 +388,7 @@ async function main({ argv = process.argv.slice(2), env = process.env, stdout = 
     }
     const paths = opts.paths ? narrowPaths(opts.paths, cfg.selfHeal.paths, cwd) : cfg.selfHeal.paths;
     // the same cap and the same events as under the orchestrator: calling heal.js directly must not be a way around the attempt limit
-    const led = opts.apply ? enabledLedger({ configPath: opts.config, env, ledgerDir: opts.ledgerDir, noLedger: opts.noLedger, now }) : null;
+    const led = opts.apply ? enabledLedger({ configPath: opts.config, env, ledgerDir: opts.ledgerDir, now }) : null;
     const ledgerWarnings = [];
     const journal = led ? healJournal({ ledger: led.ledger, runId, maxAttempts: cfg.selfHeal.maxAttemptsPerFingerprint, windowDays: cfg.selfHeal.attemptWindowDays, now, warn: (m) => ledgerWarnings.push(m) }) : undefined;
     const data = await heal({

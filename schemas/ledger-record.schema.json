@@ -137,6 +137,10 @@
         },
         "durationMs": {
           "type": "number"
+        },
+        "flaky": {
+          "type": "boolean",
+          "description": "the runner itself called this test flaky (it passed after retries within the run)"
         }
       }
     },

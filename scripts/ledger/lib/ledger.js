@@ -30,6 +30,8 @@ const MAX_KEY_LENGTH = 200;
 const MAX_DEPTH = 20; // how deeply nested a value in a record may be (also what stops a circular one)
 const MAX_RUN_FILE_BYTES = 16 * 1024 * 1024; // a run or audit file bigger than this is not read (it is not what this code wrote)
 const MAX_SMALL_FILE_BYTES = 64 * 1024; // the same for a claim, a lock and VERSION
+const MAX_SCAN_BYTES = 512 * 1024 * 1024; // the most a STREAMING read (the cross-run views) will go through in one file; it never holds the file in memory
+const MAX_LINE_BYTES = 1024 * 1024; // a line longer than this is not ours (every record is at most MAX_RECORD_BYTES) and is skipped
 const DEFAULT_LOCK_TTL_MS = 2 * 60 * 60 * 1000;
 const UNREADABLE_LOCK_GRACE_MS = 60 * 1000; // a lock file with nothing readable in it is a writer mid-write, until it has been that way this long
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -42,7 +44,7 @@ const NOFOLLOW = fs.constants.O_NOFOLLOW || 0; // not on Windows; there it is si
 // which a test holds to this table) is the whole truth about what a record can contain.
 const TYPES = {
   'run.start': { framework: 'string?', source: 'string?', ticket: 'string?', pid: 'number', host: 'string', config: 'object?' },
-  'test.result': { spec: 'string', name: 'string', status: 'string', phase: 'string', durationMs: 'number?' },
+  'test.result': { spec: 'string', name: 'string', status: 'string', phase: 'string', durationMs: 'number?', flaky: 'boolean?' },
   verdict: { token: 'string', class: 'string', confidence: 'number', action: 'string', step: 'string?' },
   'action.claimed': { key: 'string', step: 'string', target: 'string?' },
   'action.done': { key: 'string', id: 'string?', url: 'string?', deduplicated: 'boolean?' },
@@ -174,6 +176,20 @@ function listDir(dirPath) {
   try { return fs.readdirSync(dirPath); } catch { return []; }
 }
 
+// One line of a run or audit file: { event } | { warning } | { unknown: true } (a newer writer's record) | null (a blank line). Never throws.
+function parseLine(line, lineNo, label, tornTail) {
+  if (!line.trim()) return null;
+  let rec;
+  try { rec = JSON.parse(line); } catch {
+    return { warning: tornTail ? `${label}: torn final line skipped (a write was cut off)` : `${label}: line ${lineNo} is not valid JSON, skipped` };
+  }
+  // a newer writer's record: a type this version does not have, or a layout version it does not write
+  if (kindOf(rec) === 'object' && ((typeof rec.type === 'string' && !TYPES[rec.type]) || (Number.isInteger(rec.v) && rec.v !== VERSION))) return { unknown: true };
+  const bad = validateRecord(rec);
+  return bad ? { warning: `${label}: line ${lineNo} skipped (${bad})` } : { event: rec };
+}
+const unknownWarning = (label, n) => `${label}: ${n} record${n === 1 ? '' : 's'} this version does not understand (an unknown type, or written by a newer version), skipped`;
+
 // Parses the JSONL text of one file. Never throws: what cannot be used becomes a warning.
 function parseEvents(text, label) {
   const events = [];
@@ -182,19 +198,61 @@ function parseEvents(text, label) {
   const tornTail = lines.length && lines[lines.length - 1] !== ''; // the file does not end with a newline: the last write was cut off
   let unknown = 0;
   lines.forEach((line, i) => {
-    if (!line.trim()) return;
-    let rec;
-    try { rec = JSON.parse(line); } catch {
-      warnings.push(i === lines.length - 1 && tornTail ? `${label}: torn final line skipped (a write was cut off)` : `${label}: line ${i + 1} is not valid JSON, skipped`);
-      return;
-    }
-    // a newer writer's record: a type this version does not have, or a layout version it does not write
-    if (kindOf(rec) === 'object' && ((typeof rec.type === 'string' && !TYPES[rec.type]) || (Number.isInteger(rec.v) && rec.v !== VERSION))) { unknown += 1; return; }
-    const bad = validateRecord(rec);
-    if (bad) { warnings.push(`${label}: line ${i + 1} skipped (${bad})`); return; }
-    events.push(rec);
+    const r = parseLine(line, i + 1, label, i === lines.length - 1 && tornTail);
+    if (!r) return;
+    if (r.event) events.push(r.event); else if (r.warning) warnings.push(r.warning); else unknown += 1;
   });
-  if (unknown) warnings.push(`${label}: ${unknown} record${unknown === 1 ? '' : 's'} this version does not understand (an unknown type, or written by a newer version), skipped`);
+  if (unknown) warnings.push(unknownWarning(label, unknown));
+  return { events, warnings };
+}
+
+// The same, as a STREAM: the file is read in chunks and only the records whose type is in `keep` (every type when null) are kept, so a ledger of
+// hundreds of large runs is read without holding it in memory, and without the size limit that makes readFile skip a big run file. A line that
+// cannot be a record (longer than MAX_LINE_BYTES) is skipped. Never throws.
+function scanEvents(file, label, keep) {
+  let st;
+  try { st = fs.lstatSync(file); } catch (e) { return e.code === 'ENOENT' || e.code === 'ENOTDIR' ? { events: [], warnings: [] } : { events: [], warnings: [`${label}: not read (${e.code || 'unreadable'})`] }; }
+  if (!st.isFile()) return { events: [], warnings: [`${label}: not read (${st.isSymbolicLink() ? 'a symlink, not a file' : 'not a regular file'})`] };
+  if (st.size > MAX_SCAN_BYTES) return { events: [], warnings: [`${label}: not read (larger than ${MAX_SCAN_BYTES} bytes)`] };
+  let fd;
+  try { fd = fs.openSync(file, fs.constants.O_RDONLY | NOFOLLOW); } catch (e) { return { events: [], warnings: [`${label}: not read (${e.code || 'unreadable'})`] }; }
+  const events = [];
+  const warnings = [];
+  const needles = keep ? [...keep].map((t) => `"type":"${t}"`) : null;
+  let unknown = 0;
+  let lineNo = 0;
+  let longLines = 0;
+  let discarding = false; // inside a line that is too long: everything up to its newline is dropped
+  const handle = (line, torn) => {
+    lineNo += 1;
+    if (needles && !needles.some((n) => line.includes(n))) return; // cheap rejection before any parsing: most lines are not the type asked for
+    const r = parseLine(line, lineNo, label, torn);
+    if (!r) return;
+    if (r.event) { if (!keep || keep.has(r.event.type)) events.push(r.event); } else if (r.warning) warnings.push(r.warning); else unknown += 1;
+  };
+  const chunk = Buffer.allocUnsafe(256 * 1024);
+  let carry = Buffer.alloc(0);
+  try {
+    for (;;) {
+      const n = fs.readSync(fd, chunk, 0, chunk.length, null);
+      if (n === 0) break;
+      const data = carry.length ? Buffer.concat([carry, chunk.subarray(0, n)]) : chunk.subarray(0, n);
+      let start = 0;
+      for (;;) {
+        const nl = data.indexOf(0x0a, start);
+        if (nl < 0) break;
+        if (discarding) discarding = false; else if (nl - start <= MAX_LINE_BYTES) handle(data.toString('utf8', start, nl), false); else { lineNo += 1; longLines += 1; }
+        start = nl + 1;
+      }
+      carry = Buffer.from(data.subarray(start)); // a copy: the chunk is reused
+      if (carry.length > MAX_LINE_BYTES) { carry = Buffer.alloc(0); if (!discarding) { discarding = true; lineNo += 1; longLines += 1; } }
+    }
+    if (carry.length && !discarding) handle(carry.toString('utf8'), true);
+  } catch (e) {
+    warnings.push(`${label}: read stopped (${e.code || e.message})`);
+  } finally { try { fs.closeSync(fd); } catch { /* nothing to do */ } }
+  if (longLines) warnings.push(`${label}: ${longLines} line${longLines === 1 ? '' : 's'} longer than ${MAX_LINE_BYTES} bytes skipped`);
+  if (unknown) warnings.push(unknownWarning(label, unknown));
   return { events, warnings };
 }
 
@@ -320,13 +378,25 @@ function openLedger({ dir, now = Date.now, pid = process.pid, host = os.hostname
     return { events, warnings: problem ? [problem, ...warnings] : warnings };
   };
 
-  // Every readable run, oldest first, with its events: what the cross-run views (scripts/ledger/lib/views.js) read. A file that holds no
-  // usable event has no run id and is left out (listRuns reports it as unreadable).
-  function readAllRuns() {
-    return listDir(p('runs')).filter((n) => n.endsWith('.jsonl')).map((n) => {
-      const { events, warnings } = readFile(p('runs', n), n);
-      return { file: n, runId: events[0] ? events[0].runId : null, startedAt: events[0] ? events[0].ts : null, events, warnings, finished: events.some((e) => e.type === 'run.end') };
-    }).filter((r) => r.runId).sort((a, b) => (a.startedAt < b.startedAt ? -1 : a.startedAt > b.startedAt ? 1 : 0));
+  // Every readable run, oldest first, with its events: what the cross-run views (scripts/ledger/lib/views.js) read. It reads each file as a
+  // stream and keeps only the record types asked for (`types`; run.start and run.end are always kept, they are how runs are told apart), so a ledger
+  // of hundreds of large runs costs time, not memory. A run id used twice (a resume, or two shards that started in the same second) leaves two
+  // runs in one file: each run.start begins a new entry, and events before the first run.start are an entry of their own. An entry has
+  // { file, runId, startedAt, events, warnings, finished (has a run.end), complete (the run.end says it completed) }.
+  function readAllRuns({ types } = {}) {
+    const keep = types ? new Set([...types, 'run.start', 'run.end']) : null;
+    const out = [];
+    for (const n of listDir(p('runs')).filter((x) => x.endsWith('.jsonl'))) {
+      const { events, warnings } = scanEvents(p('runs', n), n, keep);
+      let cur = null;
+      for (const e of events) {
+        if (e.type === 'run.start' || !cur || cur.runId !== e.runId) { cur = { file: n, runId: e.runId, startedAt: e.ts, events: [], warnings: [] }; out.push(cur); }
+        cur.events.push(e);
+      }
+      if (warnings.length && cur) out.find((r) => r.file === n).warnings = warnings;
+    }
+    for (const r of out) { const end = r.events.find((e) => e.type === 'run.end'); r.finished = Boolean(end); r.complete = Boolean(end && end.complete); }
+    return out.map((r, i) => ({ r, i })).sort((a, b) => (a.r.startedAt < b.r.startedAt ? -1 : a.r.startedAt > b.r.startedAt ? 1 : a.i - b.i)).map((x) => x.r);
   }
 
   function listRuns() {
