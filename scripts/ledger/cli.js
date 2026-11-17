@@ -8,7 +8,8 @@
 //   node scripts/ledger/cli.js claim  --key K [--run-id ID]                claim an idempotency key: exactly one caller wins
 //   node scripts/ledger/cli.js complete --key K [--id I] [--url U] [--deduplicated]   record that the write for K happened
 //   node scripts/ledger/cli.js fail   --key K --code C [--message M]       record that it did not (the key may then be claimed again)
-//   node scripts/ledger/cli.js forget --key K                              drop a claim that is wrong (the item was deleted on the tracker): the next write goes there again
+//   node scripts/ledger/cli.js forget --key K [--force]                    drop a claim that is wrong (the item was deleted on the tracker): the next write goes there again.
+//                                                                          A claim in flight whose owner may still be running is refused without --force
 //   node scripts/ledger/cli.js flake-rate [--window N] [--all]            tests that flipped between passing and failing inside a run, over their last N runs (default 20)
 //   node scripts/ledger/cli.js prune  [--run-days N] [--key-days N] [--dry-run]
 // Options for every operation: --dir D (default: ledger.dir in qa-config.json, else .qa-ledger) and --config P.
@@ -46,6 +47,7 @@ const FLAGS = {
   '--dry-run': { key: 'dryRun', set: true },
   '--window': { key: 'window', parse: (v, flag) => { const n = Number(v); if (!Number.isInteger(n) || n < 1 || n > 1000) throw usage(`${flag} must be a whole number from 1 to 1000`); return n; } },
   '--all': { key: 'all', set: true },
+  '--force': { key: 'force', set: true },
 };
 
 const need = (opts, flag, key) => { if (opts[key] === undefined) throw usage(`${opts.op} needs ${flag}`); return opts[key]; };
@@ -54,18 +56,18 @@ function main({ argv = process.argv.slice(2), env = process.env, stdout = proces
   const out = jsonPrinter(stdout);
   try {
     if (!argv.length || argv[0] === '-h' || argv[0] === '--help') {
-      stderr.write(`Usage: cli.js <${OPS.join('|')}> [--dir D] [--config P] [--run-id ID] [--key K] [--id I] [--url U] [--deduplicated] [--code C] [--message M] [--run-days N] [--key-days N] [--dry-run] [--window N] [--all]\n`);
+      stderr.write(`Usage: cli.js <${OPS.join('|')}> [--dir D] [--config P] [--run-id ID] [--key K] [--id I] [--url U] [--deduplicated] [--code C] [--message M] [--run-days N] [--key-days N] [--dry-run] [--window N] [--all] [--force]\n`);
       return argv.length ? 0 : 2;
     }
     const op = argv[0];
     if (!OPS.includes(op)) throw usage(`unknown operation ${JSON.stringify(op.slice(0, 40))} (known: ${OPS.join(', ')})`);
     const opts = parseFlags(argv.slice(1), FLAGS, { init: { op } });
-    const cfg = ledgerConfig({ configPath: opts.config, env });
+    const cfg = ledgerConfig({ configPath: opts.config, env, strict: true });
     const ledger = openLedger({ dir: opts.dir || cfg.dir, now });
 
     let data;
     if (op === 'status') data = { ...ledger.status(), staleHeals: staleHeals(ledger) };
-    else if (op === 'forget') data = ledger.forgetClaim(need(opts, '--key', 'key'));
+    else if (op === 'forget') data = ledger.forgetClaim(need(opts, '--key', 'key'), { force: Boolean(opts.force) });
     else if (op === 'flake-rate') data = flakeRates(ledger, { window: opts.window, includeStable: Boolean(opts.all) });
     else if (op === 'show') data = ledger.readRun(need(opts, '--run-id', 'runId'));
     else if (op === 'claim') data = ledger.claim(need(opts, '--key', 'key'), { runId: opts.runId });

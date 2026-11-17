@@ -43,7 +43,7 @@ const FLAGS = {
 };
 
 // the first argument is the operation; everything after it is flags
-const parseArgs = ([op, ...rest]) => parseFlags(rest, FLAGS, { init: { op } });
+const parseArgs = ([op, ...rest]) => parseFlags(rest, FLAGS, { init: { op }, strictValues: true });
 
 async function readStdin(stdin) {
   const chunks = [];

@@ -2,6 +2,7 @@
 
 const { TrackerError } = require('../lib/errors');
 const { validate } = require('../lib/contract');
+const { targetOf } = require('../../lib/target');
 
 // Jira is deliberately absent: it stays on the Atlassian MCP (interactive) until the headless-auth
 // approach is decided. See docs/tracker-adapters.md.
@@ -18,7 +19,9 @@ function createAdapter(type, opts) {
   if (!ADAPTERS[type]) {
     throw new TrackerError('CONFIG', `no tracker adapter for "${type}" yet (available: ${SUPPORTED.join(', ')})`);
   }
-  return ADAPTERS[type]().create(opts);
+  const adapter = ADAPTERS[type]().create(opts);
+  try { Object.defineProperty(adapter, 'target', { value: targetOf(opts), enumerable: false }); } catch { /* an adapter that cannot take it simply has no target */ }
+  return adapter;
 }
 
 // Create-style operations honour `idempotencyKey`: look for an item already carrying the key

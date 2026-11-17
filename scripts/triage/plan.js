@@ -105,14 +105,17 @@ function commentBody(v, runId) {
 // How long a bug the LEDGER filed is trusted over a tracker search that does not show it: the search index of a tracker lags by minutes (GitHub's is
 // eventually consistent), not days. After this the tracker alone is asked, and a closed or deleted bug is the tracker's to report.
 const LAG_WINDOW_MS = 24 * 60 * 60 * 1000;
+const sameId = (a, b) => String(a) === String(b); // an id is a number on some trackers and text on others
 
-// The newest bug THIS ledger filed for a failure within the lag window: { key, id, url, filedAt } or null. The ledger holds a write under
-// "<tracker>/create-bug/<idempotency key>" and the planner's keys are "fp-<fingerprint>-<run>", so the fingerprint finds every run's filing.
-function filedByLedger(ledger, fingerprint, source, now) {
-  if (!ledger) return null;
+// The newest bug THIS ledger filed, on THIS tracker (its kind and where it points), for a failure within the lag window: { key, id, url, filedAt } or null.
+// The ledger holds a write under "<tracker>~<target>/create-bug/<idempotency key>" and the planner's keys are "fp-<fingerprint>-<run>", so the fingerprint finds
+// every run's filing. With no tracker in hand (it could not be configured) there is no way to tell whose bug a claim is, so there is no answer.
+function filedByLedger(ledger, fingerprint, adapter, now) {
+  if (!ledger || !adapter) return null;
+  const tracker = `${adapter.source}${adapter.target ? `~${adapter.target}` : ''}`;
   const hits = ledger.doneClaims((k) => {
-    const [tracker, op, ...rest] = k.split('/');
-    return op === 'create-bug' && rest.join('/').startsWith(`fp-${fingerprint}-`) && (!source || tracker === source);
+    const [t, op, ...rest] = k.split('/');
+    return t === tracker && op === 'create-bug' && rest.join('/').startsWith(`fp-${fingerprint}-`);
   }).filter((h) => h.result.id && h.completedAt && Date.parse(h.completedAt) <= now() + 60 * 1000 && now() - Date.parse(h.completedAt) <= LAG_WINDOW_MS);
   hits.sort((a, b) => (a.completedAt < b.completedAt ? 1 : -1));
   return hits.length ? { key: hits[0].key, id: String(hits[0].result.id), ...(hits[0].result.url ? { url: hits[0].result.url } : {}), filedAt: hits[0].completedAt } : null;
@@ -148,8 +151,8 @@ async function plan({ report, runId, adapter, trackerWarning, commentsDir, ledge
     const key = `fp-${v.fingerprint}-${runPart(runId)}`;
     // The ledger only fills a GAP in what the tracker shows: if the search returns the very report the ledger filed (open, fixed or dismissed), the tracker is
     // the authority on its state, and a fixed one is a regression, not a place to comment.
-    let prior = found && found.open.length ? null : filedByLedger(ledger, v.fingerprint, adapter && adapter.source, now);
-    if (prior && found && [...found.closed, ...found.dismissed].some((x) => String(x.id) === prior.id)) prior = null;
+    let prior = found && found.open.length ? null : filedByLedger(ledger, v.fingerprint, adapter, now);
+    if (prior && found && [...found.closed, ...found.dismissed].some((x) => sameId(x.id, prior.id))) prior = null;
     const lookupInfo = found ? { open: found.open, closed: found.closed, dismissed: found.dismissed, ...(found.unread.length ? { partial: found.unread } : {}), ...(found.truncated ? { truncated: true } : {}) } : { skipped: lookupNote };
     if (found && found.unread.length) warnings.push(`${v.key}: ${found.unread.length} report(s) with a matching search result could not be read (${found.unread.map((u) => `#${u.id}: ${u.code}`).join(', ')}), so the lookup is partial — an existing report may exist`);
     // the same caveat goes on whatever step the lookup led to: a regression or a dismissal decided from a partial lookup must say so too
@@ -242,4 +245,4 @@ async function main({ argv = process.argv.slice(2), env = process.env, stdout = 
 
 if (require.main === module) main().then((code) => { process.exitCode = code; });
 
-module.exports = { main, plan, filedByLedger, LAG_WINDOW_MS, connectIfNeeded, writeCommentInputs, sanitize, isValidRunId, STEPS, FLAGS };
+module.exports = { main, plan, filedByLedger, sameId, LAG_WINDOW_MS, connectIfNeeded, writeCommentInputs, sanitize, isValidRunId, STEPS, FLAGS };

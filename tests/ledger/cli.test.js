@@ -121,6 +121,16 @@ describe('ledger CLI', () => {
     }
   });
 
+  test('the ledger\'s OWN command refuses a config it cannot read (the other commands treat it as "no ledger block" and leave it to their own loaders)', () => {
+    const config = path.join(work, 'qa-config.json');
+    for (const body of ['{ not json', '']) {
+      fs.writeFileSync(config, body);
+      const r = cli(['status', '--config', config]);
+      assert.equal(r.code, 2, JSON.stringify(body));
+      assert.match(r.stderr, /cannot read/);
+    }
+  });
+
   test('a ledger error is exit 1 with a code, as JSON', () => {
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, 'VERSION'), '9\n');

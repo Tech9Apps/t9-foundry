@@ -445,7 +445,7 @@ function openLedger({ dir, now = Date.now, pid = process.pid, host = os.hostname
     init();
     assertKey(key);
     if (runId !== undefined && runId !== null) assertRunId(runId);
-    const mine = { v: VERSION, key, runId: runId || null, state: 'claimed', claimedAt: iso(), pid, host };
+    const mine = { v: VERSION, key, runId: runId || null, state: 'claimed', claimedAt: iso(), pid, host, claimId: crypto.randomBytes(8).toString('hex') };
     if (tryCreateClaim(key, mine)) return { won: true, claim: mine };
     let cur = readClaim(key);
     if (cur && cur.state === 'failed') {
@@ -467,30 +467,43 @@ function openLedger({ dir, now = Date.now, pid = process.pid, host = os.hostname
     return { won: false, state: cur.state === 'done' ? 'done' : 'in-flight', claim: cur, ownerAlive: cur.state === 'done' ? null : ownerAlive(cur) };
   }
 
-  function finish(key, state, extra) {
+  // The same claim? Compared by the id every claim carries; a claim written before ids existed is told apart by who wrote it and when.
+  const sameClaim = (a, b) => (a.claimId && b.claimId ? a.claimId === b.claimId : a.pid === b.pid && a.host === b.host && a.claimedAt === b.claimedAt);
+
+  // Records that a claim finished (done or failed). With `expect` (the claim the caller holds or has just looked at) the change is made only if the key
+  // STILL holds that very claim, and under the takeover guard, so a late `fail` or `complete` from a process that has been replaced (or from a resumer that
+  // looked a moment too early) cannot overwrite the claim of the process that replaced it: { changed: false, mismatch: true } says it did not apply, and
+  // { changed: false, busy: true } that a takeover is in progress right now.
+  function finish(key, state, extra, { expect } = {}) {
     init();
     assertKey(key);
-    const cur = readClaim(key);
-    if (!cur) throw codedError('LEDGER_NO_CLAIM', 'no claim for this key: claim it first');
-    if (cur.state === 'done') return { changed: false, claim: cur };
-    if (cur.state === 'failed') {
-      if (state === 'failed') return { changed: false, claim: cur };
-      throw codedError('LEDGER_CLAIM_FAILED', 'this claim failed: claim the key again before completing it'); // a failed claim may already be someone else's to take over
-    }
-    const next = { ...(cur.unreadable ? { v: VERSION, key } : cur), state, completedAt: iso(), ...extra };
-    writeClaimAtomically(key, next);
-    return { changed: true, claim: next };
+    const apply = () => {
+      const cur = readClaim(key);
+      if (!cur) throw codedError('LEDGER_NO_CLAIM', 'no claim for this key: claim it first');
+      if (expect && !cur.unreadable && !sameClaim(cur, expect)) return { changed: false, mismatch: true, claim: cur };
+      if (cur.state === 'done') return { changed: false, claim: cur };
+      if (cur.state === 'failed') {
+        if (state === 'failed') return { changed: false, claim: cur };
+        throw codedError('LEDGER_CLAIM_FAILED', 'this claim failed: claim the key again before completing it'); // a failed claim may already be someone else's to take over
+      }
+      const next = { ...(cur.unreadable ? { v: VERSION, key } : cur), state, completedAt: iso(), ...extra };
+      writeClaimAtomically(key, next);
+      return { changed: true, claim: next };
+    };
+    if (!expect) return apply();
+    for (let i = 0; i < 3; i += 1) { const g = withGuard(keyPath(key), apply); if (g.guarded) return g.value; }
+    return { changed: false, busy: true };
   }
-  function complete(key, result = {}) {
+  function complete(key, result = {}, opts) {
     const bad = checkFields(result, RESULT, 'result');
     if (bad) throw codedError('LEDGER_INVALID', bad);
     const masked = mask(result);
-    return finish(key, 'done', { result: sizeOf(masked) > MAX_RECORD_BYTES ? shrinkStrings(masked) : masked });
+    return finish(key, 'done', { result: sizeOf(masked) > MAX_RECORD_BYTES ? shrinkStrings(masked) : masked }, opts);
   }
-  function fail(key, { code, message } = {}) {
+  function fail(key, { code, message } = {}, opts) {
     if (typeof code !== 'string' || !code) throw codedError('LEDGER_INVALID', 'a failure needs a code');
     const error = { code: String(mask(code)).slice(0, 80), ...(message === undefined ? {} : { message: String(mask(String(message))).slice(0, 300) }) };
-    return finish(key, 'failed', { error });
+    return finish(key, 'failed', { error }, opts);
   }
   function listKeys() {
     return listDir(p('keys')).filter((n) => n.endsWith('.json')).map((n) => {
@@ -506,24 +519,33 @@ function openLedger({ dir, now = Date.now, pid = process.pid, host = os.hostname
   // this failure?"). Reads each claim file, never throws on a damaged one.
   function doneClaims(match) {
     const out = [];
-    for (const n of listDir(p('keys')).filter((x) => x.endsWith('.json'))) {
+    if (versionProblem()) return out; // a layout this code does not understand: what it holds is not for this code to act on
+    for (const n of listDir(p('keys')).filter((x) => /^[0-9a-f]{32}\.json$/.test(x))) {
       const r = safeRead(p('keys', n), MAX_SMALL_FILE_BYTES);
       if (r.text === undefined) continue;
       let rec;
       try { rec = JSON.parse(r.text); } catch { continue; }
       if (kindOf(rec) !== 'object' || rec.state !== 'done' || typeof rec.key !== 'string' || !match(rec.key)) continue;
-      out.push({ key: rec.key, result: kindOf(rec.result) === 'object' ? rec.result : {}, completedAt: typeof rec.completedAt === 'string' ? rec.completedAt : null, runId: typeof rec.runId === 'string' ? rec.runId : null });
+      const res = kindOf(rec.result) === 'object' ? rec.result : {};
+      out.push({ key: rec.key, result: { ...(typeof res.id === 'string' ? { id: res.id } : {}), ...(typeof res.url === 'string' ? { url: res.url } : {}), ...(typeof res.deduplicated === 'boolean' ? { deduplicated: res.deduplicated } : {}) }, completedAt: typeof rec.completedAt === 'string' ? rec.completedAt : null, runId: typeof rec.runId === 'string' ? rec.runId : null });
     }
     return out;
   }
 
   // The escape hatch for a claim that is wrong: the item was deleted on the tracker, say, and the ledger still says it was created. Removes the claim,
   // so the next write under that key goes to the tracker again. Like every write, it refuses a ledger of a newer layout.
-  function forgetClaim(key) {
+  function forgetClaim(key, { force = false } = {}) {
     assertKey(key);
     const problem = versionProblem();
     if (problem) throw codedError('LEDGER_VERSION', problem);
-    try { fs.lstatSync(keyPath(key)); } catch (e) { if (e.code === 'ENOENT' || e.code === 'ENOTDIR') return { removed: false }; throw e; }
+    let st;
+    try { st = fs.lstatSync(keyPath(key)); } catch (e) { if (e.code === 'ENOENT' || e.code === 'ENOTDIR') return { removed: false }; throw e; }
+    if (!st.isFile()) throw codedError('LEDGER_IO', 'the claim for this key is not a regular file; remove it by hand');
+    // A claim in flight whose owner may be running is somebody's write in progress: forgetting it would let a second writer in.
+    const cur = readClaim(key);
+    if (!force && cur && cur.state === 'claimed' && !cur.unreadable && ownerAlive(cur) !== false) {
+      throw codedError('LEDGER_CLAIM_ACTIVE', `this claim is in flight and its owner may still be running (run ${cur.runId || '(none)'}, process ${cur.pid} on ${cur.host}); forget it only when that run is gone, with force`);
+    }
     fs.rmSync(keyPath(key), { force: true });
     return { removed: true };
   }
@@ -660,7 +682,7 @@ function openLedger({ dir, now = Date.now, pid = process.pid, host = os.hostname
     return { dryRun, ...removed };
   }
 
-  return { dir: root, record, audit, readRun, readAudit, readAllRuns, listRuns, claim, readClaim, complete, fail, doneClaims, forgetClaim, listKeys, acquireLock, withLock, listLocks, status, prune, versionProblem };
+  return { dir: root, host, pid, record, audit, readRun, readAudit, readAllRuns, listRuns, claim, readClaim, complete, fail, doneClaims, forgetClaim, listKeys, acquireLock, withLock, listLocks, status, prune, versionProblem };
 }
 
 module.exports = { openLedger, validateRecord, parseEvents, stemOf, pidAlive, TYPES, ENVELOPE, RESULT, VERSION, MAX_RECORD_BYTES, DEFAULT_LOCK_TTL_MS };

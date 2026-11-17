@@ -411,6 +411,101 @@ describe('F7: the envelope is checked like the schema checks it', () => {
   });
 });
 
+describe('slice 3 review: completion is compare-and-set, and forget / doneClaims are hardened', () => {
+  const keyFileOf = (k) => path.join(dir, 'keys', `${require('node:crypto').createHash('sha256').update(k).digest('hex').slice(0, 32)}.json`);
+
+  test('every claim carries an id; complete and fail with `expect` apply only to THAT claim', () => {
+    const l = open();
+    const a = l.claim('k', { runId: 'r1' });
+    assert.match(a.claim.claimId, /^[0-9a-f]{16}$/);
+    const stranger = { ...a.claim, claimId: 'someone-elses' };
+    const no = l.complete('k', { id: '1' }, { expect: stranger });
+    assert.deepEqual([no.changed, no.mismatch], [false, true]);
+    assert.equal(l.readClaim('k').state, 'claimed');
+    assert.equal(l.fail('k', { code: 'X' }, { expect: stranger }).mismatch, true);
+    const yes = l.complete('k', { id: '1' }, { expect: a.claim });
+    assert.equal(yes.changed, true);
+    assert.equal(l.readClaim('k').state, 'done');
+  });
+
+  test('a claim written before ids existed is told apart by who wrote it and when', () => {
+    const l = open();
+    l.claim('old');
+    const f = keyFileOf('old');
+    const rec = JSON.parse(fs.readFileSync(f, 'utf8'));
+    delete rec.claimId;
+    fs.writeFileSync(f, JSON.stringify(rec));
+    assert.equal(l.complete('old', {}, { expect: { ...rec } }).changed, true);
+    l.claim('old2');
+    const g = keyFileOf('old2');
+    const rec2 = JSON.parse(fs.readFileSync(g, 'utf8'));
+    delete rec2.claimId;
+    fs.writeFileSync(g, JSON.stringify(rec2));
+    assert.equal(l.complete('old2', {}, { expect: { ...rec2, pid: rec2.pid + 1 } }).mismatch, true);
+  });
+
+  test('with a takeover in progress (the guard is held) a completion that names its claim waits its turn and gives up with `busy`; it never overwrites', () => {
+    const l = open();
+    const a = l.claim('k', { runId: 'r1' });
+    fs.writeFileSync(`${keyFileOf('k')}.guard`, '');
+    const r = l.complete('k', { id: '1' }, { expect: a.claim });
+    assert.deepEqual([r.changed, r.busy], [false, true]);
+    assert.equal(l.readClaim('k').state, 'claimed');
+    fs.rmSync(`${keyFileOf('k')}.guard`);
+    assert.equal(l.complete('k', { id: '1' }, { expect: a.claim }).changed, true);
+  });
+
+  test('without `expect`, complete and fail behave as they always did (the CLI names no claim)', () => {
+    const l = open();
+    l.claim('k');
+    assert.equal(l.complete('k', { id: '1' }).changed, true);
+  });
+
+  test('forget refuses a claim in flight whose owner may be running, unless forced; a dead owner\'s claim, and a done or failed one, go freely', () => {
+    const l = open();
+    openLedger({ dir, pid: process.ppid }).claim('live', { runId: 'r' });
+    assert.throws(() => l.forgetClaim('live'), (e) => e.code === 'LEDGER_CLAIM_ACTIVE' && /may still be running/.test(e.message));
+    assert.equal(l.readClaim('live').state, 'claimed', 'it is still there');
+    assert.deepEqual(l.forgetClaim('live', { force: true }), { removed: true });
+    const dead = spawnSyncPid();
+    openLedger({ dir, pid: dead }).claim('gone', { runId: 'r' });
+    assert.deepEqual(l.forgetClaim('gone'), { removed: true });
+    l.claim('finished'); l.complete('finished', { id: '1' });
+    assert.deepEqual(l.forgetClaim('finished'), { removed: true });
+    l.claim('failed'); l.fail('failed', { code: 'X' });
+    assert.deepEqual(l.forgetClaim('failed'), { removed: true });
+    openLedger({ dir, host: 'elsewhere', pid: 7 }).claim('remote', { runId: 'r' });
+    assert.throws(() => l.forgetClaim('remote'), (e) => e.code === 'LEDGER_CLAIM_ACTIVE', 'another machine\'s owner cannot be checked, so it counts as possibly running');
+  });
+
+  test('a directory where a claim belongs is a coded refusal, not a raw filesystem error', () => {
+    const l = open();
+    l.claim('k');
+    const f = keyFileOf('k');
+    fs.rmSync(f);
+    fs.mkdirSync(f);
+    assert.throws(() => l.forgetClaim('k'), (e) => e.code === 'LEDGER_IO');
+  });
+
+  test('doneClaims reads nothing from a layout it does not understand, keeps only text ids and urls, and ignores files that are not claims by name', () => {
+    const l = open();
+    l.claim('a'); l.complete('a', { id: '1', url: 'https://t/1' });
+    fs.writeFileSync(path.join(dir, 'keys', 'stray.json'), JSON.stringify({ key: 'stray', state: 'done', result: { id: '9' } }));
+    const real = keyFileOf('a');
+    const odd = path.join(dir, 'keys', `${'b'.repeat(32)}.json`);
+    fs.writeFileSync(odd, JSON.stringify({ key: 'odd', state: 'done', result: { id: { x: 1 }, url: 5, deduplicated: 'yes' }, completedAt: '2026-11-13T10:00:00.000Z' }));
+    const all = open().doneClaims(() => true);
+    assert.deepEqual(all.map((c) => c.key).sort(), ['a', 'odd'], 'the stray file is not a claim');
+    assert.deepEqual(all.find((c) => c.key === 'odd').result, {}, 'an id that is not text, a url that is not text and a flag that is not a boolean are dropped');
+    assert.deepEqual(all.find((c) => c.key === 'a').result, { id: '1', url: 'https://t/1' });
+    assert.ok(fs.existsSync(real));
+    fs.writeFileSync(path.join(dir, 'VERSION'), '9\n');
+    assert.deepEqual(open().doneClaims(() => true), []);
+  });
+});
+
+function spawnSyncPid() { return require('node:child_process').spawnSync(process.execPath, ['-e', '']).pid; } // a process that has already exited
+
 describe('mutants the first tests did not kill', () => {
   const sha32 = (s) => require('node:crypto').createHash('sha256').update(s).digest('hex').slice(0, 32);
   const keyFile = (k) => path.join(dir, 'keys', `${sha32(k)}.json`);

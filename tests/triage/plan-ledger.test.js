@@ -8,10 +8,11 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { main, LAG_WINDOW_MS, filedByLedger } = require('../../scripts/triage/plan');
+const { main, LAG_WINDOW_MS, filedByLedger, sameId } = require('../../scripts/triage/plan');
 const { classify } = require('../../scripts/triage/classify');
 const { createAdapter } = require('../../scripts/tracker/adapters');
-const { runOnce } = require('../../scripts/tracker/lib/once');
+const { runOnce, ledgerKey } = require('../../scripts/tracker/lib/once');
+const { createGithubMock } = require('../mocks/tracker-mock/github');
 const { openLedger } = require('../../scripts/ledger/lib/ledger');
 const { MOCKS } = require('../tracker/workspace');
 
@@ -39,6 +40,9 @@ async function plan(rep, { mock, ledger: led, runId = 'run-2', env, extra = [] }
   });
   return { code, err, json: out ? JSON.parse(out) : null };
 }
+
+const adapterOf = (mock) => createAdapter('github', { settings: mock.settings, env: { [mock.tokenEnv]: mock.token }, fetch: mock.fetch, baseUrl: mock.baseUrl, timeoutMs: 500, retryDelayMs: 0 });
+const bugKey = (mock, fp, run) => ledgerKey(adapterOf(mock), 'create-bug', `fp-${fp}-${run}`); // how the ledger holds a bug filing: tracker, where it points, operation, key
 
 // file the bug the way /file-bug does: through the tracker CLI's write path, under the key the planner handed out, in the ledger
 async function fileIt(mock, rep, led, { runId = 'run-1' } = {}) {
@@ -125,17 +129,46 @@ describe('the planner and the ledger: a bug filed minutes ago', () => {
     assert.equal(step(await plan(rep, { mock, ledger: led })).step, 'file-bug', 'past it the tracker alone is asked');
   });
 
-  test('when the tracker cannot be reached at all, the ledger still stops a second report, and the plan says the lookup was not made', async () => {
+  test('a config that cannot be read degrades the plan exactly as it did before the ledger existed (file-bug, with the warning), and does not stop it', async () => {
+    clock = T0;
+    const mock = MOCKS.github();
+    const rep = productBug();
+    const file = path.join(dir, `report-${Math.random().toString(36).slice(2)}.json`);
+    fs.writeFileSync(file, JSON.stringify({ ok: true, data: rep }));
+    for (const body of ['{ not json', '', '[]']) {
+      const cfg = path.join(dir, `broken-${Math.random().toString(36).slice(2)}.json`);
+      fs.writeFileSync(cfg, body);
+      let out = ''; let err = '';
+      const code = await main({ argv: ['--report', file, '--config', cfg, '--run-id', 'run-2'], env: { [mock.tokenEnv]: mock.token }, fetch: mock.fetch, now: () => clock, stdout: { write: (x) => { out += x; } }, stderr: { write: (x) => { err += x; } } });
+      assert.equal(code, 0, `${JSON.stringify(body)}: ${err}`);
+      const data = JSON.parse(out).data;
+      assert.equal(data.actions[0].step, 'file-bug');
+      assert.ok(data.warnings.some((w) => /no tracker lookup/.test(w)));
+    }
+  });
+
+  test('when no tracker can be configured at all there is no way to tell whose bug a ledger claim is: the plan is what it always was (file-bug, with the warning)', async () => {
+    clock = T0;
+    const mock = MOCKS.github();
+    const rep = productBug();
+    const led = ledgerDir();
+    await fileIt(mock, rep, led);
+    const r = await plan(rep, { mock, ledger: led, env: {} }); // no token: no tracker lookup, no adapter
+    assert.equal(step(r).step, 'file-bug');
+    assert.ok(r.json.data.warnings.some((w) => /no tracker lookup/.test(w)));
+  });
+
+  test('a tracker that is configured but cannot be reached (the search fails) still gets the ledger\'s answer: the adapter is in hand', async () => {
     clock = T0;
     const mock = MOCKS.github();
     const rep = productBug();
     const led = ledgerDir();
     const bug = await fileIt(mock, rep, led);
-    const r = await plan(rep, { mock, ledger: led, env: {} }); // no token: no tracker lookup
-    const a = step(r);
-    assert.equal(a.step, 'comment-existing');
-    assert.equal(a.existing.id, String(bug.id));
-    assert.ok(r.json.data.warnings.some((w) => /no tracker lookup/.test(w)));
+    mock.inject({ method: 'GET', match: mock.paths.search, status: 503, times: 5 });
+    const r = await plan(rep, { mock, ledger: led });
+    assert.equal(step(r).step, 'comment-existing');
+    assert.equal(step(r).existing.id, String(bug.id));
+    assert.ok(r.json.data.warnings.some((w) => /tracker search failed/.test(w)));
   });
 
   test('a different failure, or a bug the ledger filed on a different tracker, is not a match', async () => {
@@ -148,9 +181,62 @@ describe('the planner and the ledger: a bug filed minutes ago', () => {
     const rep = productBug(7);
     const fp = rep.verdicts[0].fingerprint;
     const l = openLedger({ dir: led, now: () => clock });
-    l.claim(`gitlab/create-bug/fp-${fp}-run-1`, { runId: 'run-1' });
-    l.complete(`gitlab/create-bug/fp-${fp}-run-1`, { id: '12' });
+    l.claim(`gitlab~0a1b2c3d/create-bug/fp-${fp}-run-1`, { runId: 'run-1' });
+    l.complete(`gitlab~0a1b2c3d/create-bug/fp-${fp}-run-1`, { id: '12' });
     assert.equal(step(await plan(rep, { mock, ledger: led })).step, 'file-bug', 'a bug on GitLab says nothing about GitHub');
+  });
+
+  test('the same KIND of tracker pointing somewhere else (another repository) is not a match either: a bug filed in acme/other is not a bug in acme/shop', async () => {
+    clock = T0;
+    const shop = MOCKS.github();
+    const other = createGithubMock({ repo: 'acme/other' });
+    other.state.searchLag = true;
+    const rep = productBug();
+    const led = ledgerDir();
+    await fileIt(other, rep, led);
+    assert.equal(step(await plan(rep, { mock: shop, ledger: led })).step, 'file-bug');
+    assert.equal(step(await plan(rep, { mock: other, ledger: led })).step, 'comment-existing', 'but on the repository it was filed in, it is');
+  });
+
+  test('a tracker that shows the ledger\'s bug as DISMISSED (closed without a fix) is the authority: nothing is filed or commented, whatever the ledger says; and ids compare as text', async () => {
+    clock = T0;
+    const mock = MOCKS.github();
+    mock.state.searchLag = true;
+    const rep = productBug();
+    const led = ledgerDir();
+    const bug = await fileIt(mock, rep, led);
+    mock.settle();
+    mock.dismissItem(bug.id);
+    assert.equal(step(await plan(rep, { mock, ledger: led })).step, 'report-dismissed');
+    assert.equal(sameId(12, '12'), true);
+    assert.equal(sameId('12', 12), true);
+    assert.equal(sameId(12, '13'), false);
+  });
+
+  test('a ledger plan writes its comment input where the step says, like any comment-existing step', async () => {
+    clock = T0;
+    const mock = MOCKS.github();
+    mock.state.searchLag = true;
+    const rep = productBug();
+    const led = ledgerDir();
+    const bug = await fileIt(mock, rep, led);
+    const commentsDir = path.join(dir, `comments-${Math.random().toString(36).slice(2)}`);
+    const r = await plan(rep, { mock, ledger: led, extra: ['--comments-dir', commentsDir] });
+    const a = step(r);
+    assert.equal(a.step, 'comment-existing');
+    assert.equal(a.commentInputFile, path.join(commentsDir, `${rep.verdicts[0].token}.json`));
+    assert.equal(JSON.parse(fs.readFileSync(a.commentInputFile, 'utf8')).id, String(bug.id));
+  });
+
+  test('a key that merely starts with the same characters but a different fingerprint is not a match (the dash after the fingerprint matters)', async () => {
+    clock = T0;
+    const mock = MOCKS.github();
+    const rep = productBug();
+    const fp = rep.verdicts[0].fingerprint;
+    const l = openLedger({ dir: ledgerDir(), now: () => clock });
+    l.claim(bugKey(mock, `${fp}zzz`, 'run-1'), { runId: 'run-1' });
+    l.complete(bugKey(mock, `${fp}zzz`, 'run-1'), { id: '99' });
+    assert.equal(filedByLedger(l, fp, adapterOf(mock), () => clock), null);
   });
 
   test('a claim that is not finished (the filing is still in flight or failed) is not a bug that exists', async () => {
@@ -160,9 +246,9 @@ describe('the planner and the ledger: a bug filed minutes ago', () => {
     const fp = rep.verdicts[0].fingerprint;
     const led = ledgerDir();
     const l = openLedger({ dir: led, now: () => clock });
-    l.claim(`github/create-bug/fp-${fp}-run-1`, { runId: 'run-1' });
-    l.claim(`github/create-bug/fp-${fp}-run-0`, { runId: 'run-0' });
-    l.fail(`github/create-bug/fp-${fp}-run-0`, { code: 'NETWORK' });
+    l.claim(bugKey(mock, fp, 'run-1'), { runId: 'run-1' });
+    l.claim(bugKey(mock, fp, 'run-0'), { runId: 'run-0' });
+    l.fail(bugKey(mock, fp, 'run-0'), { code: 'NETWORK' });
     assert.equal(step(await plan(rep, { mock, ledger: led })).step, 'file-bug');
   });
 
@@ -173,44 +259,48 @@ describe('the planner and the ledger: a bug filed minutes ago', () => {
     const fp = rep.verdicts[0].fingerprint;
     const led = ledgerDir();
     const l = openLedger({ dir: led, now: () => clock });
-    l.claim(`github/comment/fp-${fp}-run-1-comment`, { runId: 'run-1' });
-    l.complete(`github/comment/fp-${fp}-run-1-comment`, { id: '9001' });
-    l.claim(`github/create-test/fp-${fp}-run-1`, { runId: 'run-1' });
-    l.complete(`github/create-test/fp-${fp}-run-1`, { id: '9002' });
-    l.claim(`github/create-bug/fp-${fp}-run-0`, { runId: 'run-0' });
-    l.complete(`github/create-bug/fp-${fp}-run-0`, {}); // done, but the tracker told us no id
+    const kind = (op, key) => ledgerKey(adapterOf(mock), op, key);
+    l.claim(kind('comment', `fp-${fp}-run-1-comment`), { runId: 'run-1' });
+    l.complete(kind('comment', `fp-${fp}-run-1-comment`), { id: '9001' });
+    l.claim(kind('create-test', `fp-${fp}-run-1`), { runId: 'run-1' });
+    l.complete(kind('create-test', `fp-${fp}-run-1`), { id: '9002' });
+    l.claim(kind('create-bug', `fp-${fp}-run-0`), { runId: 'run-0' });
+    l.complete(kind('create-bug', `fp-${fp}-run-0`), {}); // done, but the tracker told us no id
     assert.equal(step(await plan(rep, { mock, ledger: led })).step, 'file-bug');
-    assert.equal(filedByLedger(l, fp, 'github', () => clock), null);
+    assert.equal(filedByLedger(l, fp, adapterOf(mock), () => clock), null);
   });
 
   test('the newest filing wins when the ledger filed the failure more than once (a regression, a later run)', async () => {
     clock = T0;
+    const mockN = MOCKS.github();
+    const adapter = adapterOf(mockN);
     const rep = productBug();
     const fp = rep.verdicts[0].fingerprint;
     const led = ledgerDir();
     const l = openLedger({ dir: led, now: () => clock });
     for (const [run, id, at] of [['run-1', '11', 0], ['run-3', '33', 2 * HOUR], ['run-2', '22', HOUR]]) {
       clock = T0 + at;
-      l.claim(`github/create-bug/fp-${fp}-${run}`, { runId: run });
-      l.complete(`github/create-bug/fp-${fp}-${run}`, { id, url: `https://tracker.test/${id}` });
+      l.claim(bugKey(mockN, fp, run), { runId: run });
+      l.complete(bugKey(mockN, fp, run), { id, url: `https://tracker.test/${id}` });
     }
     clock = T0 + 3 * HOUR;
-    const hit = filedByLedger(l, fp, 'github', () => clock);
+    const hit = filedByLedger(l, fp, adapter, () => clock);
     assert.deepEqual([hit.id, hit.url], ['33', 'https://tracker.test/33']);
-    assert.equal(filedByLedger(l, fp, 'gitlab', () => clock), null);
-    assert.equal(filedByLedger(l, fp, undefined, () => clock).id, '33', 'with no tracker named (it could not be configured) any tracker\'s filing counts');
-    assert.equal(filedByLedger(null, fp, 'github', () => clock), null);
-    assert.equal(filedByLedger(l, 'f'.repeat(12), 'github', () => clock), null);
+    assert.equal(filedByLedger(l, fp, { source: 'gitlab', target: '0a1b2c3d' }, () => clock), null);
+    assert.equal(filedByLedger(l, fp, undefined, () => clock), null, 'with no tracker in hand there is no way to tell whose bug it is');
+    assert.equal(filedByLedger(null, fp, adapter, () => clock), null);
+    assert.equal(filedByLedger(l, 'f'.repeat(12), adapter, () => clock), null);
   });
 
   test('a filing "from the future" (a clock that was wrong) is not trusted', async () => {
+    const mock = MOCKS.github();
     const rep = productBug();
     const fp = rep.verdicts[0].fingerprint;
     const l = openLedger({ dir: ledgerDir(), now: () => T0 + 5 * HOUR });
-    l.claim(`github/create-bug/fp-${fp}-run-1`, { runId: 'run-1' });
-    l.complete(`github/create-bug/fp-${fp}-run-1`, { id: '11' });
-    assert.equal(filedByLedger(l, fp, 'github', () => T0), null);
-    assert.equal(filedByLedger(l, fp, 'github', () => T0 + 5 * HOUR).id, '11');
+    l.claim(bugKey(mock, fp, 'run-1'), { runId: 'run-1' });
+    l.complete(bugKey(mock, fp, 'run-1'), { id: '11' });
+    assert.equal(filedByLedger(l, fp, adapterOf(mock), () => T0), null);
+    assert.equal(filedByLedger(l, fp, adapterOf(mock), () => T0 + 5 * HOUR).id, '11');
   });
 
   test('low-confidence and non-product-bug verdicts are untouched by the ledger', async () => {

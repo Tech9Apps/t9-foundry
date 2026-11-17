@@ -21,14 +21,17 @@ function validate(block, where) {
   return b;
 }
 
-// { file, present, dir, retentionDays, keyRetentionDays, explicit }. No config file at all is fine: everything is the default. `dir` is made absolute
+// { file, present, dir, retentionDays, keyRetentionDays, explicit }. `strict` makes an unreadable config an error (the ledger CLI); without it, it is "no block". No config file at all is fine: everything is the default. `dir` is made absolute
 // against the folder of the config file that holds it (and the working directory when there is none): config discovery looks in the working directory
 // and the two above it, so a dir relative to where the command happened to run would put one project's ledger in different places.
-function ledgerConfig({ configPath, env = process.env } = {}) {
+function ledgerConfig({ configPath, env = process.env, strict = false } = {}) {
   const file = findConfig(configPath, env);
   let raw;
   if (file) {
-    const doc = readJson(file, { fail: usage });
+    let doc;
+    // A config that cannot be read or parsed is the other loaders' to report (they do, in their own way: the tracker commands as a CONFIG error, the planner as a
+    // degraded plan); here it is simply "no ledger block", so adding the ledger changed nothing about how a broken config fails. The ledger's own CLI is `strict`.
+    try { doc = readJson(file, { fail: usage }); } catch (e) { if (strict) throw e; doc = undefined; }
     raw = doc !== null && typeof doc === 'object' && !Array.isArray(doc) ? doc.ledger : undefined; // a config that is not an object is the other loaders' to refuse, not a reason to stop here
   }
   const v = validate(raw, file || 'qa-config.json');

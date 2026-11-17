@@ -28,7 +28,7 @@ const fs = require('fs');
 const path = require('path');
 const { run } = require('./adapters');
 const { connect, CONNECT_FLAGS } = require('./lib/connect');
-const { runOnce } = require('./lib/once');
+const { runOnce, ledgerKey } = require('./lib/once');
 const { enabledLedger } = require('../ledger/lib/enable');
 const { isValidRunId } = require('../lib/ids');
 const { usage, parseFlags, jsonPrinter } = require('../lib/cli');
@@ -50,7 +50,7 @@ const FLAGS = {
 };
 
 function parseArgs(argv) {
-  const opts = parseFlags(argv, FLAGS);
+  const opts = parseFlags(argv, FLAGS, { strictValues: true }); // the allow rule is `post-tests.js * --dry-run*`: --dry-run must be a flag, never somebody's value
   if (!opts.parent) throw usage('--parent <ticket-id> is required');
   return opts;
 }
@@ -152,6 +152,8 @@ async function main({ argv = process.argv.slice(2), env = process.env, stdout = 
         } catch (linkErr) {
           if (!(linkErr instanceof TrackerError)) throw linkErr;
           entry.linkError = linkErr.toJSON(); // created but not linked: a re-run links it, nothing is duplicated
+          // the ledger said this case exists and the tracker disagrees: say how to let the next run create it again
+          if (created.fromLedger) entry.hint = `the ledger says this case exists (${created.id}); if it was deleted on the tracker, run: node scripts/ledger/cli.js forget --key "${ledgerKey(adapter, 'create-test', `${slug(opts.parent)}-${tc.tcId}`)}" and post again`;
         }
       } catch (err) {
         if (!(err instanceof TrackerError)) throw err;
