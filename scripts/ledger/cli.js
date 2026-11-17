@@ -8,6 +8,7 @@
 //   node scripts/ledger/cli.js claim  --key K [--run-id ID]                claim an idempotency key: exactly one caller wins
 //   node scripts/ledger/cli.js complete --key K [--id I] [--url U] [--deduplicated]   record that the write for K happened
 //   node scripts/ledger/cli.js fail   --key K --code C [--message M]       record that it did not (the key may then be claimed again)
+//   node scripts/ledger/cli.js forget --key K                              drop a claim that is wrong (the item was deleted on the tracker): the next write goes there again
 //   node scripts/ledger/cli.js flake-rate [--window N] [--all]            tests that flipped between passing and failing inside a run, over their last N runs (default 20)
 //   node scripts/ledger/cli.js prune  [--run-days N] [--key-days N] [--dry-run]
 // Options for every operation: --dir D (default: ledger.dir in qa-config.json, else .qa-ledger) and --config P.
@@ -23,7 +24,7 @@ const { staleHeals, flakeRates } = require('./lib/views');
 const { usage, parseFlags, jsonPrinter } = require('../lib/cli');
 
 const MAX_DAYS = 7300;
-const OPS = ['status', 'show', 'claim', 'complete', 'fail', 'flake-rate', 'prune'];
+const OPS = ['status', 'show', 'claim', 'complete', 'fail', 'forget', 'flake-rate', 'prune'];
 const wholeDays = (v, flag) => {
   const n = Number(v);
   if (!Number.isInteger(n) || n < LIMITS.retentionDays[0] || n > MAX_DAYS) throw usage(`${flag} must be a whole number of days from 1`);
@@ -64,6 +65,7 @@ function main({ argv = process.argv.slice(2), env = process.env, stdout = proces
 
     let data;
     if (op === 'status') data = { ...ledger.status(), staleHeals: staleHeals(ledger) };
+    else if (op === 'forget') data = ledger.forgetClaim(need(opts, '--key', 'key'));
     else if (op === 'flake-rate') data = flakeRates(ledger, { window: opts.window, includeStable: Boolean(opts.all) });
     else if (op === 'show') data = ledger.readRun(need(opts, '--run-id', 'runId'));
     else if (op === 'claim') data = ledger.claim(need(opts, '--key', 'key'), { runId: opts.runId });

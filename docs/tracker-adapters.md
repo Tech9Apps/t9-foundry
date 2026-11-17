@@ -107,6 +107,7 @@ Every failure is normalized, so a caller never parses tracker-specific messages:
 | `VALIDATION` | rejected as invalid — also bad input, caught **before any request** — and **every 4xx the tracker answers with that has no other meaning here** (405, 410 "issues are disabled", 413, 451 …): repeating the same request cannot change it | no |
 | `CONFIG` | missing setting or env var — caught **before any request** | no |
 | `RATE_LIMITED` / `TIMEOUT` / `NETWORK` / `UPSTREAM_ERROR` | transient (429 and 425, 408, a dropped connection, a 5xx) | **yes** |
+| `IN_PROGRESS` | the run ledger says another run is writing this very item right now (only with a ledger, only for `create-test` / `create-bug` / `comment`) | **yes**: look again in a few seconds |
 
 ## "Closed" is not one thing: `open` and `dismissed`
 
@@ -136,6 +137,12 @@ regression: the vocabulary is per tracker and only as good as the words above. T
 - **`idempotencyKey` makes a manual retry safe.** Creates — and comments, so a re-run doesn't post its summary twice —
   embed a marker for the key (a body line, or a tag on Azure work items) and look for it first: a retry returns the original with `deduplicated: true`. The match is on the **whole key**: `bug-login` is not found inside `bug-login-2`, so a key that is a prefix of another cannot adopt that other item. This holds even when the
   first attempt *succeeded but the response was lost* — covered by a test that injects exactly that failure.
+- **With a run ledger, a write also happens once across crashes and concurrent runs** (`scripts/tracker/lib/once.js`; on when `qa-config.json` has a `ledger`
+  block or `--ledger-dir` is given, for `create-test`, `create-bug` and `comment` that carry a key; the design is `docs/phase-3-design.md`). The key is claimed in the
+  ledger as `<tracker>/<operation>/<key>` before the write and completed with the item's id after it. A key the ledger knows is done is answered from the ledger
+  (`fromLedger: true`, `deduplicated: true`) **without asking the tracker**; one claimed by a process that is running right now is `IN_PROGRESS`; one claimed by a
+  process that is gone is **resumed**, and the marker lookup above is what adopts whatever that process managed to create. If the ledger cannot be used the write
+  proceeds on the marker alone, with one warning. If an item was deleted on the tracker while the ledger still says it exists, `node scripts/ledger/cli.js forget --key <tracker>/<operation>/<key>` lets the next write through.
 - **The comment lookup reads every page, up to 1000 comments** (GitHub and GitLab take a page shorter than 100 as the end of the list, as the real servers return when asked for `per_page=100`; a proxy that caps pages below that would make the lookup miss a marker and post a duplicate. Bitbucket uses its `next` signal instead) (GitHub, GitLab, Bitbucket; 100 per page, pages requested by number — a `next` link in a response is only a signal that more exists, never a URL that is fetched, so it cannot steer the token to another host). If the marker is not among the first 1000 comments of a ticket that has more, the lookup **refuses** (`VALIDATION`, not retriable, "nothing was posted") rather than answer "not posted" and post a duplicate; post that comment without an `idempotencyKey` if you really want it. **Not covered:** ClickUp's comment list is paged by `start` / `start_id` and this adapter reads only its first page, which could not be verified without a real workspace; and `fetch` returns the first page of a ticket's comments (30 on GitHub, 100 on GitLab and Bitbucket), which is context for test generation, not a complete history.
 - **Multi-call creates can fail half-way** (ClickUp: task → checklist → steps). The error carries
   `details.partial.id`, and a retry **completes** the half-built item (`repaired: true`) rather than accepting it as

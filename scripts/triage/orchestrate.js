@@ -229,7 +229,7 @@ async function runLoop(opts, { env = process.env, fetch = globalThis.fetch, runR
   if (!opts.noPlan) {
     const { adapter, trackerWarning } = connectIfNeeded(report, { configPath: opts.config, source: opts.source, baseUrl: opts.baseUrl, timeoutMs: opts.timeoutMs, env, fetch });
     const commentsDir = path.join(out, 'comments');
-    const p = await plan({ report, runId, adapter, trackerWarning, commentsDir });
+    const p = await plan({ report, runId, adapter, trackerWarning, commentsDir, ledger: ctx.ledger, now });
     const commentFiles = writeCommentInputs(p.actions);
     writeJson(path.join(out, 'plan.json'), { ok: true, data: p });
     writeJson(path.join(out, 'flaky.json'), { runId, flaky: p.flaky });

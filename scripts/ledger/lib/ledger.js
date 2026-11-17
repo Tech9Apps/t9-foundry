@@ -502,6 +502,32 @@ function openLedger({ dir, now = Date.now, pid = process.pid, host = os.hostname
     });
   }
 
+  // Every FINISHED claim whose key `match` accepts: { key, result, completedAt, runId }. What the planner asks ("did this ledger already file a bug for
+  // this failure?"). Reads each claim file, never throws on a damaged one.
+  function doneClaims(match) {
+    const out = [];
+    for (const n of listDir(p('keys')).filter((x) => x.endsWith('.json'))) {
+      const r = safeRead(p('keys', n), MAX_SMALL_FILE_BYTES);
+      if (r.text === undefined) continue;
+      let rec;
+      try { rec = JSON.parse(r.text); } catch { continue; }
+      if (kindOf(rec) !== 'object' || rec.state !== 'done' || typeof rec.key !== 'string' || !match(rec.key)) continue;
+      out.push({ key: rec.key, result: kindOf(rec.result) === 'object' ? rec.result : {}, completedAt: typeof rec.completedAt === 'string' ? rec.completedAt : null, runId: typeof rec.runId === 'string' ? rec.runId : null });
+    }
+    return out;
+  }
+
+  // The escape hatch for a claim that is wrong: the item was deleted on the tracker, say, and the ledger still says it was created. Removes the claim,
+  // so the next write under that key goes to the tracker again. Like every write, it refuses a ledger of a newer layout.
+  function forgetClaim(key) {
+    assertKey(key);
+    const problem = versionProblem();
+    if (problem) throw codedError('LEDGER_VERSION', problem);
+    try { fs.lstatSync(keyPath(key)); } catch (e) { if (e.code === 'ENOENT' || e.code === 'ENOTDIR') return { removed: false }; throw e; }
+    fs.rmSync(keyPath(key), { force: true });
+    return { removed: true };
+  }
+
   // ---- locks ---------------------------------------------------------------------------------------------------------------------
   const lockPath = (scope) => p('locks', `${sha(scope, 32)}.lock`);
   // { holder } when the lock file says who holds it; { holder: null, mtime } when it exists but says nothing usable (empty, torn, a
@@ -634,7 +660,7 @@ function openLedger({ dir, now = Date.now, pid = process.pid, host = os.hostname
     return { dryRun, ...removed };
   }
 
-  return { dir: root, record, audit, readRun, readAudit, readAllRuns, listRuns, claim, readClaim, complete, fail, listKeys, acquireLock, withLock, listLocks, status, prune, versionProblem };
+  return { dir: root, record, audit, readRun, readAudit, readAllRuns, listRuns, claim, readClaim, complete, fail, doneClaims, forgetClaim, listKeys, acquireLock, withLock, listLocks, status, prune, versionProblem };
 }
 
 module.exports = { openLedger, validateRecord, parseEvents, stemOf, pidAlive, TYPES, ENVELOPE, RESULT, VERSION, MAX_RECORD_BYTES, DEFAULT_LOCK_TTL_MS };

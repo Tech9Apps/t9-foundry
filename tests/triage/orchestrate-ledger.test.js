@@ -254,3 +254,36 @@ describe('what the review of slice 2 found in the orchestrator', () => {
     assert.deepEqual(flakeRates(l, { includeStable: true }).tests.map((t) => [t.runsSeen, t.flips]), [[2, 0]]);
   });
 });
+
+describe('the loop, end to end: a bug filed in one run is commented on in the next, even while the tracker\'s index lags', () => {
+  test('run 1 plans file-bug, the bug is filed through the ledger, run 2 plans comment-existing from the ledger (and says why)', async () => {
+    const { MOCKS } = require('../tracker/workspace');
+    const { createAdapter } = require('../../scripts/tracker/adapters');
+    const { runOnce } = require('../../scripts/tracker/lib/once');
+    const mock = MOCKS.github();
+    mock.state.searchLag = true; // a bug filed now is not in the search for a while
+    const root = tmp();
+    const dir = path.join(root, 'ledger');
+    const config = path.join(root, 'qa-config.json');
+    fs.writeFileSync(config, JSON.stringify({ ticketSource: { type: 'github', github: mock.settings }, ledger: { dir } }));
+    const env = { [mock.tokenEnv]: mock.token };
+    const loop = (runId) => orchestrate({ specs: [], reruns: 2, out: tmp(), config, framework: 'node', runId, baseUrl: mock.baseUrl, preflight: 'ok' }, { env, fetch: mock.fetch, runResults: answerAll(result(...FAILING)) });
+
+    const one = await loop('run-1');
+    const planned = JSON.parse(fs.readFileSync(one.doc.data.files.plan, 'utf8')).data.actions[0];
+    assert.equal(planned.step, 'file-bug');
+
+    // /file-bug: the tracker CLI's write path, under the key the plan handed out
+    const adapter = createAdapter('github', { settings: mock.settings, env, fetch: mock.fetch, baseUrl: mock.baseUrl, timeoutMs: 500, retryDelayMs: 0 });
+    const bug = await runOnce(adapter, 'create-bug', { title: 'Second code accepted', body: `Steps.\n\n${planned.marker}`, idempotencyKey: planned.idempotencyKey }, { ledger: openLedger({ dir }), runId: 'run-1' });
+
+    const two = await loop('run-2');
+    const a = JSON.parse(fs.readFileSync(two.doc.data.files.plan, 'utf8')).data.actions[0];
+    assert.equal(a.step, 'comment-existing');
+    assert.deepEqual([a.existing.id, a.existing.source], [String(bug.id), 'ledger']);
+    assert.deepEqual(two.doc.data.verdicts.map((v) => v.step), ['comment-existing']);
+    assert.ok(two.doc.data.warnings.some((w) => /which this ledger filed/.test(w)), JSON.stringify(two.doc.data.warnings));
+    assert.equal(mock.createdItems().length, 1, 'one bug on the tracker, not two');
+    assert.deepEqual(openLedger({ dir }).readRun('run-2').events.filter((e) => e.type === 'verdict').map((e) => e.step), ['comment-existing'], 'and the verdict event says what the plan did');
+  });
+});

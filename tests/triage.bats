@@ -80,6 +80,12 @@ node_tests() { cd "$REPO_ROOT" && env -u NODE_TEST_CONTEXT node --test --test-re
   [[ "$output" =~ "# fail 0" ]]
 }
 
+@test "the planner uses the run ledger to fill a gap in a lagging tracker search, and leaves what the tracker shows to the tracker" {
+  run node_tests plan-ledger.test.js
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "# fail 0" ]]
+}
+
 @test "the planner passes its tests on all five tracker mocks (dedupe, regressions, read-only, degraded modes)" {
   run node_tests plan.test.js
   [ "$status" -eq 0 ]

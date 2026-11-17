@@ -12,7 +12,8 @@
 //   TIMEOUT           no answer in time                          (retriable)
 //   NETWORK           could not reach the tracker                (retriable)
 //   UPSTREAM_ERROR    tracker-side 5xx                           (retriable)
-const RETRIABLE = new Set(['RATE_LIMITED', 'TIMEOUT', 'NETWORK', 'UPSTREAM_ERROR']);
+//   IN_PROGRESS       another run is writing this very item right now (the run ledger says so)   (retriable: look again later)
+const RETRIABLE = new Set(['RATE_LIMITED', 'TIMEOUT', 'NETWORK', 'UPSTREAM_ERROR', 'IN_PROGRESS']);
 
 class TrackerError extends Error {
   constructor(code, message, { status = null, details = null } = {}) {

@@ -359,6 +359,38 @@ describe('when a run is recorded', () => {
   });
 });
 
+describe('doneClaims and forgetClaim', () => {
+  test('doneClaims returns only FINISHED claims the matcher accepts, with their result, time and run; junk in keys/ is skipped', () => {
+    const l = open();
+    l.claim('a/one', { runId: 'r1' }); l.complete('a/one', { id: '1', url: 'https://t/1' });
+    l.claim('a/two', { runId: 'r2' }); // in flight
+    l.claim('a/three', { runId: 'r3' }); l.fail('a/three', { code: 'X' });
+    l.claim('b/four', { runId: 'r4' }); l.complete('b/four', { id: '4' });
+    fs.writeFileSync(path.join(dir, 'keys', 'junk.json'), 'not json');
+    fs.mkdirSync(path.join(dir, 'keys', 'dir.json'));
+    fs.writeFileSync(path.join(dir, 'keys', 'array.json'), '[]');
+    fs.writeFileSync(path.join(dir, 'keys', 'nokey.json'), JSON.stringify({ state: 'done' }));
+    const all = open().doneClaims(() => true);
+    assert.deepEqual(all.map((c) => c.key).sort(), ['a/one', 'b/four'], 'not the claim in flight, not the failed one, not the junk');
+    const one = all.find((c) => c.key === 'a/one');
+    assert.deepEqual([one.result, one.runId, one.completedAt], [{ id: '1', url: 'https://t/1' }, 'r1', '2026-11-13T10:00:00.000Z']);
+    assert.deepEqual(open().doneClaims((k) => k.startsWith('b/')).map((c) => c.key), ['b/four']);
+    assert.deepEqual(openLedger({ dir: path.join(work, 'none') }).doneClaims(() => true), []);
+  });
+
+  test('forgetClaim removes a claim so the key can be claimed again; a key nobody claimed is simply not there; a newer layout refuses', () => {
+    const l = open();
+    l.claim('k', { runId: 'r' }); l.complete('k', { id: '1' });
+    assert.equal(l.claim('k').won, false);
+    assert.deepEqual(l.forgetClaim('k'), { removed: true });
+    assert.deepEqual(l.forgetClaim('k'), { removed: false });
+    assert.equal(l.claim('k').won, true);
+    fs.writeFileSync(path.join(dir, 'VERSION'), '9\n');
+    assert.throws(() => open().forgetClaim('k'), (e) => e.code === 'LEDGER_VERSION');
+    assert.throws(() => open().forgetClaim(''), (e) => e.code === 'LEDGER_INVALID');
+  });
+});
+
 describe('the CLI shows them', () => {
   const stream = () => { const s = { text: '', write(t) { s.text += t; } }; return s; };
   const cli = (...argv) => { const stdout = stream(); const stderr = stream(); const code = cliMain({ argv: [...argv, '--dir', dir], env: {}, stdout, stderr }); return { code, json: stdout.text ? JSON.parse(stdout.text) : null, stderr: stderr.text }; };
