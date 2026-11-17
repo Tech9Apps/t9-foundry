@@ -66,13 +66,16 @@ function flakeRates(ledger, { window = 20, includeStable = false } = {}) {
 }
 
 // The run of a ticket that ended most recently (any run.end counts, complete or not): { runId, endedAt, exit, complete } or null. What the cooldown reads.
-function lastRunEnd(ledger, { ticket }) {
+// An end later than `now` is a clock that was wrong: it is left out HERE, so that it cannot win over a later genuine end and hide it.
+function lastRunEnd(ledger, { ticket, now = Date.now() }) {
   let best = null;
   for (const run of ledger.readAllRuns({ types: [] })) { // run.start and run.end are always kept: they are all this needs
     const start = run.events.find((e) => e.type === 'run.start');
     const end = run.events.find((e) => e.type === 'run.end');
     if (!start || !end || start.ticket !== ticket) continue;
-    if (!best || end.ts > best.endedAt) best = { runId: run.runId, endedAt: end.ts, exit: end.exit, complete: end.complete };
+    const at = Date.parse(end.ts);
+    if (!Number.isFinite(at) || at > now) continue;
+    if (!best || at > Date.parse(best.endedAt)) best = { runId: run.runId, endedAt: end.ts, exit: end.exit, complete: end.complete };
   }
   return best;
 }

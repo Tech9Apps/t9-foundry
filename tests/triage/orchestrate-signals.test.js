@@ -40,7 +40,7 @@ describe('a real SIGTERM to a running orchestrator', () => {
     fs.writeFileSync(path.join(proj, 'slow.test.js'), `const test = require('node:test');\ntest('slow', async () => { require('fs').writeFileSync(${JSON.stringify(sentinel)}, String(process.pid)); await new Promise((r) => setTimeout(r, 60000)); });\n`);
     const ledger = path.join(root, 'ledger');
     const config = path.join(root, 'qa-config.json');
-    fs.writeFileSync(config, JSON.stringify({ ledger: { dir: ledger }, testEnvironmentBaseUrl: 'https://staging.example.com' }));
+    fs.writeFileSync(config, JSON.stringify({ ledger: { dir: ledger }, environments: { testEnvironmentBaseUrl: 'https://staging.example.com' } }));
     const { child, seen } = spawnRun(['--framework', 'node', '--cwd', proj, '--spec', 'slow.test.js', '--out', path.join(root, 'out'), '--run-id', 'sig1', '--no-plan', '--preflight', 'ok', '--ticket', 'T-1', '--config', config], cleanEnv());
     await until('the runner to start', () => fs.existsSync(sentinel));
     const runnerPid = Number(fs.readFileSync(sentinel, 'utf8'));
@@ -66,7 +66,7 @@ describe('a real SIGTERM to a running orchestrator', () => {
     fs.writeFileSync(path.join(proj, 'stubborn.test.js'), `const test = require('node:test');\nprocess.on('SIGTERM', () => {});\ntest('stubborn', async () => { require('fs').writeFileSync(${JSON.stringify(sentinel)}, String(process.pid)); await new Promise((r) => setTimeout(r, 60000)); });\n`);
     const ledger = path.join(root, 'ledger');
     const config = path.join(root, 'qa-config.json');
-    fs.writeFileSync(config, JSON.stringify({ ledger: { dir: ledger }, testEnvironmentBaseUrl: 'https://staging.example.com' }));
+    fs.writeFileSync(config, JSON.stringify({ ledger: { dir: ledger }, environments: { testEnvironmentBaseUrl: 'https://staging.example.com' } }));
     const { child, seen } = spawnRun(['--framework', 'node', '--cwd', proj, '--spec', 'stubborn.test.js', '--out', path.join(root, 'out'), '--run-id', 'stubborn', '--no-plan', '--preflight', 'ok', '--config', config], cleanEnv());
     await until('the runner to start', () => fs.existsSync(sentinel));
     const runnerPid = Number(fs.readFileSync(sentinel, 'utf8'));
@@ -84,7 +84,7 @@ describe('a real SIGTERM to a running orchestrator', () => {
     fs.writeFileSync(path.join(proj, 'slow.test.js'), `const test = require('node:test');\ntest('slow', async () => { require('fs').writeFileSync(${JSON.stringify(sentinel)}, '1'); await new Promise((r) => setTimeout(r, 60000)); });\n`);
     const ledger = path.join(root, 'ledger');
     const config = path.join(root, 'qa-config.json');
-    fs.writeFileSync(config, JSON.stringify({ ledger: { dir: ledger }, testEnvironmentBaseUrl: 'https://staging.example.com' }));
+    fs.writeFileSync(config, JSON.stringify({ ledger: { dir: ledger }, environments: { testEnvironmentBaseUrl: 'https://staging.example.com' } }));
     const { child, seen } = spawnRun(['--framework', 'node', '--cwd', proj, '--spec', 'slow.test.js', '--out', path.join(root, 'out'), '--run-id', 'killed', '--no-plan', '--preflight', 'ok', '--config', config], cleanEnv());
     await until('the runner to start', () => fs.existsSync(sentinel));
     child.kill('SIGKILL');
@@ -132,7 +132,7 @@ describe('a SIGTERM while self-heal is validating: the lock guard must not stop 
     const original = fs.readFileSync(path.join(p.proj, 'tests', 'ui.test.js'));
     const ledger = path.join(p.root, 'ledger');
     const config = path.join(p.root, 'qa-config.json');
-    fs.writeFileSync(config, JSON.stringify({ triage: { selfHeal: { enabled: true, paths: ['tests'] } }, ledger: { dir: ledger }, testEnvironmentBaseUrl: 'https://staging.example.com' }));
+    fs.writeFileSync(config, JSON.stringify({ triage: { selfHeal: { enabled: true, paths: ['tests'] } }, ledger: { dir: ledger }, environments: { testEnvironmentBaseUrl: 'https://staging.example.com' } }));
     const { child, seen } = spawnRun(['--framework', 'node', '--cwd', p.proj, '--spec', 'tests/ui.test.js', '--out', path.join(p.proj, 'qa-results'), '--preflight', 'ok', '--run-id', 'heal-sig', '--no-plan', '--ticket', 'T-1', '--config', config, '--snapshot', path.join(p.proj, 'app', 'index.html')], baseEnv());
     await until('the heal\'s validation run to start', () => fs.existsSync(sentinel), 60000);
     const runnerPid = Number(fs.readFileSync(sentinel, 'utf8'));

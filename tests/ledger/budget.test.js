@@ -11,7 +11,7 @@ const path = require('node:path');
 const { EventEmitter } = require('node:events');
 const { spawnSync } = require('node:child_process');
 const { budgetConfig, validate, tighter, longer, okValue, DEFAULTS, LIMITS, KNOWN } = require('../../scripts/ledger/lib/budget');
-const { normalizeEnvUrl, scopesFor, configEnvUrl, acquireAll, guardSignals } = require('../../scripts/ledger/lib/locks');
+const { normalizeEnvUrl, scopesFor, configEnvUrl, ticketProblem, runLockTtlMs, acquireAll, guardSignals } = require('../../scripts/ledger/lib/locks');
 const { lastRunEnd } = require('../../scripts/ledger/lib/views');
 const { openLedger } = require('../../scripts/ledger/lib/ledger');
 const { main: cliMain } = require('../../scripts/ledger/cli');
@@ -111,8 +111,9 @@ describe('run locks: which scopes, all or none', () => {
   });
 
   test('testEnvironmentBaseUrl comes from the config; no config, an unreadable one, or none named is undefined', () => {
-    assert.equal(configEnvUrl({ configPath: cfg({ testEnvironmentBaseUrl: 'https://s.example.com' }), env: {} }), 'https://s.example.com');
-    for (const body of [{}, { testEnvironmentBaseUrl: 5 }, '{ not json', '[]', 'null']) assert.equal(configEnvUrl({ configPath: cfg(body), env: {} }), undefined, JSON.stringify(body));
+    assert.equal(configEnvUrl({ configPath: cfg({ environments: { testEnvironmentBaseUrl: 'https://s.example.com' } }), env: {} }), 'https://s.example.com');
+    // the key a real config uses is environments.testEnvironmentBaseUrl (qa-config.schema.json); the same name at the top level is not it
+    for (const body of [{}, { testEnvironmentBaseUrl: 'https://s.example.com' }, { environments: {} }, { environments: { testEnvironmentBaseUrl: 5 } }, { environments: 'x' }, '{ not json', '[]', 'null']) assert.equal(configEnvUrl({ configPath: cfg(body), env: {} }), undefined, JSON.stringify(body));
     assert.equal(configEnvUrl({ configPath: path.join(work, 'absent.json'), env: {} }), undefined);
   });
 
@@ -216,7 +217,7 @@ describe('the ledger commands a launcher uses', () => {
   const cli = (argv, env = {}) => { const stdout = stream(); const stderr = stream(); const code = cliMain({ argv: [...argv, '--dir', dir], env, stdout, stderr, now: () => clock }); return { code, json: stdout.text ? JSON.parse(stdout.text) : null, stderr: stderr.text }; };
 
   test('budget-check: nothing stands in the way, and the limits to pass on are returned', () => {
-    const c = cfg({ budget: { maxWallClockMs: 900000, maxTurns: 40, maxCostUsd: 1.5, cooldownMinutes: 30 }, testEnvironmentBaseUrl: 'https://s.example.com' });
+    const c = cfg({ budget: { maxWallClockMs: 900000, maxTurns: 40, maxCostUsd: 1.5, cooldownMinutes: 30 }, environments: { testEnvironmentBaseUrl: 'https://s.example.com' } });
     const r = cli(['budget-check', '--config', c, '--ticket', 'T-1']);
     assert.equal(r.code, 0);
     assert.deepEqual([r.json.data.ok, r.json.data.reasons], [true, []]);
@@ -243,7 +244,7 @@ describe('the ledger commands a launcher uses', () => {
   });
 
   test('budget-check: a held lock is a reason; a stale one is not; taking nothing, it never changes a lock', () => {
-    const c = cfg({ testEnvironmentBaseUrl: 'https://s.example.com' });
+    const c = cfg({ environments: { testEnvironmentBaseUrl: 'https://s.example.com' } });
     const holder = open({ pid: process.ppid });
     holder.acquireLock('env:https://s.example.com', { runId: 'busy-run' });
     const r = cli(['budget-check', '--config', c]);
@@ -271,12 +272,86 @@ describe('the ledger commands a launcher uses', () => {
   });
 
   test('budget-record writes what the launcher measured to the run\'s record, validated, and refuses an empty or negative report', () => {
+    open().record('run-1', 'run.start', { pid: 1, host: 'h' });
     const r = cli(['budget-record', '--run-id', 'run-1', '--turns', '31', '--cost-usd', '0.84', '--wall-clock-ms', '412000']);
     assert.equal(r.code, 0, r.stderr);
     assert.deepEqual([r.json.data.type, r.json.data.turns, r.json.data.costUsd, r.json.data.wallClockMs], ['budget', 31, 0.84, 412000]);
-    assert.deepEqual(open().readRun('run-1').events.map((e) => [e.type, e.turns, e.costUsd]), [['budget', 31, 0.84]]);
+    assert.deepEqual(open().readRun('run-1').events.filter((e) => e.type === 'budget').map((e) => [e.type, e.turns, e.costUsd]), [['budget', 31, 0.84]]);
     assert.equal(cli(['budget-record', '--run-id', 'run-1']).code, 2);
     assert.equal(cli(['budget-record', '--turns', '3']).code, 2, 'a run id is required');
     for (const bad of [['--turns', '-1'], ['--turns', '1.5'], ['--cost-usd', '-0.1'], ['--cost-usd', 'x'], ['--wall-clock-ms', '-5']]) assert.equal(cli(['budget-record', '--run-id', 'r', ...bad]).code, 2, bad.join(' '));
+  });
+});
+
+describe('review of slice 4: what the first review found', () => {
+  const stream = () => { const o = { text: '', write(t) { o.text += t; } }; return o; };
+  const cli = (argv, env = {}) => { const stdout = stream(); const stderr = stream(); const code = cliMain({ argv: [...argv, ...(argv.includes('--dir') ? [] : ['--dir', dir])], env, stdout, stderr, now: () => clock }); return { code, json: stdout.text ? JSON.parse(stdout.text) : null, stderr: stderr.text }; };
+  test('a REAL config names its environment at environments.testEnvironmentBaseUrl: the shipped example gives an env lock scope', () => {
+    const example = path.join(__dirname, '..', '..', 'qa-config.example.json');
+    assert.equal(configEnvUrl({ configPath: example, env: {} }), 'https://staging.myapp.com');
+    assert.deepEqual(scopesFor({ envUrl: configEnvUrl({ configPath: example, env: {} }), ticket: 'T-1' }), ['env:https://staging.myapp.com', 'ticket:T-1']);
+    const r = cli(['budget-check', '--config', example, '--dir', path.join(work, 'nope')]);
+    assert.deepEqual(r.json.data.scopes, ['env:https://staging.myapp.com'], 'budget-check reports it too');
+  });
+
+  test('locks already taken are given back when a LATER scope throws (a credential-looking ticket), not only when one is refused', () => {
+    const l = open();
+    assert.throws(() => acquireAll(l, ['env:https://s.example.com', 'ticket:sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123'], { runId: 'r' }), /looks like a credential/);
+    assert.deepEqual(l.listLocks(), [], 'the environment lock did not stay behind');
+  });
+
+  test('a ticket that looks like a credential, or is too long, is refused up front; an ordinary one (slashes, spaces) is fine', () => {
+    assert.match(ticketProblem('sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123'), /credential/);
+    assert.match(ticketProblem('x'.repeat(129)), /1-128/);
+    assert.match(ticketProblem('a\nb'), /control/);
+    assert.match(ticketProblem(''), /1-128/);
+    for (const ok of ['T-1', 'PROJ/123', 'a ticket with spaces', 'x'.repeat(128)]) assert.equal(ticketProblem(ok), null, ok);
+  });
+
+  test('the lock lasts as long as the run can: the default floor, longer for long timeouts, and one step past a wall-clock limit', () => {
+    const H = 60 * 60 * 1000; const M = 60 * 1000;
+    assert.equal(runLockTtlMs({}), 2 * H + 10 * M, 'two re-runs at the default 30 minutes: four steps and a margin, a little over the 2 hour default');
+    assert.equal(runLockTtlMs({ reruns: 5, timeoutMs: H }), 7 * H + 10 * M, 'long timeouts, many re-runs');
+    assert.equal(runLockTtlMs({ reruns: 0, timeoutMs: M }), 2 * H, 'short ones keep the default');
+    assert.equal(runLockTtlMs({ reruns: 2, maxWallClockMs: 10 * M }), 10 * M + 30 * M + 10 * M, 'a limit: it is checked before a step, so one step past it at most');
+    assert.equal(runLockTtlMs({ reruns: 2, timeoutMs: M, maxWallClockMs: 7 * 24 * H }), 4 * M + 10 * M, 'a huge limit never makes the lock longer than the steps can take');
+  });
+
+  test('lastRunEnd: a run whose clock was wrong (an end in the future) cannot hide a later genuine end', () => {
+    const l = open();
+    clock = T0 + 3 * 24 * 60 * MIN;
+    l.record('wrong-clock', 'run.start', { pid: 1, host: 'h', ticket: 'T-1' });
+    l.record('wrong-clock', 'run.end', { exit: 0, complete: true });
+    clock = T0 + 9 * MIN;
+    l.record('genuine', 'run.start', { pid: 1, host: 'h', ticket: 'T-1' });
+    l.record('genuine', 'run.end', { exit: 0, complete: true });
+    assert.equal(lastRunEnd(l, { ticket: 'T-1', now: T0 + 10 * MIN }).runId, 'genuine');
+    assert.equal(lastRunEnd(l, { ticket: 'T-1', now: T0 + 4 * 24 * 60 * MIN }).runId, 'wrong-clock', 'once its end is in the past it is the newest');
+    clock = T0 + 10 * MIN;
+    const held = cli(['budget-check', '--config', cfg({ budget: { cooldownMinutes: 30 } }), '--ticket', 'T-1']);
+    assert.equal(held.code, 4);
+    assert.equal(held.json.data.reasons[0].runId, 'genuine');
+  });
+
+  test('lastRunEnd: a run.end with no run.start is skipped, not a crash', () => {
+    const l = open();
+    l.record('orphan', 'run.end', { exit: 0, complete: true });
+    assert.equal(lastRunEnd(l, { ticket: 'T-1', now: T0 + MIN }), null);
+  });
+
+  test('budget-check: a ticketless check is never held by another ticketless run; a bad ticket or environment is a usage error, not an "ok"', () => {
+    const c = cfg({ budget: { cooldownMinutes: 30 } });
+    const l = open();
+    l.record('plain', 'run.start', { pid: 1, host: 'h' });
+    l.record('plain', 'run.end', { exit: 0, complete: true });
+    assert.equal(cli(['budget-check', '--config', c]).code, 0, 'no ticket, no cooldown');
+    for (const argv of [['--ticket', 'x'.repeat(129)], ['--ticket', 'sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123'], ['--env-url', 'staging.example.com'], ['--env-url', 'ftp://x.example.com']]) assert.equal(cli(['budget-check', '--config', c, ...argv]).code, 2, argv.join(' '));
+  });
+
+  test('budget-record on a run that is not in the ledger is refused (RUN_NOT_FOUND), not a file with only a budget line', () => {
+    const r = cli(['budget-record', '--run-id', 'never-ran', '--turns', '3']);
+    assert.equal(r.code, 1);
+    assert.equal(r.json.error.code, 'RUN_NOT_FOUND');
+    assert.equal(open().readRun('never-ran').events.length, 0);
   });
 });

@@ -5,6 +5,9 @@
 // and letting go however the run ends, including when it is killed.
 const { findConfig } = require('../../tracker/lib/connect');
 const { readJson, usage } = require('../../lib/cli');
+const { isValidRunId } = require('../../lib/ids');
+const { redactSecrets } = require('../../triage/lib/text');
+const { DEFAULT_LOCK_TTL_MS } = require('./ledger');
 
 // "https://Staging.Example.com:443/app/?x=1#y" -> "https://staging.example.com/app": the same environment however it was typed. null when it is not a URL.
 function normalizeEnvUrl(raw) {
@@ -24,22 +27,48 @@ function scopesFor({ envUrl, ticket }) {
   return out.sort();
 }
 
-// testEnvironmentBaseUrl from the project's config, or undefined (no config, an unreadable one, or none named).
+// environments.testEnvironmentBaseUrl from the project's config (where qa-config.schema.json puts it), or undefined (no config, an unreadable one, or none named).
 function configEnvUrl({ configPath, env = process.env }) {
   const file = findConfig(configPath, env);
   if (!file) return undefined;
-  try { const doc = readJson(file, { fail: usage }); return doc && typeof doc === 'object' && typeof doc.testEnvironmentBaseUrl === 'string' ? doc.testEnvironmentBaseUrl : undefined; } catch { return undefined; }
+  try {
+    const doc = readJson(file, { fail: usage });
+    const url = doc && typeof doc === 'object' && doc.environments && typeof doc.environments === 'object' ? doc.environments.testEnvironmentBaseUrl : undefined;
+    return typeof url === 'string' ? url : undefined;
+  } catch { return undefined; }
+}
+
+// What is wrong with a ticket id, or null. It becomes a lock scope and a ledger field: 1-128 printable characters, and not something that looks like a credential
+// (the ledger refuses those, and a ticket recorded as <redacted> could never match its own cooldown).
+function ticketProblem(ticket) {
+  if (!isValidRunId(ticket)) return 'must be 1-128 characters with no control characters';
+  if (redactSecrets(ticket) !== ticket) return 'looks like a credential, which the ledger refuses to record';
+  return null;
+}
+
+// How long a run's locks last before another run may take them over as expired. The owner's process being gone is what normally frees a lock; the TTL is the
+// backstop for an owner on another machine, and it must not run out under a run that is still working (that silently ends the mutual exclusion). A run takes
+// the main run, each re-run and the self-heal validation, each up to `timeoutMs`; a wall-clock limit is only checked BEFORE a step, so it adds one step at most.
+const DEFAULT_STEP_MS = 30 * 60 * 1000; // results/run.js's own default timeout
+const LOCK_MARGIN_MS = 10 * 60 * 1000;
+function runLockTtlMs({ reruns = 2, timeoutMs, maxWallClockMs } = {}) {
+  const step = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : DEFAULT_STEP_MS;
+  const bound = (Math.max(0, Number(reruns) || 0) + 2) * step + LOCK_MARGIN_MS;
+  if (maxWallClockMs > 0) return Math.min(bound, maxWallClockMs + step + LOCK_MARGIN_MS);
+  return Math.max(DEFAULT_LOCK_TTL_MS, bound);
 }
 
 // All of the scopes, or none: { ok: true, release } or { ok: false, scope, holder, reason }. A lock already taken is given back if a later one is refused.
 function acquireAll(ledger, scopes, { runId, ttlMs } = {}) {
   const held = [];
   const releaseAll = () => { for (const h of held.splice(0).reverse()) { try { h.release(); } catch { /* a lock that is already gone */ } } };
-  for (const scope of scopes) {
-    const got = ledger.acquireLock(scope, { runId, ...(ttlMs ? { ttlMs } : {}) });
-    if (!got.acquired) { releaseAll(); return { ok: false, scope, holder: got.holder, reason: got.reason }; }
-    held.push(got);
-  }
+  try {
+    for (const scope of scopes) {
+      const got = ledger.acquireLock(scope, { runId, ...(ttlMs ? { ttlMs } : {}) });
+      if (!got.acquired) { releaseAll(); return { ok: false, scope, holder: got.holder, reason: got.reason }; }
+      held.push(got);
+    }
+  } catch (e) { releaseAll(); throw e; } // a later scope that cannot be taken at all must not leave the earlier ones behind, with nobody to give them back
   return { ok: true, scopes, release: releaseAll, stole: held.filter((h) => h.stole).map((h) => h.lock.scope) };
 }
 
@@ -61,4 +90,4 @@ function guardSignals({ release, stopWork, proc = process }) {
   return disarm;
 }
 
-module.exports = { normalizeEnvUrl, scopesFor, configEnvUrl, acquireAll, guardSignals };
+module.exports = { normalizeEnvUrl, scopesFor, configEnvUrl, ticketProblem, runLockTtlMs, acquireAll, guardSignals };

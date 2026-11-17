@@ -30,7 +30,7 @@ function world(configExtra = {}, { ledger = true } = {}) {
   const root = tmp();
   const dir = path.join(root, 'ledger');
   const config = path.join(root, 'qa-config.json');
-  fs.writeFileSync(config, JSON.stringify({ testEnvironmentBaseUrl: ENV_URL, ...(ledger ? { ledger: { dir } } : {}), ...configExtra }));
+  fs.writeFileSync(config, JSON.stringify({ environments: { testEnvironmentBaseUrl: ENV_URL }, ...(ledger ? { ledger: { dir } } : {}), ...configExtra }));
   const w = { root, dir, config, clock: T0, calls: [], hook: null };
   w.now = () => w.clock;
   w.runner = (tests = PASSING) => async (argv) => {
@@ -119,7 +119,9 @@ describe('the per-ticket cooldown', () => {
     assert.equal((await w.run({ ticket: 'T-1', runId: 'a' })).code, 0);
     const r = await w.run({ ticket: 'T-1', runId: 'b' });
     assert.equal(r.code, 0);
-    assert.equal(r.doc.data.warnings, undefined);
+    assert.ok(r.doc.data.warnings.some((m) => /a cooldown is set but there is no run ledger/.test(m)), 'it says so, once the project has asked for a cooldown');
+    const plain = world({}, { ledger: false });
+    assert.equal((await plain.run({ ticket: 'T-1', runId: 'c' })).doc.data.warnings, undefined, 'with no cooldown asked for, nothing new is said');
   });
 
   test('the run records its ticket, so the next run can find it', async () => {
@@ -147,7 +149,7 @@ describe('the run locks', () => {
 
   test('the same environment however it is written in the config (case, trailing slash, default port)', async () => {
     for (const written of ['https://Staging.Example.com/', 'https://staging.example.com:443']) {
-      const w = world({ testEnvironmentBaseUrl: written });
+      const w = world({ environments: { testEnvironmentBaseUrl: written } });
       holder(w, `env:${ENV_URL}`);
       assert.equal((await w.run()).code, 4, written);
     }
@@ -243,7 +245,7 @@ describe('the run locks', () => {
   });
 
   test('no environment named and no ticket: nothing to lock, so nothing is taken', async () => {
-    const w = world({ testEnvironmentBaseUrl: undefined });
+    const w = world({ environments: {} });
     assert.equal((await w.run()).code, 0);
     assert.equal(fs.existsSync(path.join(w.dir, 'locks')) ? fs.readdirSync(path.join(w.dir, 'locks')).length : 0, 0);
   });
@@ -318,9 +320,9 @@ describe('the wall-clock budget', () => {
     assert.equal(fs.existsSync(noLedger.dir), false);
   });
 
-  test('the flags are checked: a negative or odd limit, or a ticket that is empty, is a usage error (exit 2) before anything runs', async () => {
+  test('the flags are checked: a negative or odd limit, or a ticket that is empty, too long or credential-like, is a usage error (exit 2) before anything runs', async () => {
     const w = world();
-    for (const [argv, re] of [[['--max-wall-clock-ms', '-1'], /--max-wall-clock-ms must be a whole number from 0 to/], [['--max-wall-clock-ms', '1.5'], /--max-wall-clock-ms/], [['--cooldown-minutes', 'x'], /--cooldown-minutes must be a whole number/], [['--ticket', ''], /--ticket must be 1-128 characters/]]) {
+    for (const [argv, re] of [[['--max-wall-clock-ms', '-1'], /--max-wall-clock-ms must be a whole number from 0 to/], [['--max-wall-clock-ms', '1.5'], /--max-wall-clock-ms/], [['--cooldown-minutes', 'x'], /--cooldown-minutes must be a whole number/], [['--ticket', ''], /--ticket must be 1-128 characters/], [['--ticket', 'sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123'], /--ticket looks like a credential/]]) {
       let err = '';
       const code = await main({ argv: ['--framework', 'node', ...argv, '--config', w.config], env: {}, stdout: { write: () => {} }, stderr: { write: (t) => { err += t; } }, runResults: w.runner() });
       assert.equal(code, 2, argv.join(' '));
@@ -349,5 +351,77 @@ describe('the wall-clock budget', () => {
     const refused = await run(w, ['--ticket', 'T-1', '--run-id', 'm2'], FAILING);
     assert.equal(refused.code, 4);
     assert.equal(refused.json.error.code, 'COOLDOWN');
+  });
+});
+
+describe('review of slice 4: what the first review found', () => {
+  test('a ticketless run is never held by another ticketless run\'s cooldown', async () => {
+    const w = world({ budget: { cooldownMinutes: 30 } });
+    assert.equal((await w.run({ runId: 'a' })).code, 0);
+    w.clock = T0 + MIN;
+    assert.equal((await w.run({ runId: 'b' })).code, 0);
+  });
+
+  test('a run that completes with locks and nothing to report has no warnings at all (the steal warning needs a steal)', async () => {
+    const w = world();
+    const r = await w.run({ ticket: 'T-1' });
+    assert.equal(r.code, 0);
+    assert.equal(r.doc.data.warnings, undefined);
+  });
+
+  test('the wall-clock limit is "more than": a run that has used exactly its limit at a step is not stopped', async () => {
+    const w = world({ budget: { maxWallClockMs: 60000 } });
+    w.hook = async (out) => { if (out === 'main') w.clock += 60000; };
+    const r = await w.run({}, FAILING);
+    assert.equal(r.code, 0);
+    assert.deepEqual(w.calls, ['main', 'rerun-1', 'rerun-2']);
+  });
+
+  test('a run that ended with a wrong clock (days ahead) does not hide a genuine run that ended a minute ago: the cooldown still holds', async () => {
+    const w = world({ budget: { cooldownMinutes: 30 } });
+    const l = w.ledger();
+    w.clock = T0 + 3 * 24 * 60 * MIN;
+    l.record('wrong-clock', 'run.start', { pid: 1, host: 'h', ticket: 'T-1' });
+    l.record('wrong-clock', 'run.end', { exit: 0, complete: true });
+    w.clock = T0 + 9 * MIN;
+    l.record('genuine', 'run.start', { pid: 1, host: 'h', ticket: 'T-1' });
+    l.record('genuine', 'run.end', { exit: 0, complete: true });
+    w.clock = T0 + 10 * MIN;
+    const r = await w.run({ ticket: 'T-1', runId: 'next' });
+    assert.equal(r.code, 4);
+    assert.equal(r.doc.error.details.lastRunId, 'genuine');
+  });
+
+  test('the lock lasts as long as the run can (re-runs and timeout counted), so it is not taken from a run that is still working', async () => {
+    const w = world();
+    let seen = null;
+    w.hook = async (out) => { if (out === 'main') seen = w.ledger().listLocks().map((l) => [l.scope, l.ttlMs]).sort(); };
+    await w.run({ ticket: 'T-1', reruns: 5, timeoutMs: 60 * MIN });
+    assert.deepEqual(seen, [[`env:${ENV_URL}`, 7 * 60 * MIN + 10 * MIN], ['ticket:T-1', 7 * 60 * MIN + 10 * MIN]]);
+    const w2 = world({ budget: { maxWallClockMs: 10 * MIN } });
+    w2.hook = async (out) => { if (out === 'main') seen = w2.ledger().listLocks().map((l) => l.ttlMs); };
+    await w2.run({ reruns: 2 });
+    assert.deepEqual(seen, [10 * MIN + 30 * MIN + 10 * MIN], 'with a wall-clock limit: one step past it');
+  });
+
+  test('a lock that cannot be taken at all part-way (a credential-looking ticket handed in by a library caller) is a warning, and the lock taken before it is not left behind', async () => {
+    const w = world();
+    const r = await w.run({ ticket: 'sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123' });
+    assert.equal(r.code, 0);
+    assert.ok(r.doc.data.warnings.some((m) => /could not take the run locks/.test(m)), JSON.stringify(r.doc.data.warnings));
+    assert.deepEqual(w.ledger().listLocks(), [], 'the environment lock was given back');
+  });
+
+  test('an environment URL the lock cannot use (no scheme) is a warning, and the run goes ahead without an environment lock', async () => {
+    const w = world({ environments: { testEnvironmentBaseUrl: 'staging.example.com' } });
+    const r = await w.run({ ticket: 'T-1' });
+    assert.equal(r.code, 0);
+    assert.ok(r.doc.data.warnings.some((m) => /environments\.testEnvironmentBaseUrl is not an http\(s\) URL, so this run takes no environment lock/.test(m)), JSON.stringify(r.doc.data.warnings));
+  });
+
+  test('the usage line names the slice 4 flags', async () => {
+    let err = '';
+    await main({ argv: ['--help'], env: {}, stdout: { write: () => {} }, stderr: { write: (t) => { err += t; } } });
+    for (const f of ['--ticket', '--max-wall-clock-ms', '--cooldown-minutes']) assert.ok(err.includes(f), f);
   });
 });

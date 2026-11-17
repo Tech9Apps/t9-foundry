@@ -26,7 +26,7 @@ const { openLedger } = require('./lib/ledger');
 const { ledgerConfig, LIMITS } = require('./lib/config');
 const { staleHeals, flakeRates, lastRunEnd } = require('./lib/views');
 const { budgetConfig, tighter, longer } = require('./lib/budget');
-const { scopesFor, configEnvUrl } = require('./lib/locks');
+const { scopesFor, configEnvUrl, normalizeEnvUrl, ticketProblem } = require('./lib/locks');
 const { usage, parseFlags, jsonPrinter } = require('../lib/cli');
 
 const MAX_DAYS = 7300;
@@ -66,7 +66,7 @@ function main({ argv = process.argv.slice(2), env = process.env, stdout = proces
   const out = jsonPrinter(stdout);
   try {
     if (!argv.length || argv[0] === '-h' || argv[0] === '--help') {
-      stderr.write(`Usage: cli.js <${OPS.join('|')}> [--dir D] [--config P] [--run-id ID] [--key K] [--id I] [--url U] [--deduplicated] [--code C] [--message M] [--run-days N] [--key-days N] [--dry-run] [--window N] [--all] [--force]\n`);
+      stderr.write(`Usage: cli.js <${OPS.join('|')}> [--dir D] [--config P] [--run-id ID] [--key K] [--id I] [--url U] [--deduplicated] [--code C] [--message M] [--run-days N] [--key-days N] [--dry-run] [--window N] [--all] [--force] [--ticket T] [--env-url U] [--turns N] [--cost-usd N] [--wall-clock-ms N]\n`);
       return argv.length ? 0 : 2;
     }
     const op = argv[0];
@@ -83,8 +83,10 @@ function main({ argv = process.argv.slice(2), env = process.env, stdout = proces
       const b = budgetConfig({ configPath: opts.config, env });
       const limits = { maxWallClockMs: b.maxWallClockMs, maxTurns: b.maxTurns, maxCostUsd: b.maxCostUsd };
       const reasons = [];
+      if (opts.ticket !== undefined && ticketProblem(opts.ticket)) throw usage(`--ticket ${ticketProblem(opts.ticket)}`);
+      if (opts.envUrl !== undefined && !normalizeEnvUrl(opts.envUrl)) throw usage('--env-url must be an http(s) URL');
       if (opts.ticket && b.cooldownMinutes > 0) {
-        const last = lastRunEnd(ledger, { ticket: opts.ticket });
+        const last = lastRunEnd(ledger, { ticket: opts.ticket, now: now() });
         const agoMs = last ? now() - Date.parse(last.endedAt) : NaN;
         if (last && agoMs >= 0 && agoMs < b.cooldownMinutes * 60000) reasons.push({ code: 'COOLDOWN', message: `ticket ${opts.ticket} was last run by ${last.runId}, which ended ${Math.floor(agoMs / 60000)} minute(s) ago; the cooldown is ${b.cooldownMinutes} minute(s)`, runId: last.runId, endedAt: last.endedAt });
       }
@@ -98,7 +100,9 @@ function main({ argv = process.argv.slice(2), env = process.env, stdout = proces
       if (opts.costUsd !== undefined) spent.costUsd = opts.costUsd;
       if (opts.wallClockMs !== undefined) spent.wallClockMs = opts.wallClockMs;
       if (!Object.keys(spent).length) throw usage('budget-record needs at least one of --turns, --cost-usd, --wall-clock-ms');
-      data = ledger.record(need(opts, '--run-id', 'runId'), 'budget', spent);
+      const runId = need(opts, '--run-id', 'runId');
+      if (!ledger.readRun(runId).events.length) throw Object.assign(new Error(`no run ${JSON.stringify(String(runId).slice(0, 60))} in the ledger to record spend on`), { code: 'RUN_NOT_FOUND' });
+      data = ledger.record(runId, 'budget', spent);
     } else if (op === 'forget') data = ledger.forgetClaim(need(opts, '--key', 'key'), { force: Boolean(opts.force) });
     else if (op === 'flake-rate') data = flakeRates(ledger, { window: opts.window, includeStable: Boolean(opts.all) });
     else if (op === 'show') data = ledger.readRun(need(opts, '--run-id', 'runId'));

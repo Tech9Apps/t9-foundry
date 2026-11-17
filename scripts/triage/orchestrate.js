@@ -46,7 +46,7 @@ const { enabledLedger } = require('../ledger/lib/enable');
 const { healJournal } = require('../ledger/lib/journal');
 const { staleHeals, lastRunEnd } = require('../ledger/lib/views');
 const { budgetConfig, tighter, longer, okValue, describe: describeLimit } = require('../ledger/lib/budget');
-const { scopesFor, configEnvUrl, acquireAll, guardSignals } = require('../ledger/lib/locks');
+const { scopesFor, configEnvUrl, normalizeEnvUrl, ticketProblem, runLockTtlMs, acquireAll, guardSignals } = require('../ledger/lib/locks');
 
 const MAX_RECORDED_RESULTS = 5000;
 const MAX_RECORDED_VERDICTS = 2000;
@@ -86,7 +86,7 @@ function parseArgs(argv) {
   if (opts.timeoutMs !== undefined && !(Number.isInteger(opts.timeoutMs) && opts.timeoutMs > 0)) throw usage('--timeout-ms must be a positive whole number of milliseconds');
   // the run id ends up in tracker idempotency keys (an odd one is hashed there, see plan.js runPart) and in comment text
   if (opts.runId !== undefined && !isValidRunId(opts.runId)) throw usage('--run-id must be 1-128 characters with no control characters');
-  if (opts.ticket !== undefined && !isValidRunId(opts.ticket)) throw usage('--ticket must be 1-128 characters with no control characters');
+  if (opts.ticket !== undefined && ticketProblem(opts.ticket)) throw usage(`--ticket ${ticketProblem(opts.ticket)}`);
   for (const [key, flag] of [['maxWallClockMs', '--max-wall-clock-ms'], ['cooldownMinutes', '--cooldown-minutes']]) {
     if (opts[key] !== undefined && !okValue(key, opts[key])) throw usage(`${flag} must be ${describeLimit(key)} (0 means no limit)`);
   }
@@ -286,9 +286,10 @@ async function runLoop(opts, { env = process.env, fetch = globalThis.fetch, runR
 
   // 6. self-heal (only if enabled): rename a stale test-id on a local branch, validated by re-run, reverted on any failure. Never pushes.
   let healResult = null;
-  if (healEnabled && eligible(report).length && overBudget('self-heal')) {
+  const healWanted = healEnabled && eligible(report).length > 0;
+  if (healWanted && overBudget('self-heal')) { // (a run that is already stopped is over budget here too: overBudget remembers its stop)
     skipped.push('self-heal');
-  } else if (healEnabled && eligible(report).length) {
+  } else if (healWanted) {
     const runCwd = path.resolve(opts.cwd || '.');
     healResult = await heal({
       report, cwd: runCwd, runId, paths: cfg.selfHeal.paths, maxFiles: cfg.selfHeal.maxFiles, maxLines: cfg.selfHeal.maxLines, branchPrefix: cfg.selfHeal.branchPrefix, mainRun: main, journal,
@@ -352,7 +353,7 @@ async function orchestrate(opts, deps = {}) {
   // Refusals come first and leave nothing behind: not a run.start, not a lock, not a line in the ledger.
   if (ctx.ledger && opts.ticket && limits.cooldownMinutes > 0) {
     let last = null;
-    try { last = lastRunEnd(ctx.ledger, { ticket: opts.ticket }); } catch (e) { warnings.push(`ledger: could not check the cooldown (${e.message})`); }
+    try { last = lastRunEnd(ctx.ledger, { ticket: opts.ticket, now: now() }); } catch (e) { warnings.push(`ledger: could not check the cooldown (${e.message})`); }
     const agoMs = last ? now() - Date.parse(last.endedAt) : NaN;
     // an end in the future is a clock that was wrong: it must not hold a ticket for days
     if (last && agoMs >= 0 && agoMs < limits.cooldownMinutes * 60000) {
@@ -360,12 +361,15 @@ async function orchestrate(opts, deps = {}) {
       return { code: 4, doc: { ok: false, stage: 'cooldown', error: { code: 'COOLDOWN', message: `ticket ${opts.ticket} was last run by ${last.runId}, which ended ${ago} minute(s) ago; the cooldown is ${limits.cooldownMinutes} minute(s), so this run was not started`, details: { ticket: opts.ticket, lastRunId: last.runId, endedAt: last.endedAt, cooldownMinutes: limits.cooldownMinutes } } } };
     }
   }
+  if (!ctx.ledger && limits.cooldownMinutes > 0) warnings.push('a cooldown is set but there is no run ledger (add a `ledger` block to qa-config.json, or pass --ledger-dir), so it was not applied');
   let locks = null;
   if (ctx.ledger) {
-    const scopes = scopesFor({ envUrl: configEnvUrl({ configPath: opts.config, env }), ticket: opts.ticket });
+    const envUrl = configEnvUrl({ configPath: opts.config, env });
+    if (envUrl && !normalizeEnvUrl(envUrl)) warnings.push('environments.testEnvironmentBaseUrl is not an http(s) URL, so this run takes no environment lock');
+    const scopes = scopesFor({ envUrl, ticket: opts.ticket });
     if (scopes.length) {
       // Bookkeeping never BLOCKS a run: a ledger that cannot take a lock (not writable, a credential-looking run id) is a warning, and the run goes ahead unprotected.
-      try { locks = acquireAll(ctx.ledger, scopes, { runId }); } catch (e) { warnings.push(`ledger: could not take the run locks (${e.message}); this run is not protected from a concurrent one`); }
+      try { locks = acquireAll(ctx.ledger, scopes, { runId, ttlMs: runLockTtlMs({ reruns: opts.reruns !== undefined ? opts.reruns : MAX_RERUNS, timeoutMs: opts.timeoutMs, maxWallClockMs: limits.maxWallClockMs }) }); } catch (e) { warnings.push(`ledger: could not take the run locks (${e.message}); this run is not protected from a concurrent one`); }
       if (locks && !locks.ok) {
         const h = locks.holder || {};
         return { code: 4, doc: { ok: false, stage: 'lock', error: { code: 'LOCKED', message: `locked by run ${h.runId || '(unknown)'} since ${h.startedAt || '(unknown)'} (${locks.scope}); this run was not started`, details: { scope: locks.scope, runId: h.runId || null, pid: h.pid || null, startedAt: h.startedAt || null } } } };
@@ -407,7 +411,7 @@ async function main({ argv = process.argv.slice(2), env = process.env, stdout = 
   const emit = (obj) => stdout.write(`${JSON.stringify(obj, null, 2)}\n`);
   try {
     if (!argv.length || argv[0] === '-h' || argv[0] === '--help') {
-      stderr.write('Usage: orchestrate.js --framework F [--spec S]... [--test-dir D] [--config-file C] [--cwd D] [--reruns 2] [--preflight ok|failed|unknown] [--snapshot page.html] [--out DIR] [--run-id ID] [--threshold 0.8] [--trusted-formats tap|none] [--timeout-ms N] [--no-plan] [--heal | --no-heal] [--ledger-dir D | --no-ledger] [--config P] [--source T] [--base-url U]\n');
+      stderr.write('Usage: orchestrate.js --framework F [--spec S]... [--test-dir D] [--config-file C] [--cwd D] [--reruns 2] [--preflight ok|failed|unknown] [--snapshot page.html] [--out DIR] [--run-id ID] [--threshold 0.8] [--trusted-formats tap|none] [--timeout-ms N] [--no-plan] [--heal | --no-heal] [--ledger-dir D] [--ticket ID] [--max-wall-clock-ms N] [--cooldown-minutes N] [--config P] [--source T] [--base-url U]\n');
       return argv.length ? 0 : 2;
     }
     const opts = parseArgs(argv);
