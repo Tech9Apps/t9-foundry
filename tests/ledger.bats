@@ -30,6 +30,12 @@ teardown() {
   [[ "$output" =~ "# fail 0" ]]
 }
 
+@test "the cross-run views (flake rate, heal attempts, stale heals), the heal journal and the opt-in switch pass their tests" {
+  run node_tests views.test.js
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "# fail 0" ]]
+}
+
 @test "run-id helpers shared with the triage planner pass their tests" {
   run node_tests ids.test.js
   [ "$status" -eq 0 ]

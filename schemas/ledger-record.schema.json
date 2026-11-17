@@ -355,8 +355,12 @@
         "baseSha": {
           "type": "string"
         },
-        "token": {
-          "type": "string"
+        "tokens": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "the fingerprint tokens of the failures this heal was meant to fix: what the cross-run attempt cap counts"
         }
       }
     },

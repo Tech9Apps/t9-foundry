@@ -8,6 +8,7 @@
 //   node scripts/ledger/cli.js claim  --key K [--run-id ID]                claim an idempotency key: exactly one caller wins
 //   node scripts/ledger/cli.js complete --key K [--id I] [--url U] [--deduplicated]   record that the write for K happened
 //   node scripts/ledger/cli.js fail   --key K --code C [--message M]       record that it did not (the key may then be claimed again)
+//   node scripts/ledger/cli.js flake-rate [--window N] [--all]            tests that flipped between passing and failing inside a run, over their last N runs (default 20)
 //   node scripts/ledger/cli.js prune  [--run-days N] [--key-days N] [--dry-run]
 // Options for every operation: --dir D (default: ledger.dir in qa-config.json, else .qa-ledger) and --config P.
 //
@@ -18,10 +19,11 @@
 
 const { openLedger } = require('./lib/ledger');
 const { ledgerConfig, LIMITS } = require('./lib/config');
+const { staleHeals, flakeRates } = require('./lib/views');
 const { usage, parseFlags, jsonPrinter } = require('../lib/cli');
 
 const MAX_DAYS = 7300;
-const OPS = ['status', 'show', 'claim', 'complete', 'fail', 'prune'];
+const OPS = ['status', 'show', 'claim', 'complete', 'fail', 'flake-rate', 'prune'];
 const wholeDays = (v, flag) => {
   const n = Number(v);
   if (!Number.isInteger(n) || n < LIMITS.retentionDays[0] || n > MAX_DAYS) throw usage(`${flag} must be a whole number of days from 1`);
@@ -41,6 +43,8 @@ const FLAGS = {
   '--run-days': { key: 'runDays', parse: wholeDays },
   '--key-days': { key: 'keyDays', parse: wholeDays },
   '--dry-run': { key: 'dryRun', set: true },
+  '--window': { key: 'window', parse: (v, flag) => { const n = Number(v); if (!Number.isInteger(n) || n < 1 || n > 1000) throw usage(`${flag} must be a whole number from 1 to 1000`); return n; } },
+  '--all': { key: 'all', set: true },
 };
 
 const need = (opts, flag, key) => { if (opts[key] === undefined) throw usage(`${opts.op} needs ${flag}`); return opts[key]; };
@@ -49,7 +53,7 @@ function main({ argv = process.argv.slice(2), env = process.env, stdout = proces
   const out = jsonPrinter(stdout);
   try {
     if (!argv.length || argv[0] === '-h' || argv[0] === '--help') {
-      stderr.write(`Usage: cli.js <${OPS.join('|')}> [--dir D] [--config P] [--run-id ID] [--key K] [--id I] [--url U] [--deduplicated] [--code C] [--message M] [--run-days N] [--key-days N] [--dry-run]\n`);
+      stderr.write(`Usage: cli.js <${OPS.join('|')}> [--dir D] [--config P] [--run-id ID] [--key K] [--id I] [--url U] [--deduplicated] [--code C] [--message M] [--run-days N] [--key-days N] [--dry-run] [--window N] [--all]\n`);
       return argv.length ? 0 : 2;
     }
     const op = argv[0];
@@ -59,7 +63,8 @@ function main({ argv = process.argv.slice(2), env = process.env, stdout = proces
     const ledger = openLedger({ dir: opts.dir || cfg.dir, now });
 
     let data;
-    if (op === 'status') data = ledger.status();
+    if (op === 'status') data = { ...ledger.status(), staleHeals: staleHeals(ledger) };
+    else if (op === 'flake-rate') data = flakeRates(ledger, { window: opts.window, includeStable: Boolean(opts.all) });
     else if (op === 'show') data = ledger.readRun(need(opts, '--run-id', 'runId'));
     else if (op === 'claim') data = ledger.claim(need(opts, '--key', 'key'), { runId: opts.runId });
     else if (op === 'complete') {

@@ -20,7 +20,8 @@ const { cleanEnv } = require('../helpers/node-env');
 
 const HOSTILE = {
   project: { name: "a developer's own config, not the test's" },
-  triage: { reruns: 1, confidenceThreshold: 0.95, trustedFormats: [], selfHeal: { enabled: true } },
+  triage: { reruns: 1, confidenceThreshold: 0.95, trustedFormats: [], selfHeal: { enabled: true, maxAttemptsPerFingerprint: 1 } },
+  ledger: { dir: 'hostile-ledger' }, // a developer who records runs must not change what the tests see
 };
 
 // every file that exercises code which can read qa-config.json (heal's slow end-to-end block is skipped by name: it passes --config throughout)

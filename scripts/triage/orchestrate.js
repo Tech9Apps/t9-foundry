@@ -7,7 +7,7 @@
 //
 //   node scripts/triage/orchestrate.js --framework <f> [--spec S]... [--test-dir D] [--config-file C] [--cwd D]
 //        [--reruns N] [--preflight ok|failed|unknown] [--snapshot page.html] [--out qa-results] [--run-id ID]
-//        [--threshold T] [--trusted-formats tap] [--timeout-ms N] [--no-plan] [--heal | --no-heal] [--config qa-config.json] [--source T] [--base-url U]
+//        [--threshold T] [--trusted-formats tap] [--timeout-ms N] [--no-plan] [--heal | --no-heal] [--ledger-dir D | --no-ledger] [--config qa-config.json] [--source T] [--base-url U]
 //
 // Steps (each tool is the one documented elsewhere; this only wires them):
 //   1. scripts/results/run.js   the main run                       → <out>/main/
@@ -20,11 +20,14 @@
 // --reruns (default 2, 0–5), --threshold (default 0.8) and --trusted-formats (default tap: the runner formats whose classification may
 // let a product-bug or test-bug verdict ACT; every other format is held at propose) can also be set once in qa-config.json under "triage"
 // (reruns, confidenceThreshold, trustedFormats); a flag overrides the config. The output says which source each setting came from.
+// The run is REMEMBERED (events in the run ledger, docs/phase-3-design.md) only when the project asks: a `ledger` block in qa-config.json, or
+// --ledger-dir; --no-ledger turns it off. Without either the run behaves exactly as it did before the ledger existed.
 // A green run ends after step 1. Output: { ok, data } with the verdict and step for every failure.
 // Exit: 0 = completed (green, or triaged — failures are data) · 2 = bad invocation · 3 = no trustworthy main run
 // (see scripts/results/run.js: could not start, hung, wrote nothing, zero tests, or exit code contradicting the report).
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { defaultRunResults } = require('./lib/run-results');
 const { classify, makeKeyer, parseTrustedFormats } = require('./classify');
@@ -34,7 +37,11 @@ const { plan, connectIfNeeded, writeCommentInputs, isValidRunId } = require('./p
 const { triageConfig, MAX_RERUNS, LIMITS, isInt, checkTriageFlags } = require('./lib/config');
 const { usage, writeJson, parseFlags } = require('../lib/cli');
 const { heal, eligible } = require('./heal');
+const { enabledLedger } = require('../ledger/lib/enable');
+const { healJournal } = require('../ledger/lib/journal');
+const { staleHeals } = require('../ledger/lib/views');
 
+const MAX_RECORDED_RESULTS = 5000;
 const UND_ALARM_MIN = 3; // at least this many undetermined verdicts, and at least this share of the triaged failures,
 const UND_ALARM_SHARE = 0.5; // before the report says the rules lack what they need for this suite
 
@@ -58,6 +65,8 @@ const FLAGS = {
   '--config': { key: 'config' },
   '--source': { key: 'source' },
   '--base-url': { key: 'baseUrl' },
+  '--ledger-dir': { key: 'ledgerDir' },
+  '--no-ledger': { key: 'noLedger', set: true },
 };
 
 function parseArgs(argv) {
@@ -111,7 +120,7 @@ function clearStale(out, warnings) {
 }
 const needsTriage = (t) => t.status === 'failed' || t.flaky;
 
-async function orchestrate(opts, { env = process.env, fetch = globalThis.fetch, runResults = defaultRunResults, now = Date.now } = {}) {
+async function runLoop(opts, { env = process.env, fetch = globalThis.fetch, runResults = defaultRunResults, now = Date.now } = {}, ctx) {
   const out = opts.out || 'qa-results';
   // flag > qa-config.json "triage" block > default
   const cfg = triageConfig({ configPath: opts.config, env });
@@ -128,6 +137,7 @@ async function orchestrate(opts, { env = process.env, fetch = globalThis.fetch, 
   const runId = opts.runId || new Date(now()).toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
   const preflight = opts.preflight || 'unknown';
   const warnings = [];
+  const journal = ctx.ledger ? healJournal({ ledger: ctx.ledger, runId, maxAttempts: cfg.selfHeal.maxAttemptsPerFingerprint, windowDays: cfg.selfHeal.attemptWindowDays, now, warn: ctx.warn }) : undefined;
   const base = [...(opts.framework ? ['--framework', opts.framework] : []), ...(opts.testDir ? ['--test-dir', opts.testDir] : []), ...(opts.configFile ? ['--config-file', opts.configFile] : []),
     ...(opts.cwd ? ['--cwd', opts.cwd] : []), ...(opts.config ? ['--config', opts.config] : []), ...(opts.timeoutMs ? ['--timeout-ms', String(opts.timeoutMs)] : []), '--quiet'];
   const specArgs = (specs) => specs.flatMap((s) => ['--spec', s]);
@@ -137,6 +147,16 @@ async function orchestrate(opts, { env = process.env, fetch = globalThis.fetch, 
   // and the previous triage/plan/flaky/comments (a green or --no-plan run would otherwise leave a failing run's files looking current). Clear exactly
   // those, by name. Nothing else in <out> is touched.
   clearStale(out, warnings);
+  ctx.record('run.start', { ...(opts.framework ? { framework: opts.framework } : {}), ...(opts.source ? { source: opts.source } : {}), pid: process.pid, host: os.hostname(), config: settings });
+  // what the ledger remembers of each test: every result of the main run and of the re-runs, up to a cap (a 50 000-test suite must not write 50 000 lines)
+  let recorded = 0;
+  const recordResults = (phase, tests) => {
+    for (const t of tests) {
+      if (recorded >= MAX_RECORDED_RESULTS) { if (recorded === MAX_RECORDED_RESULTS) { recorded += 1; ctx.warn(`the ledger holds only the first ${MAX_RECORDED_RESULTS} test results of this run`); } return; }
+      recorded += 1;
+      ctx.record('test.result', { spec: t.file || '', name: t.name, status: t.status, phase, ...(Number.isFinite(t.durationMs) ? { durationMs: t.durationMs } : {}) });
+    }
+  };
 
   // 1. the main run
   const first = await runResults([...base, ...specArgs(opts.specs), '--out', path.join(out, 'main')], env);
@@ -149,6 +169,7 @@ async function orchestrate(opts, { env = process.env, fetch = globalThis.fetch, 
     return { code: first.code === 2 ? 2 : 3, doc: { ok: false, stage: 'run', error: (first.doc && first.doc.error) || { code: 'NO_REPORT', message: 'the run produced no result' }, ...(first.doc && first.doc.warnings ? { warnings: first.doc.warnings } : {}) } };
   }
   const main = first.doc.data;
+  recordResults('main', main.tests);
   if (first.doc.warnings && first.doc.warnings.length) warnings.push(...first.doc.warnings.map((w) => `main run: ${w}`));
   const targets = main.tests.filter(needsTriage);
   if (!targets.length) {
@@ -168,7 +189,7 @@ async function orchestrate(opts, { env = process.env, fetch = globalThis.fetch, 
       // exit 3 WITH a report = the runner's exit code contradicts its own report (a crash after a partial report). The main run stops on that; a re-run
       // that is not trusted must not count either: its "pass" would turn a consistent failure into a flaky one.
       if (r.code === 3 && r.doc && r.doc.data) warnings.push(`re-run ${k} cannot be trusted (${(r.doc.warnings && r.doc.warnings[0]) || 'its exit code contradicts its report'}); it is not counted, classifying with ${rerunResults.length + 1} run(s)`);
-      else if (r.doc && r.doc.data) rerunResults.push(r.doc.data);
+      else if (r.doc && r.doc.data) { rerunResults.push(r.doc.data); recordResults(`rerun-${k}`, r.doc.data.tests); }
       else warnings.push(`re-run ${k} produced no usable report (${(r.doc && r.doc.error && r.doc.error.message) || `exit ${r.code}`}); classifying with ${rerunResults.length + 1} run(s)`);
     }
   }
@@ -217,12 +238,16 @@ async function orchestrate(opts, { env = process.env, fetch = globalThis.fetch, 
     actions = p.actions;
   }
 
+  // what was decided about each failure, and what the plan says to do about it
+  const plannedStep = new Map((actions || []).map((a) => [a.key, a.step]));
+  for (const v of report.verdicts) if (v.token) ctx.record('verdict', { token: v.token, class: v.class, confidence: v.confidence, action: v.action, ...(plannedStep.has(v.key) ? { step: plannedStep.get(v.key) } : {}) });
+
   // 6. self-heal (only if enabled): rename a stale test-id on a local branch, validated by re-run, reverted on any failure. Never pushes.
   let healResult = null;
   if (healEnabled && eligible(report).length) {
     const runCwd = path.resolve(opts.cwd || '.');
     healResult = await heal({
-      report, cwd: runCwd, runId, paths: cfg.selfHeal.paths, maxFiles: cfg.selfHeal.maxFiles, maxLines: cfg.selfHeal.maxLines, branchPrefix: cfg.selfHeal.branchPrefix, mainRun: main,
+      report, cwd: runCwd, runId, paths: cfg.selfHeal.paths, maxFiles: cfg.selfHeal.maxFiles, maxLines: cfg.selfHeal.maxLines, branchPrefix: cfg.selfHeal.branchPrefix, mainRun: main, journal,
       // an empty list means a shared helper was edited: re-run the same selection the main run used, not nothing
       validate: async (specs) => { const r = await runResults([...base, ...specArgs(specs.length ? specs : opts.specs), '--out', path.join(out, 'heal-validate')], env); return r.doc && r.doc.data ? r.doc.data : null; },
     });
@@ -251,11 +276,49 @@ async function orchestrate(opts, { env = process.env, fetch = globalThis.fetch, 
   };
 }
 
+// One run of the loop, remembered when the project asked for that (see scripts/ledger/lib/enable.js): the same loop as always, with a record of it.
+// Bookkeeping must never change what a run does: a ledger that cannot be written to is a warning in the result, not a failed run. A run that is killed
+// leaves no `run.end`, which is how the ledger knows it did not finish.
+async function orchestrate(opts, deps = {}) {
+  const env = deps.env || process.env;
+  const now = deps.now || Date.now;
+  const runId = opts.runId || new Date(now()).toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
+  const led = enabledLedger({ configPath: opts.config, env, ledgerDir: opts.ledgerDir, noLedger: opts.noLedger, now });
+  const warnings = [];
+  let writeFailed = false;
+  const ctx = {
+    ledger: led && led.ledger,
+    warn: (m) => { warnings.push(m); },
+    record: (type, fields) => {
+      if (!ctx.ledger) return;
+      try { ctx.ledger.record(runId, type, fields); } catch (e) {
+        if (!writeFailed) { writeFailed = true; warnings.push(`ledger: could not record (${e.message}); this run is missing from the ledger from here on`); }
+      }
+    },
+  };
+  if (ctx.ledger) {
+    // a heal that began and never said how it ended: the run died on its branch, which may still exist
+    for (const h of staleHeals(ctx.ledger)) warnings.push(`ledger: run ${h.runId} began a self-heal on ${h.branch} (from ${String(h.baseSha).slice(0, 8)}) and never recorded how it ended; that branch may still exist (git branch --list 'qa/heal-*')`);
+  }
+  let result;
+  try { result = await runLoop({ ...opts, runId }, deps, ctx); } catch (e) {
+    ctx.record('run.end', { exit: 3, complete: false });
+    throw e;
+  }
+  const { doc } = result;
+  ctx.record('run.end', { exit: result.code, complete: result.code === 0, ...(doc.ok && doc.data && doc.data.totals ? { counts: doc.data.totals } : {}) });
+  if (warnings.length) {
+    if (doc.ok && doc.data) doc.data.warnings = [...(doc.data.warnings || []), ...warnings];
+    else doc.warnings = [...(doc.warnings || []), ...warnings];
+  }
+  return result;
+}
+
 async function main({ argv = process.argv.slice(2), env = process.env, stdout = process.stdout, stderr = process.stderr, ...deps } = {}) {
   const emit = (obj) => stdout.write(`${JSON.stringify(obj, null, 2)}\n`);
   try {
     if (!argv.length || argv[0] === '-h' || argv[0] === '--help') {
-      stderr.write('Usage: orchestrate.js --framework F [--spec S]... [--test-dir D] [--config-file C] [--cwd D] [--reruns 2] [--preflight ok|failed|unknown] [--snapshot page.html] [--out DIR] [--run-id ID] [--threshold 0.8] [--trusted-formats tap|none] [--timeout-ms N] [--no-plan] [--heal | --no-heal] [--config P] [--source T] [--base-url U]\n');
+      stderr.write('Usage: orchestrate.js --framework F [--spec S]... [--test-dir D] [--config-file C] [--cwd D] [--reruns 2] [--preflight ok|failed|unknown] [--snapshot page.html] [--out DIR] [--run-id ID] [--threshold 0.8] [--trusted-formats tap|none] [--timeout-ms N] [--no-plan] [--heal | --no-heal] [--ledger-dir D | --no-ledger] [--config P] [--source T] [--base-url U]\n');
       return argv.length ? 0 : 2;
     }
     const opts = parseArgs(argv);

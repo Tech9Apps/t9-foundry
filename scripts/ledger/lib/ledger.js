@@ -47,7 +47,7 @@ const TYPES = {
   'action.claimed': { key: 'string', step: 'string', target: 'string?' },
   'action.done': { key: 'string', id: 'string?', url: 'string?', deduplicated: 'boolean?' },
   'action.failed': { key: 'string', code: 'string', message: 'string?' },
-  'heal.begin': { branch: 'string', baseSha: 'string', token: 'string?' },
+  'heal.begin': { branch: 'string', baseSha: 'string', tokens: 'array?' },
   'heal.end': { branch: 'string', outcome: ['kept', 'reverted', 'interrupted'] },
   budget: { wallClockMs: 'number?', turns: 'number?', costUsd: 'number?', exceeded: 'string?' },
   'run.end': { exit: 'number', complete: 'boolean', counts: 'object?' },
@@ -320,6 +320,15 @@ function openLedger({ dir, now = Date.now, pid = process.pid, host = os.hostname
     return { events, warnings: problem ? [problem, ...warnings] : warnings };
   };
 
+  // Every readable run, oldest first, with its events: what the cross-run views (scripts/ledger/lib/views.js) read. A file that holds no
+  // usable event has no run id and is left out (listRuns reports it as unreadable).
+  function readAllRuns() {
+    return listDir(p('runs')).filter((n) => n.endsWith('.jsonl')).map((n) => {
+      const { events, warnings } = readFile(p('runs', n), n);
+      return { file: n, runId: events[0] ? events[0].runId : null, startedAt: events[0] ? events[0].ts : null, events, warnings, finished: events.some((e) => e.type === 'run.end') };
+    }).filter((r) => r.runId).sort((a, b) => (a.startedAt < b.startedAt ? -1 : a.startedAt > b.startedAt ? 1 : 0));
+  }
+
   function listRuns() {
     return listDir(p('runs')).filter((n) => n.endsWith('.jsonl')).sort().map((n) => {
       const { events, warnings } = readFile(p('runs', n), n);
@@ -555,7 +564,7 @@ function openLedger({ dir, now = Date.now, pid = process.pid, host = os.hostname
     return { dryRun, ...removed };
   }
 
-  return { dir: root, record, audit, readRun, readAudit, listRuns, claim, readClaim, complete, fail, listKeys, acquireLock, withLock, listLocks, status, prune, versionProblem };
+  return { dir: root, record, audit, readRun, readAudit, readAllRuns, listRuns, claim, readClaim, complete, fail, listKeys, acquireLock, withLock, listLocks, status, prune, versionProblem };
 }
 
 module.exports = { openLedger, validateRecord, parseEvents, stemOf, pidAlive, TYPES, ENVELOPE, RESULT, VERSION, MAX_RECORD_BYTES, DEFAULT_LOCK_TTL_MS };

@@ -20,7 +20,7 @@ function validate(block, where) {
   return b;
 }
 
-// { file, dir, retentionDays, keyRetentionDays, explicit }. No config file at all is fine: everything is the default. `dir` is relative to
+// { file, present, dir, retentionDays, keyRetentionDays, explicit }. No config file at all is fine: everything is the default. `dir` is relative to
 // the directory the command runs in, like every other output folder.
 function ledgerConfig({ configPath, env = process.env } = {}) {
   const file = findConfig(configPath, env);
@@ -33,6 +33,7 @@ function ledgerConfig({ configPath, env = process.env } = {}) {
   const v = validate(raw, file || 'qa-config.json');
   return {
     file: file || null,
+    present: raw !== undefined, // a `ledger` block, even an empty one, is how a project says it wants runs recorded
     dir: v.dir === undefined ? DEFAULTS.dir : v.dir,
     retentionDays: v.retentionDays === undefined ? DEFAULTS.retentionDays : v.retentionDays,
     keyRetentionDays: DEFAULTS.keyRetentionDays,

@@ -14,6 +14,8 @@ const { EventEmitter } = require('node:events');
 const { main: orchestrate } = require('../../scripts/triage/orchestrate');
 const { main: healCli, heal, planHeal, eligible, provenanceProblems } = require('../../scripts/triage/heal');
 const { classify } = require('../../scripts/triage/classify');
+const { openLedger } = require('../../scripts/ledger/lib/ledger');
+const { staleHeals } = require('../../scripts/ledger/lib/views');
 
 const { baseEnv, git, PAGE_JS, UI_TEST, makeProject: makeHealProject } = require('../helpers/heal-project');
 
@@ -784,6 +786,74 @@ describe('heal CLI', () => {
     assert.deepEqual(JSON.parse(fs.readFileSync(out, 'utf8')), r.json);
   });
 
+  describe('the cross-run attempt cap, on the heal.js command line too', () => {
+    const tokenOf = (reportFile) => JSON.parse(fs.readFileSync(reportFile, 'utf8')).data.verdicts[0].token;
+    const mainJson = (p) => { const f = path.join(p.root, 'main.json'); fs.writeFileSync(f, JSON.stringify({ ok: false, data: { tests: [] } })); return f; };
+    const pass = async () => ({ code: 0, doc: { ok: true, data: { totals: { passed: 1, failed: 0 }, tests: [{ name: 'DEMO-101/TC-901: the Apply button is on the cart panel', ticket: 'DEMO-101', caseId: 'TC-901', file: 'tests/ui.test.js', status: 'passed' }] } } });
+    const argvFor = (p, report, extra) => ['--report', report, '--main', mainJson(p), '--framework', 'node', '--cwd', p.proj, '--paths', 'tests', '--apply', '--enable', ...extra];
+
+    test('a failure already healed once this week is refused: nothing changes, nothing is recorded, and the reason names the limit', async () => {
+      const p = makeProject(); const before = p.state();
+      const report = reportFor(p);
+      const ledgerDir = path.join(p.root, 'ledger');
+      const earlier = openLedger({ dir: ledgerDir });
+      earlier.record('earlier', 'heal.begin', { branch: 'qa/heal-earlier', baseSha: 'abc', tokens: [tokenOf(report)] });
+      earlier.record('earlier', 'heal.end', { branch: 'qa/heal-earlier', outcome: 'kept' });
+      const r = await cli(argvFor(p, report, ['--run-id', 'capped', '--ledger-dir', ledgerDir]), pass);
+      assert.equal(r.code, 1);
+      assert.equal(r.json.data.status, 'refused');
+      assert.equal(r.json.data.capped, true);
+      assert.match(r.json.data.reason, /already begun 1 time\(s\) for qafp[0-9a-f]{12} in the last 7 day\(s\); the limit is 1 \(triage\.selfHeal\.maxAttemptsPerFingerprint\)/);
+      assert.deepEqual(p.state(), before);
+      assert.deepEqual(openLedger({ dir: ledgerDir }).readRun('capped').events, [], 'a refusal began nothing, so it records nothing');
+    });
+
+    test('the limit and the window come from the config; raising the limit lets the heal through, and an old attempt falls out of the window', async () => {
+      const p = makeProject();
+      const report = reportFor(p);
+      const ledgerDir = path.join(p.root, 'ledger');
+      const earlier = openLedger({ dir: ledgerDir });
+      earlier.record('earlier', 'heal.begin', { branch: 'qa/heal-earlier', baseSha: 'abc', tokens: [tokenOf(report)] });
+      const raised = p.cfg({ selfHeal: { enabled: true, paths: ['tests'], maxAttemptsPerFingerprint: 2 } });
+      const r1 = await cli(argvFor(p, report, ['--run-id', 'again', '--ledger-dir', ledgerDir, '--config', raised]), pass);
+      assert.equal(r1.json.data.status, 'healed', JSON.stringify(r1.json));
+      // a second project, an attempt from 10 days ago, a 7-day window: it does not count
+      const q = makeProject();
+      const reportQ = reportFor(q);
+      const ledgerQ = path.join(q.root, 'ledger');
+      openLedger({ dir: ledgerQ, now: () => Date.now() - 10 * 24 * 60 * 60 * 1000 }).record('old', 'heal.begin', { branch: 'qa/heal-old', baseSha: 'abc', tokens: [tokenOf(reportQ)] });
+      const r2 = await cli(argvFor(q, reportQ, ['--run-id', 'fresh', '--ledger-dir', ledgerQ]), pass);
+      assert.equal(r2.json.data.status, 'healed', JSON.stringify(r2.json));
+      const wider = q.cfg({ selfHeal: { enabled: true, paths: ['tests'], attemptWindowDays: 30 } });
+      const q2 = makeProject();
+      const reportQ2 = reportFor(q2);
+      const ledgerQ2 = path.join(q2.root, 'ledger');
+      openLedger({ dir: ledgerQ2, now: () => Date.now() - 10 * 24 * 60 * 60 * 1000 }).record('old', 'heal.begin', { branch: 'qa/heal-old', baseSha: 'abc', tokens: [tokenOf(reportQ2)] });
+      const r3 = await cli(argvFor(q2, reportQ2, ['--run-id', 'fresh', '--ledger-dir', ledgerQ2, '--config', wider]), pass);
+      assert.equal(r3.json.data.status, 'refused', 'a 30-day window still holds the 10-day-old attempt');
+    });
+
+    test('--no-ledger switches the cap off for this call, and --ledger-dir with --no-ledger is a usage error', async () => {
+      const p = makeProject();
+      const report = reportFor(p);
+      const ledgerDir = path.join(p.root, 'ledger');
+      openLedger({ dir: ledgerDir }).record('earlier', 'heal.begin', { branch: 'qa/heal-earlier', baseSha: 'abc', tokens: [tokenOf(report)] });
+      const r = await cli(argvFor(p, report, ['--run-id', 'skip', '--no-ledger']), pass);
+      assert.equal(r.json.data.status, 'healed', JSON.stringify(r.json));
+      const bad = await cli(argvFor(p, report, ['--run-id', 'x', '--no-ledger', '--ledger-dir', ledgerDir]), pass);
+      assert.equal(bad.code, 2);
+      assert.match(bad.err, /contradict/);
+    });
+
+    test('a preview (no --apply) neither reads nor writes the ledger', async () => {
+      const p = makeProject();
+      const ledgerDir = path.join(p.root, 'ledger');
+      const r = await cli(['--report', reportFor(p), '--cwd', p.proj, '--paths', 'tests', '--ledger-dir', ledgerDir], pass);
+      assert.equal(r.json.data.status, 'preview');
+      assert.equal(fs.existsSync(ledgerDir), false);
+    });
+  });
+
   // ── "off unless enabled" is a property of the heal, not only of the orchestrator ──
   const applyArgv = (p, extra = []) => ['--report', reportFor(p), '--main', path.join(p.root, 'main.json'), '--framework', 'node', '--cwd', p.proj, '--paths', 'tests', '--apply', ...extra];
   const passAll = async () => ({ code: 0, doc: { ok: true, data: { totals: { passed: 1, failed: 0 }, tests: [{ name: 'DEMO-101/TC-901: the Apply button is on the cart panel', ticket: 'DEMO-101', caseId: 'TC-901', file: 'tests/ui.test.js', status: 'passed' }] } } });
@@ -861,6 +931,21 @@ describe('heal CLI', () => {
     assert.equal(git(p.proj, 'status', '--porcelain', '--untracked-files=no'), '');
   });
 
+  test('a REAL SIGTERM mid-heal is recorded in the ledger: heal.begin, then heal.end "interrupted", so no stale branch is reported', async () => {
+    const started = path.join(fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), 'qa-heal-sig-')), 'started');
+    const p = makeProject({ files: { 'tests/ui.test.js': slowSpec(started) } });
+    const ledgerDir = path.join(p.root, 'ledger');
+    const { child, seen } = spawnHeal(p, 'sigL', ['--ledger-dir', ledgerDir]);
+    await until('the validation run to start', () => fs.existsSync(started), 30000, seen);
+    child.kill('SIGTERM');
+    const { code } = await seen.exited;
+    assert.equal(code, 143);
+    const l = openLedger({ dir: ledgerDir });
+    const ev = l.readRun('sigL').events;
+    assert.deepEqual(ev.map((e) => [e.type, e.branch, e.outcome]), [['heal.begin', 'qa/heal-sigL', undefined], ['heal.end', 'qa/heal-sigL', 'interrupted']]);
+    assert.deepEqual(staleHeals(l), []);
+  });
+
   test('a runner that IGNORES SIGTERM is still stopped before the repository is put back, so it cannot write into it afterwards', async () => {
     const dir = fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), 'qa-heal-trap-'));
     const started = path.join(dir, 'started'); const late = path.join(dir, 'late-write');
@@ -881,13 +966,16 @@ describe('heal CLI', () => {
     const failing = UI_TEST + `\ntest('fails: forces the validation to fail', () => { require('fs').writeFileSync(${JSON.stringify(marker)}, '1'); throw new Error('boom'); });\n`;
     const p = makeProject({ files: { 'tests/ui.test.js': failing } }); const before = p.state();
     fs.writeFileSync(path.join(p.proj, '.git', 'hooks', 'post-checkout'), `#!/bin/sh\nif [ -f ${JSON.stringify(marker)} ]; then touch ${JSON.stringify(running)}; sleep 1; fi\n`, { mode: 0o755 });
-    const { child, seen } = spawnHeal(p, 'rev1');
+    const ledgerDir = path.join(p.root, 'ledger');
+    const { child, seen } = spawnHeal(p, 'rev1', ['--ledger-dir', ledgerDir]);
     await until('the revert to begin', () => fs.existsSync(running), 30000, seen);
     child.kill('SIGTERM');
     const { code, signal } = await seen.exited;
     assert.deepEqual([code, signal], [143, null], `the interrupt waited for the revert instead of killing the process in the middle of it (stdout: ${seen.stdout.slice(0, 500)} stderr: ${seen.stderr.slice(0, 300)})`);
     assert.match(seen.stderr, /interrupted by SIGTERM; the repository was restored exactly as found/);
     assert.deepEqual(p.state(), before);
+    // the heal was failing and reverting when the signal came: what the ledger says is that it was INTERRUPTED, not that it simply reverted
+    assert.deepEqual(openLedger({ dir: ledgerDir }).readRun('rev1').events.map((e) => [e.type, e.outcome]), [['heal.begin', undefined], ['heal.end', 'interrupted']]);
   });
 
   test('a report with no runner format is refused for --apply: removing "format" must not skip the project\'s trust setting', async () => {
@@ -935,5 +1023,85 @@ describe('heal CLI', () => {
     const bad = path.join(p.root, 'bad.json'); fs.writeFileSync(bad, '{"x":1}');
     assert.match((await cli(['--report', bad])).json.error.message, /no "verdicts" array/);
     for (const argv of [[], ['--bogus'], ['--report'], ['--report', 'x', '--max-files', '0'], ['--report', 'x', '--max-lines', 'abc']]) assert.equal((await cli(argv)).code, 2, argv.join(' '));
+  });
+});
+
+describe('self-heal and the run ledger, through the orchestrator', () => {
+  const heals = (p, runId, extra = []) => triage(p, { extra: ['--run-id', runId, ...extra] });
+  const events = (dir, runId) => openLedger({ dir }).readRun(runId).events;
+
+  test('a heal that lands is recorded: heal.begin on its branch from the base commit, then heal.end "kept", before run.end', async () => {
+    const p = makeProject();
+    const ledger = path.join(p.root, 'ledger');
+    const base = git(p.proj, 'rev-parse', 'HEAD');
+    const r = await heals(p, 'k1', ['--ledger-dir', ledger]);
+    assert.equal(r.json.data.heal.status, 'healed', JSON.stringify(r.json));
+    const ev = events(ledger, 'k1');
+    const order = ev.filter((e) => ['verdict', 'heal.begin', 'heal.end', 'run.end'].includes(e.type)).map((e) => e.type);
+    assert.deepEqual(order, ['verdict', 'heal.begin', 'heal.end', 'run.end']);
+    const begin = ev.find((e) => e.type === 'heal.begin');
+    const verdict = ev.find((e) => e.type === 'verdict');
+    assert.deepEqual([begin.branch, begin.baseSha, begin.tokens], ['qa/heal-k1', base, [verdict.token]]);
+    assert.deepEqual([ev.find((e) => e.type === 'heal.end').branch, ev.find((e) => e.type === 'heal.end').outcome], ['qa/heal-k1', 'kept']);
+    assert.deepEqual(staleHeals(openLedger({ dir: ledger })), []);
+  });
+
+  test('a heal that is reverted (the pre-commit hook rejects it) ends as "reverted", and the attempt still counts', async () => {
+    const p = makeProject({ hook: '#!/bin/sh\necho "rejected by hook" >&2\nexit 1\n' });
+    const ledger = path.join(p.root, 'ledger');
+    const r = await heals(p, 'v1', ['--ledger-dir', ledger]);
+    assert.equal(r.json.data.heal.status, 'reverted');
+    assert.deepEqual(events(ledger, 'v1').filter((e) => e.type.startsWith('heal.')).map((e) => [e.type, e.outcome]), [['heal.begin', undefined], ['heal.end', 'reverted']]);
+    const r2 = await heals(p, 'v2', ['--ledger-dir', ledger]);
+    assert.equal(r2.json.data.heal.status, 'refused');
+    assert.equal(r2.json.data.heal.capped, true, 'a reverted attempt used the attempt: the same failure is not retried in a loop');
+  });
+
+  test('a refusal before the branch exists (the heal never began) is not recorded as an attempt', async () => {
+    const p = makeProject();
+    const ledger = path.join(p.root, 'ledger');
+    fs.writeFileSync(path.join(p.proj, 'tests', 'ui.test.js'), fs.readFileSync(path.join(p.proj, 'tests', 'ui.test.js'), 'utf8') + '\n// uncommitted edit\n'); // dirty tree: refused before any branch
+    const r = await heals(p, 'n1', ['--ledger-dir', ledger]);
+    assert.equal(r.json.data.heal.status, 'refused');
+    assert.equal(events(ledger, 'n1').filter((e) => e.type.startsWith('heal.')).length, 0);
+  });
+
+  test('the cap holds across runs: the same stale selector on the next run is refused, with the reason in the warnings', async () => {
+    const p = makeProject();
+    const ledger = path.join(p.root, 'ledger');
+    assert.equal((await heals(p, 'c1', ['--ledger-dir', ledger])).json.data.heal.status, 'healed');
+    const before = p.state();
+    const r = await heals(p, 'c2', ['--ledger-dir', ledger]);
+    assert.equal(r.json.data.heal.status, 'refused');
+    assert.match(r.json.data.heal.reason, /already begun 1 time\(s\)/);
+    assert.ok(r.json.data.warnings.some((w) => /^self-heal refused: self-heal has already begun/.test(w)), JSON.stringify(r.json.data.warnings));
+    assert.deepEqual(p.state(), before, 'no second branch, nothing touched');
+    assert.equal(events(ledger, 'c2').filter((e) => e.type.startsWith('heal.')).length, 0);
+  });
+
+  test('raising triage.selfHeal.maxAttemptsPerFingerprint lets the second run heal too', async () => {
+    const p = makeProject();
+    const ledger = path.join(p.root, 'ledger');
+    const cfg = { selfHeal: { enabled: true, paths: ['tests'], maxAttemptsPerFingerprint: 2 } };
+    assert.equal((await triage(p, { triageCfg: cfg, extra: ['--run-id', 'm1', '--ledger-dir', ledger] })).json.data.heal.status, 'healed');
+    assert.equal((await triage(p, { triageCfg: cfg, extra: ['--run-id', 'm2', '--ledger-dir', ledger] })).json.data.heal.status, 'healed');
+    assert.match(p.state().branches, /qa\/heal-m1/);
+    assert.match(p.state().branches, /qa\/heal-m2/);
+  });
+
+  test('without a ledger there is no cap and no event: the one-attempt-per-run rule is all that applies (as before)', async () => {
+    const p = makeProject();
+    assert.equal((await heals(p, 'p1')).json.data.heal.status, 'healed');
+    assert.equal((await heals(p, 'p2')).json.data.heal.status, 'healed');
+    assert.equal(fs.existsSync(path.join(p.proj, '.qa-ledger')), false);
+  });
+
+  test('a ledger that is read-only to this run does not stop a heal, or its revert', async () => {
+    const p = makeProject();
+    const notADir = path.join(p.root, 'ledger-is-a-file');
+    fs.writeFileSync(notADir, 'x');
+    const r = await heals(p, 'w1', ['--ledger-dir', path.join(notADir, 'ledger')]);
+    assert.equal(r.json.data.heal.status, 'healed', JSON.stringify(r.json.data));
+    assert.ok(r.json.data.warnings.some((w) => /^ledger: could not record/.test(w)));
   });
 });
