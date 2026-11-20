@@ -136,6 +136,20 @@ function clearStale(out, warnings) {
 }
 const needsTriage = (t) => t.status === 'failed' || t.flaky;
 
+// What the ledger remembers of one verdict, for the run summary (scripts/report.js): the fingerprint token, the decision, the plan's step, and (cut to what a summary needs, so a
+// record stays well under its size limit) the test and the rule. When the plan found a tracker item for it (an open report to comment on, a fixed one this regresses, a dismissed one),
+// that item's id, and who found it: `ledger` when this ledger filed it and the tracker's search did not show it, else `tracker`.
+function verdictRecord(v, action) {
+  const found = action && (action.existing || action.regressionOf || action.dismissedAs);
+  return {
+    token: v.token, class: v.class, confidence: v.confidence, action: v.action,
+    ...(action ? { step: action.step } : {}),
+    ...(v.test && typeof v.test.name === 'string' ? { test: v.test.name.slice(0, VERDICT_TEXT_MAX) } : {}),
+    ...(typeof v.rule === 'string' ? { rule: v.rule.slice(0, VERDICT_TEXT_MAX) } : {}),
+    ...(found && found.id !== undefined && found.id !== null ? { item: String(found.id).slice(0, VERDICT_TEXT_MAX), itemFrom: action.existing && action.existing.source === 'ledger' ? 'ledger' : 'tracker' } : {}),
+  };
+}
+
 async function runLoop(opts, { env = process.env, fetch = globalThis.fetch, runResults = defaultRunResults, now = Date.now } = {}, ctx) {
   const out = opts.out || 'qa-results';
   // flag > qa-config.json "triage" block > default
@@ -282,16 +296,7 @@ async function runLoop(opts, { env = process.env, fetch = globalThis.fetch, runR
       if (!v.token) continue;
       if (n >= MAX_RECORDED_VERDICTS) { ctx.warn(`the ledger holds only the first ${MAX_RECORDED_VERDICTS} verdicts of this run`); break; }
       n += 1;
-      const a = planned.get(v.key);
-      // the tracker item the plan found for this failure (an open report to comment on, a fixed one this regresses, a dismissed one), and who found it: what a summary shows
-      const found = a && (a.existing || a.regressionOf || a.dismissedAs);
-      ctx.record('verdict', {
-        token: v.token, class: v.class, confidence: v.confidence, action: v.action,
-        ...(a ? { step: a.step } : {}),
-        ...(v.test && typeof v.test.name === 'string' ? { test: v.test.name.slice(0, VERDICT_TEXT_MAX) } : {}),
-        ...(typeof v.rule === 'string' ? { rule: v.rule.slice(0, VERDICT_TEXT_MAX) } : {}),
-        ...(found && found.id !== undefined && found.id !== null ? { item: String(found.id).slice(0, VERDICT_TEXT_MAX), itemFrom: a.existing && a.existing.source === 'ledger' ? 'ledger' : 'tracker' } : {}),
-      });
+      ctx.record('verdict', verdictRecord(v, planned.get(v.key)));
     }
   }
 
@@ -443,4 +448,4 @@ async function main({ argv = process.argv.slice(2), env = process.env, stdout = 
 
 if (require.main === module) main().then((code) => { process.exitCode = code; });
 
-module.exports = { main, orchestrate, healWarning, MAX_RERUNS, FLAGS };
+module.exports = { main, orchestrate, healWarning, verdictRecord, MAX_RERUNS, FLAGS };

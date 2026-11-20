@@ -9,7 +9,8 @@
 //   - the address never appears in anything this module returns or says, and a failure to post is a reason string, never an exception: the run is not failed by Slack.
 const DEFAULT_HOST = 'hooks.slack.com';
 const MAX_BODY_BYTES = 32 * 1024;
-const HOST = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
+// a host NAME: lower case, at least two labels, and not an address (127.0.0.1 and 169.254.169.254 are not places a summary is sent)
+const HOST = /^(?![0-9.]+$)[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
 
 // { configured: false } when no webhook is set; { configured: true, ok: true, url } when it may be used; { configured: true, ok: false, reason } when it may not.
 function slackTarget(raw, { hosts = [] } = {}) {
@@ -30,6 +31,7 @@ async function postSlack({ url, text, fetch = globalThis.fetch, timeoutMs = 1000
   if (Buffer.byteLength(body) > MAX_BODY_BYTES) return { ok: false, reason: `the message is larger than ${MAX_BODY_BYTES} bytes, so it was not sent` };
   try {
     const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body, redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) });
+    try { if (res.body && res.body.cancel) await res.body.cancel(); } catch { /* the answer is not read: release it */ }
     if (res.status >= 200 && res.status < 300) return { ok: true };
     return { ok: false, reason: res.status >= 300 && res.status < 400 ? `the webhook answered with a redirect (${res.status}), which is not followed` : `the webhook answered ${res.status}` };
   } catch (e) {

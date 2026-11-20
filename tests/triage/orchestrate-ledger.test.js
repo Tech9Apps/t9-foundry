@@ -338,6 +338,46 @@ describe('the run record carries what a summary needs (scripts/report.js reads n
   });
 });
 
+describe('the verdict record, for every step the plan can take', () => {
+  const { verdictRecord } = require('../../scripts/triage/orchestrate');
+  const v = { token: 'qafp0123456789ab', class: 'product-bug', confidence: 0.9, action: 'act', test: { name: 'checkout' }, rule: 'PB-1' };
+
+  test('no plan: the decision, the test and the rule, and nothing about a tracker item', () => {
+    assert.deepEqual(verdictRecord(v, undefined), { token: 'qafp0123456789ab', class: 'product-bug', confidence: 0.9, action: 'act', test: 'checkout', rule: 'PB-1' });
+  });
+
+  test('a step that found no item carries the step and no item', () => {
+    for (const step of ['file-bug', 'report-flaky', 'propose', 'duplicate-in-run']) assert.deepEqual(Object.keys(verdictRecord(v, { step })).sort(), ['action', 'class', 'confidence', 'rule', 'step', 'test', 'token'], step);
+  });
+
+  test('an open report found by the tracker\'s search, and one found by the ledger, are told apart', () => {
+    assert.deepEqual(pick(verdictRecord(v, { step: 'comment-existing', existing: { id: 7 } })), { step: 'comment-existing', item: '7', itemFrom: 'tracker' });
+    assert.deepEqual(pick(verdictRecord(v, { step: 'comment-existing', existing: { id: '7', source: 'ledger' } })), { step: 'comment-existing', item: '7', itemFrom: 'ledger' });
+    assert.deepEqual(pick(verdictRecord(v, { step: 'comment-existing', existing: { id: '7', source: 'tracker' } })), { step: 'comment-existing', item: '7', itemFrom: 'tracker' });
+  });
+
+  test('the closed report a regression regresses, and the dismissed one, are the item (always found by the tracker)', () => {
+    assert.deepEqual(pick(verdictRecord(v, { step: 'file-regression', regressionOf: { id: 30 } })), { step: 'file-regression', item: '30', itemFrom: 'tracker' });
+    assert.deepEqual(pick(verdictRecord(v, { step: 'report-dismissed', dismissedAs: { id: 12 } })), { step: 'report-dismissed', item: '12', itemFrom: 'tracker' });
+  });
+
+  test('an item without an id is not recorded; an id of 0 is', () => {
+    assert.equal(verdictRecord(v, { step: 'comment-existing', existing: {} }).item, undefined);
+    assert.equal(verdictRecord(v, { step: 'comment-existing', existing: { id: null } }).item, undefined);
+    assert.equal(verdictRecord(v, { step: 'comment-existing', existing: { id: 0 } }).item, '0');
+  });
+
+  test('the test, the rule and the item are cut to 300 characters; a test with no name is simply absent', () => {
+    const long = 'x'.repeat(2000);
+    const r = verdictRecord({ ...v, test: { name: long }, rule: long }, { step: 'comment-existing', existing: { id: long } });
+    assert.deepEqual([r.test.length, r.rule.length, r.item.length], [300, 300, 300]);
+    assert.equal(verdictRecord({ ...v, test: {} }, undefined).test, undefined);
+    assert.equal(verdictRecord({ ...v, test: undefined, rule: undefined }, undefined).rule, undefined);
+  });
+
+  function pick(r) { return { step: r.step, item: r.item, itemFrom: r.itemFrom }; }
+});
+
 describe('the summary of the loop (scripts/report.js), end to end', () => {
   test('run 1: the bug that was filed, found even though the filing was not attributed to the run; run 2: the comment that waits, found by the ledger and not by the search', async () => {
     const { MOCKS } = require('../tracker/workspace');

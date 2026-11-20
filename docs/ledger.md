@@ -17,7 +17,9 @@ The ledger is **off** unless the project asks for it. Add a `ledger` block (an e
 ```
 
 or pass `--ledger-dir <dir>` to a command. There is deliberately no flag that turns it off for one run, and a flag may not point a run at a
-different ledger than the config names: either would let one command quietly lift what the project set. To stop recording, remove the block.
+different ledger than the config names: either would let one command quietly lift what the project set. To stop recording, remove the block. (Pointing a
+command at another config file with `--config` is the way round that: it is a person's decision, and no script here has an allow rule that would let the
+agent make it unseen.)
 A relative `dir` is relative to the config file, not to where you happened to run the command.
 
 Other settings that need it: `budget.cooldownMinutes` and the run locks (both are ignored without a ledger, and a cooldown with no ledger says
@@ -28,9 +30,10 @@ so in the run's warnings). The wall-clock limit `budget.maxWallClockMs` works wi
 ```
 .qa-ledger/
   VERSION                     the layout version ("1")
-  runs/<runId>.jsonl          the events of one run: start, each test result, each verdict, warnings, spend, end
+  runs/<run>.jsonl            the events of one run: start, each test result, each verdict, warnings, spend, end (the name is the run id,
+                              lower-cased, with a hash added when it holds anything unusual)
   keys/<hash>.json            one claim per idempotency key: "this write was started / finished"
-  locks/<scope>.lock          who holds the environment or the ticket right now
+  locks/<hash>.lock           who holds the environment or the ticket right now (named by a hash of what is locked; the file says which)
   audit.jsonl                 every write to the tracker and every lock taken over, from all runs
 ```
 
@@ -51,9 +54,10 @@ what the record says. It has these parts:
 |---|---|
 | Headline | `passed`, `N failed`, `did not finish`, `stopped by its budget (partial)`, or `ended with an error (exit N)` |
 | The table at the top | framework, ticket, times, test counts, how many runs the verdicts rest on, and what the run **spent** |
-| Failures | one row per failure: class, confidence, the rule that decided it, and **what happened** to it |
-| Flaky | tests that flipped in this run, with how often they flipped over their recent runs (report only: nothing is quarantined) |
+| Verdicts | one row per failure or flaky test: class, confidence, the rule that decided it, and **what happened** to it |
+| Flaky | tests that flipped in **this** run (a pass in one phase and a failure in another, or marked flaky by the runner), with how often they flipped over their recent runs when there is a history (report only: nothing is quarantined) |
 | Warnings | what the run itself warned about (a search that could not see everything, a skipped step, a stale heal branch) |
+| Problems with the record | only when the ledger itself is damaged or could not be read in full (see below) |
 | Not done, and why | what a person still has to do, what was held back and why, and whether the run itself finished |
 
 **What happened** is one of: `filed #N`, `commented on #N`, `waiting for a person` (the plan says a bug or a comment is due and nobody has
@@ -64,8 +68,13 @@ the ledger found it and the tracker's search did not: the search index lags, and
 **Spent.** Wall-clock time is measured by the run. **Turns and cost are not measured by the scripts**; they show as `not measured` unless
 whatever launched the model reported them with `node scripts/ledger/cli.js budget-record --run-id <id> --turns N --cost-usd X`.
 
-A run that has **no end** (it was killed, or the machine slept through it) is shown as `did not finish`, whatever else it recorded. A run that was
-**refused** (exit 4: a cooldown, or a lock held) wrote nothing, so there is nothing to summarize: the refusal is the JSON the command printed.
+A run that has **no end** (it was killed, or the machine slept through it) is shown as `did not finish`, whatever else it recorded. A run that finished with no tests is `ran no tests`, never `passed`.
+
+**A damaged ledger is said out loud.** A line that cannot be parsed, a record cut to fit, or an audit log over 16 MB (the reader will not take a bigger file) becomes a
+"Problems with the record" section and a line on stderr. A write that cannot be confirmed because the audit log was not read in full is shown as `cannot tell whether it was
+written` (never as `waiting` or `filed`), failures with no verdict in the record are counted, and none of this is ever "Nothing: every step ran". Such a run is not green. A run that was
+**refused** (exit 4: a cooldown, or a lock held) is not recorded, so there is nothing to summarize: the refusal is the JSON the command printed. (The one thing it can leave
+is the audit line for a stale lock it took over on the way.)
 
 More ways in:
 
@@ -79,21 +88,26 @@ node scripts/ledger/cli.js flake-rate           # tests that flipped between pas
 
 `report.js` always prints to stdout. It can also:
 
-- **Append to `$GITHUB_STEP_SUMMARY`** when that is set (in CI), but only if it names an existing regular file; it never creates or follows anything
-  there. `--no-step-summary` skips it.
+- **Append to `$GITHUB_STEP_SUMMARY`**, but only inside GitHub Actions (`GITHUB_ACTIONS` is `true`), because that variable names a file to append to and
+  nothing else should be trusted to set it. The file is opened for appending without creating anything and without following a link, and checked through the
+  open file: it must be a regular file, with one name (not a hard link), owned by this user. `--no-step-summary` skips it.
 - **Write a ticket-comment input file** with `--comment-out FILE`, in the shape the planner writes (`{ id, body, idempotencyKey }`), for the ticket
   the run was for (`--ticket` on the orchestrator, or `--ticket` here). It is an *input file*: posting it is a separate step, behind the same human
-  gate as every other comment (`node scripts/tracker/cli.js comment --input-file FILE`). Its key is the same every time for a run, so posting it
-  twice comments once.
-- **Post a short version to Slack** when `QA_SLACK_WEBHOOK` is set. The address is a credential, so it is held to rules: `https` only, no user
-  name or odd port in it, the host must be `hooks.slack.com` or one named in `report.slackHosts` in `qa-config.json`, a redirect is not followed,
-  the message is size-capped, and the address is never printed. `--slack-only-failures` keeps a green run quiet; `--no-slack` never posts.
+  gate as every other comment (`node scripts/tracker/cli.js comment --input-file FILE`). Its key is the same every time for a run and ticket, so posting it
+  twice comments once. It is written over a regular file or a new path, never over a link, a folder or a pipe. It is **not written for an Azure tracker**: that
+  adapter posts comment text as HTML, and this summary is Markdown, which is only safe where Markdown is what is shown.
+- **Post a short version to Slack**, only when you ask: `--slack` (or `--slack-only-failures`, which keeps a green run quiet) **and** `QA_SLACK_WEBHOOK` set. A webhook that
+  merely happens to be in the environment is not enough, so approving `report.js` never posts by surprise. The address is a credential, so it is held to rules:
+  `https` only, no user name or odd port in it, the host must be `hooks.slack.com` or one named in `report.slackHosts` in `qa-config.json` (a name, not an
+  IP address), a redirect is not followed, the message is size-capped, and the address is never printed.
 
-None of the three can fail the report: a problem is a line on stderr starting `report:`, and the exit status stays 0.
+None of the three can fail the report: a problem is a line on stderr starting `report:`, and the exit status stays 0. `report.js` itself exits 1 when that run is
+not in the ledger, 2 for a bad invocation, and 3 when the ledger cannot be read.
 
 What goes in a summary is test names, errors and warnings from a run, which are untrusted text. They are masked again, cut down, and made
-harmless in Markdown and Slack (no table breaks, no `@mention` or channel ping, no link or HTML). A summary is still something to read before you
-forward it outside the team: the harness masks what looks like a credential, not what is merely private.
+harmless in Markdown and Slack: no table break, no HTML, no `@mention` or channel ping, no link or `#123` / `owner/repo#1` cross-reference, nothing that starts a heading or a
+list, no direction-changing or invisible characters, and for Slack none of its formatting. Left alone: a commit id (it links only where such a commit exists), `:emoji:` and
+`_emphasis_`. A summary is still something to read before you forward it outside the team: the harness masks what looks like a credential, not what is merely private.
 
 ## Limits the harness enforces
 
@@ -143,8 +157,8 @@ node scripts/ledger/cli.js prune               # run files older than 90 days, c
 
 Run files are the bulk of it (tens of KB each). Claims live much longer than runs on purpose: a key must outlive the longest plausible retry.
 Pruning goes by each file's age (when it last changed), and also clears leftover temporary files. It never touches lock files (a stale one is taken
-over by the next run) and it does not trim `audit.jsonl`, which grows by a line per write to the tracker: rotate or delete it by hand when it gets
-large. Nothing needs its old lines except a summary of an old run, which then shows its filings as `waiting for a person`.
+over by the next run) and it does not trim `audit.jsonl`, which grows by a line per write to the tracker. **Move it aside before it passes 16 MB**: the reader will not take a
+bigger file, and every summary then says it cannot confirm the writes. Nothing else needs its old lines, and a summary of an old run then says `cannot tell` for its filings.
 
 ## What it does not do
 
