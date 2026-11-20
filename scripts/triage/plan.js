@@ -20,6 +20,8 @@
 //   flaky                → report-flaky       never filed
 //   environment          → report-environment never filed
 //   undetermined         → propose
+// With a run ledger (a `ledger` block in qa-config.json, or --ledger-dir) a bug THIS ledger filed for the failure in the last 24 hours fills a gap the tracker's search
+// leaves (its index lags by minutes): comment on it instead of filing a second. The tracker stays the authority for anything its search does show.
 // A hit only counts if the fingerprint token is really in the item's body (search is fuzzy; a lagging index misses
 // brand-new items — a known limit, see docs/phase-2-design.md). Idempotency keys always include the run id so that a
 // retry of THIS run is safe but a later run is never swallowed by an old, closed report.
@@ -27,13 +29,14 @@
 // JSON from text that came out of a failing test. Output: { ok, data: { runId, actions[], flaky[], warnings[] } }. Exit 0 = planned, 1 = unreadable input, 2 = usage.
 
 const path = require('path');
-const crypto = require('crypto');
 const { run } = require('../tracker/adapters');
 const { connect, CONNECT_FLAGS } = require('../tracker/lib/connect');
 const { usage, writeJson, parseFlags, jsonPrinter } = require('../lib/cli');
+const { sanitize, runPart, isValidRunId } = require('../lib/ids');
 const { readReport } = require('./lib/documents');
 const { TrackerError } = require('../tracker/lib/errors');
 const { redactSecrets } = require('./lib/text');
+const { enabledLedger } = require('../ledger/lib/enable');
 
 // Every step a plan can contain. The prose that tells a model what to do for each one is checked against this list
 // (tests/helpers/orchestrator-drift-check.js), so a step cannot be added here without telling the model about it.
@@ -41,18 +44,6 @@ const STEPS = ['file-bug', 'file-regression', 'report-dismissed', 'comment-exist
 
 const MAX_CANDIDATES = 5;
 const CAP_REASON = 'held at propose: classification of this runner format has not been verified on real failures (a person widens the trusted formats, with triage.trustedFormats or --trusted-formats), so a person decides';
-const sanitize = (s) => String(s).replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
-// The run's part of an idempotency key. A short id made of safe characters is used as it is (readable, and what an operator would type). Anything else
-// (long, or with characters that would fold together: "a/b" and "a-b") keeps a readable prefix and adds a hash of the WHOLE id, so two different run
-// ids never share a key, which would silently deduplicate the second run's bug into the first. At most 24 + 1 + 8 characters, so the key stays under 80.
-// An id that already ENDS like a hashed one ("-" and 12 hex digits) is hashed too, so a run literally named like another run's hashed form cannot share its key:
-// every key part ending that way was produced by hashing the whole id.
-const runPart = (runId) => {
-  const id = String(runId);
-  return /^[A-Za-z0-9._-]{1,40}$/.test(id) && !/-[0-9a-f]{12}$/.test(id) ? id : `${sanitize(id).slice(0, 24)}-${crypto.createHash('sha256').update(id).digest('hex').slice(0, 12)}`;
-};
-// Any 1-128 printable characters: an odd id (refs/heads/main, build#42) is hashed into the key above, so there is nothing to protect by refusing it.
-const isValidRunId = (id) => typeof id === 'string' && /^[^\u0000-\u001f\u007f]{1,128}$/u.test(id);
 const TOKEN = /^qafp[0-9a-f]{12}$/;
 
 const FLAGS = {
@@ -61,6 +52,7 @@ const FLAGS = {
   '--flaky-out': { key: 'flakyOut' },
   '--out': { key: 'out' },
   '--comments-dir': { key: 'commentsDir' },
+  '--ledger-dir': { key: 'ledgerDir' },
   ...CONNECT_FLAGS,
 };
 
@@ -110,7 +102,26 @@ function commentBody(v, runId) {
   ].join('\n');
 }
 
-async function plan({ report, runId, adapter, trackerWarning, commentsDir }) {
+// How long a bug the LEDGER filed is trusted over a tracker search that does not show it: the search index of a tracker lags by minutes (GitHub's is
+// eventually consistent), not days. After this the tracker alone is asked, and a closed or deleted bug is the tracker's to report.
+const LAG_WINDOW_MS = 24 * 60 * 60 * 1000;
+const sameId = (a, b) => String(a) === String(b); // an id is a number on some trackers and text on others
+
+// The newest bug THIS ledger filed, on THIS tracker (its kind and where it points), for a failure within the lag window: { key, id, url, filedAt } or null.
+// The ledger holds a write under "<tracker>~<target>/create-bug/<idempotency key>" and the planner's keys are "fp-<fingerprint>-<run>", so the fingerprint finds
+// every run's filing. With no tracker in hand (it could not be configured) there is no way to tell whose bug a claim is, so there is no answer.
+function filedByLedger(ledger, fingerprint, adapter, now) {
+  if (!ledger || !adapter) return null;
+  const tracker = `${adapter.source}${adapter.target ? `~${adapter.target}` : ''}`;
+  const hits = ledger.doneClaims((k) => {
+    const [t, op, ...rest] = k.split('/');
+    return t === tracker && op === 'create-bug' && rest.join('/').startsWith(`fp-${fingerprint}-`);
+  }).filter((h) => h.result.id && h.completedAt && Date.parse(h.completedAt) <= now() + 60 * 1000 && now() - Date.parse(h.completedAt) <= LAG_WINDOW_MS);
+  hits.sort((a, b) => (a.completedAt < b.completedAt ? 1 : -1));
+  return hits.length ? { key: hits[0].key, id: String(hits[0].result.id), ...(hits[0].result.url ? { url: hits[0].result.url } : {}), filedAt: hits[0].completedAt } : null;
+}
+
+async function plan({ report, runId, adapter, trackerWarning, commentsDir, ledger, now = Date.now }) {
   // the token names a FILE (comments/<token>.json): a report with anything else in it is not one of ours, and nothing is written for it
   const badToken = report.verdicts.find((v) => !TOKEN.test(String(v.token)));
   if (badToken) throw usage(`a verdict has a token that is not a fingerprint token (qafp + 12 hex digits): ${JSON.stringify(String(badToken.token).slice(0, 40))}`);
@@ -138,6 +149,10 @@ async function plan({ report, runId, adapter, trackerWarning, commentsDir }) {
       }
     }
     const key = `fp-${v.fingerprint}-${runPart(runId)}`;
+    // The ledger only fills a GAP in what the tracker shows: if the search returns the very report the ledger filed (open, fixed or dismissed), the tracker is
+    // the authority on its state, and a fixed one is a regression, not a place to comment.
+    let prior = found && found.open.length ? null : filedByLedger(ledger, v.fingerprint, adapter, now);
+    if (prior && found && [...found.closed, ...found.dismissed].some((x) => sameId(x.id, prior.id))) prior = null;
     const lookupInfo = found ? { open: found.open, closed: found.closed, dismissed: found.dismissed, ...(found.unread.length ? { partial: found.unread } : {}), ...(found.truncated ? { truncated: true } : {}) } : { skipped: lookupNote };
     if (found && found.unread.length) warnings.push(`${v.key}: ${found.unread.length} report(s) with a matching search result could not be read (${found.unread.map((u) => `#${u.id}: ${u.code}`).join(', ')}), so the lookup is partial — an existing report may exist`);
     // the same caveat goes on whatever step the lookup led to: a regression or a dismissal decided from a partial lookup must say so too
@@ -151,6 +166,13 @@ async function plan({ report, runId, adapter, trackerWarning, commentsDir }) {
       const existing = found.open[0];
       actions.push({ ...base, step: 'comment-existing', existing, lookup: lookupInfo,
         commentInput: { id: existing.id, body: commentBody(v, runId), idempotencyKey: `${key}-comment` },
+        ...(commentsDir ? { commentInputFile: path.join(commentsDir, `${v.token}.json`) } : {}) });
+    } else if (prior) {
+      // The tracker's search does not show an OPEN report, but this ledger filed one for this failure a short while ago: a search index that lags (or a tracker
+      // that could not be reached) must not turn into a second report. Comment on the one the ledger filed.
+      warnings.push(`${v.key}: the tracker search did not show report #${prior.id}, which this ledger filed for this failure at ${prior.filedAt}: commenting there instead of filing a duplicate (the search index may be lagging)`);
+      actions.push({ ...base, step: 'comment-existing', existing: { id: prior.id, ...(prior.url ? { url: prior.url } : {}), open: true, source: 'ledger' }, lookup: { ...lookupInfo, ledger: { key: prior.key, filedAt: prior.filedAt } },
+        commentInput: { id: prior.id, body: commentBody(v, runId), idempotencyKey: `${key}-comment` },
         ...(commentsDir ? { commentInputFile: path.join(commentsDir, `${v.token}.json`) } : {}) });
     } else if (found && found.closed.length && !(found.dismissed.length && dismissedAfterFix(found))) {
       actions.push({ ...base, step: 'file-regression', regressionOf: found.closed[0], lookup: lookupInfo, idempotencyKey: key, marker: `qa-harness-fingerprint: ${v.token}`,
@@ -197,7 +219,7 @@ async function main({ argv = process.argv.slice(2), env = process.env, stdout = 
   const out = jsonPrinter(stdout);
   try {
     if (!argv.length || argv[0] === '-h' || argv[0] === '--help') {
-      stderr.write('Usage: plan.js --report <triage.json> [--run-id ID] [--flaky-out FILE] [--out FILE] [--comments-dir DIR] [--source T] [--config P] [--base-url U] [--timeout-ms N]\n');
+      stderr.write('Usage: plan.js --report <triage.json> [--run-id ID] [--flaky-out FILE] [--out FILE] [--comments-dir DIR] [--source T] [--config P] [--base-url U] [--timeout-ms N] [--ledger-dir D]\n');
       return argv.length ? 0 : 2;
     }
     const opts = parseArgs(argv);
@@ -206,7 +228,8 @@ async function main({ argv = process.argv.slice(2), env = process.env, stdout = 
 
     const { adapter, trackerWarning } = connectIfNeeded(report, { configPath: opts.config, source: opts.source, baseUrl: opts.baseUrl, timeoutMs: opts.timeoutMs, env, fetch });
     const commentsDir = opts.commentsDir || (opts.out ? path.join(path.dirname(opts.out), 'comments') : undefined);
-    const data = await plan({ report, runId, adapter, trackerWarning, commentsDir });
+    const led = enabledLedger({ configPath: opts.config, env, ledgerDir: opts.ledgerDir, now });
+    const data = await plan({ report, runId, adapter, trackerWarning, commentsDir, ledger: led && led.ledger, now });
     writeCommentInputs(data.actions);
     for (const f of [opts.out && [opts.out, { ok: true, data }], opts.flakyOut && [opts.flakyOut, { runId, flaky: data.flaky }]].filter(Boolean)) {
       writeJson(f[0], f[1]);
@@ -222,4 +245,4 @@ async function main({ argv = process.argv.slice(2), env = process.env, stdout = 
 
 if (require.main === module) main().then((code) => { process.exitCode = code; });
 
-module.exports = { main, plan, connectIfNeeded, writeCommentInputs, sanitize, isValidRunId, STEPS, FLAGS };
+module.exports = { main, plan, filedByLedger, sameId, LAG_WINDOW_MS, connectIfNeeded, writeCommentInputs, sanitize, isValidRunId, STEPS, FLAGS };

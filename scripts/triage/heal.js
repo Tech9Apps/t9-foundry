@@ -35,6 +35,8 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const os = require('os');
 const core = require('./lib/heal-core');
+const { enabledLedger } = require('../ledger/lib/enable');
+const { healJournal } = require('../ledger/lib/journal');
 const { identity } = require('./fingerprint');
 const { triageConfig, LIMITS, isInt } = require('./lib/config');
 const { usage, readJson, writeJson, parseFlags, jsonPrinter } = require('../lib/cli');
@@ -148,7 +150,7 @@ function planHeal({ report, cwd, paths, maxFiles, maxLines }) {
 
 const diffOf = (files) => files.map((f) => ({ file: f.rel, lines: f.changes.map((c) => ({ line: c.line, rename: c.rename, before: c.before.trim(), after: c.after.trim() })) }));
 
-async function heal({ report, cwd, runId, paths, maxFiles = 5, maxLines = 20, branchPrefix = 'qa/heal-', mainRun, validate, apply = true, proc = process }) {
+async function heal({ report, cwd, runId, paths, maxFiles = 5, maxLines = 20, branchPrefix = 'qa/heal-', mainRun, validate, apply = true, proc = process, journal }) {
   const planned = planHeal({ report, cwd, paths, maxFiles, maxLines });
   if (planned.refused) return { status: 'refused', reason: planned.refused };
   if (planned.nothing) return { status: 'nothing-to-heal', reason: planned.nothing, ...(planned.leftovers && planned.leftovers.length ? { leftovers: planned.leftovers, note: 'these lines still mention the old id and were NOT edited (a constant, a comment, or a form no pattern covers)' } : {}), ...(planned.notScanned && planned.notScanned.length ? { notScanned: planned.notScanned } : {}) };
@@ -157,6 +159,15 @@ async function heal({ report, cwd, runId, paths, maxFiles = 5, maxLines = 20, br
   if (!apply) return { status: 'preview', ...summary };
 
   if (!/^qa\/[A-Za-z0-9._-]*$/.test(branchPrefix)) return { status: 'refused', reason: `the heal branch prefix "${branchPrefix}" must start with "qa/"` };
+  // The cross-run cap: a failure that has already been healed (or begun to be) this many times lately is not tried again without a person. It needs the
+  // run ledger; without one nothing remembers earlier runs, and there is no cap (the one-attempt-per-run rule still holds).
+  const tokens = [...new Set(healed.map((v) => v.token || v.key).filter(Boolean))]; // a report is not trusted: a verdict without a token is counted under its key, not skipped
+  if (journal) {
+    const used = journal.attempts(tokens);
+    const over = tokens.filter((t) => (used[t] || 0) >= journal.maxAttempts);
+    // the whole heal is refused, not just the capped part: the renames are planned and checked together, and a partial heal is not what was validated
+    if (over.length) return { status: 'refused', capped: true, reason: `self-heal has already begun for ${over.map((t) => `${t} (${used[t]} time(s))`).join(', ')} in the last ${journal.windowDays} day(s); the limit is ${journal.maxAttempts} (triage.selfHeal.maxAttemptsPerFingerprint), so a person decides whether to try again. The whole heal is refused, including any failure that is not at the limit` };
+  }
   const root = planned.root;
   // the specs to re-run come from the REPORT, which is not trusted: one outside the repository would make the runner execute a file the heal has no
   // business with. One spelling per file: through a symlink (macOS /tmp) the same file would otherwise appear twice.
@@ -191,6 +202,7 @@ async function heal({ report, cwd, runId, paths, maxFiles = 5, maxLines = 20, br
   // in a good state, and the end of it is CHECKED rather than assumed.
   const originals = planned.files.map((f) => ({ path: f.path, rel: f.rel, bytes: f.bytes }));
   let finished = false;
+  let began = false; // the heal branch exists: only then is there anything for the ledger to say ended
   let ownCommit = null; // set once the heal has committed: a branch at that commit is the heal's own, and goes with it
 
   // Put everything back exactly as found. Synchronous on purpose: it also runs from a signal handler, where nothing can be awaited.
@@ -219,6 +231,7 @@ async function heal({ report, cwd, runId, paths, maxFiles = 5, maxLines = 20, br
     // away, and a runner that traps SIGTERM would otherwise outlive the revert
     try { killActive('SIGKILL'); } catch { /* nothing running */ }
     const problems = revert();
+    if (began && journal) journal.end({ branch, outcome: 'interrupted' }); // synchronous, like the revert: nothing here can be awaited
     try { (proc.stderr || process.stderr).write(`heal: interrupted by ${sig}; ${problems.length ? `the repository could NOT be fully restored (${problems.join('; ')})` : 'the repository was restored exactly as found'}\n`); } catch { /* nobody to tell */ }
     proc.exit(128 + ((os.constants.signals || {})[sig] || 0));
   }]);
@@ -228,6 +241,8 @@ async function heal({ report, cwd, runId, paths, maxFiles = 5, maxLines = 20, br
   try {
     arm(); // before the first change, so there is no window in which an interrupt finds nothing to undo
     try { git(root, ['switch', '-c', branch]); } catch (err) { finished = true; disarm(); return { status: 'refused', reason: `the heal branch ${branch} could not be created (${err.message}); nothing was changed` }; }
+    began = true;
+    if (journal) journal.begin({ branch, baseSha, tokens }); // before the first edit: a heal that dies after this is findable by the ledger
     for (const f of planned.files) fs.writeFileSync(f.path, f.after);
 
     // Validate by re-running: the failing specs AND every spec file that was edited (a rename can fix one page and break another). If a
@@ -263,6 +278,7 @@ async function heal({ report, cwd, runId, paths, maxFiles = 5, maxLines = 20, br
     ownCommit = commit;
     git(root, ['switch', base]);
     finished = true; disarm();
+    if (journal) journal.end({ branch, outcome: 'kept' });
     return { status: 'healed', base, branch, commit, ...summary, validated, review: `git diff ${base}..${branch}` };
   } catch (err) {
     // ANY failure: put everything back exactly as found. The handlers stay armed through the revert: with none, an interrupt during it would
@@ -273,6 +289,7 @@ async function heal({ report, cwd, runId, paths, maxFiles = 5, maxLines = 20, br
     // would resolve (check phase) before that
     await new Promise((resolve) => setImmediate(() => setImmediate(resolve)));
     disarm();
+    if (began && journal) journal.end({ branch, outcome: interrupted ? 'interrupted' : 'reverted' });
     if (interrupted) {
       try { (proc.stderr || process.stderr).write(`heal: interrupted by ${interrupted}; ${problems.length ? `the repository could NOT be fully restored (${problems.join('; ')})` : 'the repository was restored exactly as found'}\n`); } catch { /* nobody to tell */ }
       proc.exit(128 + ((os.constants.signals || {})[interrupted] || 0));
@@ -296,6 +313,7 @@ const FLAGS = {
   '--max-lines': { key: 'maxLines', parse: Number },
   '--out': { key: 'out' },
   '--config': { key: 'config' },
+  '--ledger-dir': { key: 'ledgerDir' },
 };
 
 function parseArgs(argv) {
@@ -336,7 +354,7 @@ async function main({ argv = process.argv.slice(2), env = process.env, stdout = 
   const out = jsonPrinter(stdout);
   try {
     if (!argv.length || argv[0] === '-h' || argv[0] === '--help') {
-      stderr.write('Usage: heal.js --report <triage.json> [--main <result.json> --framework F] [--cwd D] [--paths a,b] [--spec S]... [--apply [--enable]] [--run-id ID] [--max-files N] [--max-lines N] [--out FILE] [--config P]\n');
+      stderr.write('Usage: heal.js --report <triage.json> [--main <result.json> --framework F] [--cwd D] [--paths a,b] [--spec S]... [--apply [--enable]] [--run-id ID] [--max-files N] [--max-lines N] [--out FILE] [--config P] [--ledger-dir D]\n');
       return argv.length ? 0 : 2;
     }
     const opts = parseArgs(argv);
@@ -369,10 +387,15 @@ async function main({ argv = process.argv.slice(2), env = process.env, stdout = 
       return 1;
     }
     const paths = opts.paths ? narrowPaths(opts.paths, cfg.selfHeal.paths, cwd) : cfg.selfHeal.paths;
+    // the same cap and the same events as under the orchestrator: calling heal.js directly must not be a way around the attempt limit
+    const led = opts.apply ? enabledLedger({ configPath: opts.config, env, ledgerDir: opts.ledgerDir, now }) : null;
+    const ledgerWarnings = [];
+    const journal = led ? healJournal({ ledger: led.ledger, runId, maxAttempts: cfg.selfHeal.maxAttemptsPerFingerprint, windowDays: cfg.selfHeal.attemptWindowDays, now, warn: (m) => ledgerWarnings.push(m) }) : undefined;
     const data = await heal({
       report, cwd, runId, paths, maxFiles: Math.min(opts.maxFiles || cfg.selfHeal.maxFiles, cfg.selfHeal.maxFiles), maxLines: Math.min(opts.maxLines || cfg.selfHeal.maxLines, cfg.selfHeal.maxLines),
-      branchPrefix: cfg.selfHeal.branchPrefix, mainRun, validate, apply: !!opts.apply,
+      branchPrefix: cfg.selfHeal.branchPrefix, mainRun, validate, apply: !!opts.apply, journal,
     });
+    if (ledgerWarnings.length) data.warnings = ledgerWarnings;
     const doc = { ok: data.status === 'healed' || data.status === 'preview' || data.status === 'nothing-to-heal', data };
     if (opts.out) writeJson(opts.out, doc);
     out(doc);

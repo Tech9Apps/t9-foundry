@@ -52,9 +52,9 @@
     ]
   },
   "sha256": {
-    ".claude/commands/run-and-triage.md": "91d30de0aa234079ea597ab2f73d94c34b0d440dd4f4a11114fc51a9fc3a89be",
+    ".claude/commands/run-and-triage.md": "c925ecb02dd6d7d156c0f56f9bad8b12997f70655c88ca8cc76e1323e24f0850",
     ".claude/agents/QA-run-orchestrator.md": "af5e38facde1c8481d434204be85d23effc49dfdeea10807c6b59d1f6bf1ba0b",
     ".claude/memory/failure-triage-rules.md": "00aab33d5a8d295376b602f22f342bd28243f4a783f795898594dc3efafd5041",
-    ".claude/commands/file-bug.md": "ba3c0c1371318006b0f9cf9b5d02f0a9e24360fc665e0390c48b2e17eb03e874"
+    ".claude/commands/file-bug.md": "ed9ec301e0ec45407139e5c8d9a7773ece3073bf628c0bddc4601036141197c4"
   }
 }

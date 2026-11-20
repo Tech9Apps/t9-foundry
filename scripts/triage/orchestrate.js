@@ -7,7 +7,7 @@
 //
 //   node scripts/triage/orchestrate.js --framework <f> [--spec S]... [--test-dir D] [--config-file C] [--cwd D]
 //        [--reruns N] [--preflight ok|failed|unknown] [--snapshot page.html] [--out qa-results] [--run-id ID]
-//        [--threshold T] [--trusted-formats tap] [--timeout-ms N] [--no-plan] [--heal | --no-heal] [--config qa-config.json] [--source T] [--base-url U]
+//        [--threshold T] [--trusted-formats tap] [--timeout-ms N] [--no-plan] [--heal | --no-heal] [--ledger-dir D] [--ticket ID] [--max-wall-clock-ms N] [--cooldown-minutes N] [--config qa-config.json] [--source T] [--base-url U]
 //
 // Steps (each tool is the one documented elsewhere; this only wires them):
 //   1. scripts/results/run.js   the main run                       → <out>/main/
@@ -17,16 +17,24 @@
 //   5. scripts/triage/plan.js   (read-only tracker search)          → <out>/plan.json, <out>/flaky.json
 //   6. scripts/triage/heal.js   ONLY if self-heal is enabled (triage.selfHeal.enabled / --heal): rename a stale test-id on a local
 //      qa/ branch, validated by re-run, fully reverted on any failure; it never pushes   → <out>/heal.json
+// --ticket ID names the ticket this run is for (recorded in the ledger; the cooldown and a ticket lock are per ticket). --max-wall-clock-ms and --cooldown-minutes can
+// also be set once in qa-config.json under "budget"; a flag may only TIGHTEN what the project set (0 means no limit, and any limit is tighter than none).
 // --reruns (default 2, 0–5), --threshold (default 0.8) and --trusted-formats (default tap: the runner formats whose classification may
 // let a product-bug or test-bug verdict ACT; every other format is held at propose) can also be set once in qa-config.json under "triage"
 // (reruns, confidenceThreshold, trustedFormats); a flag overrides the config. The output says which source each setting came from.
+// The run is REMEMBERED (events in the run ledger, docs/phase-3-design.md) only when the project asks: a `ledger` block in qa-config.json, or
+// --ledger-dir (which may not name a different ledger than the config's). Without either the run behaves exactly as it did before the ledger existed.
 // A green run ends after step 1. Output: { ok, data } with the verdict and step for every failure.
 // Exit: 0 = completed (green, or triaged — failures are data) · 2 = bad invocation · 3 = no trustworthy main run
 // (see scripts/results/run.js: could not start, hung, wrote nothing, zero tests, or exit code contradicting the report).
+//   · 4 = REFUSED, nothing was started: the ticket is inside its cooldown, or another run holds the environment or the ticket (`error.code` is COOLDOWN or LOCKED);
+//   · 5 = STOPPED by its wall-clock budget: the triage so far is in the output and `data.budget` says which steps were not run; the run is not complete.
+// Cooldown and locks need the run ledger (a `ledger` block in qa-config.json, or --ledger-dir); the wall-clock budget does not.
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
-const { defaultRunResults } = require('./lib/run-results');
+const { defaultRunResults, killActive } = require('./lib/run-results');
 const { classify, makeKeyer, parseTrustedFormats } = require('./classify');
 const { analyzeLocator } = require('./locators');
 const { isLocatorError, extractTestId, evidenceText } = require('./lib/text');
@@ -34,7 +42,16 @@ const { plan, connectIfNeeded, writeCommentInputs, isValidRunId } = require('./p
 const { triageConfig, MAX_RERUNS, LIMITS, isInt, checkTriageFlags } = require('./lib/config');
 const { usage, writeJson, parseFlags } = require('../lib/cli');
 const { heal, eligible } = require('./heal');
+const { enabledLedger } = require('../ledger/lib/enable');
+const { healJournal } = require('../ledger/lib/journal');
+const { staleHeals, lastRunEnd } = require('../ledger/lib/views');
+const { budgetConfig, tighter, longer, okValue, describe: describeLimit } = require('../ledger/lib/budget');
+const { scopesFor, configEnvUrl, normalizeEnvUrl, ticketProblem, runLockTtlMs, acquireAll, guardSignals } = require('../ledger/lib/locks');
 
+const MAX_RECORDED_RESULTS = 5000;
+const MAX_RECORDED_VERDICTS = 2000;
+const MAX_RECORDED_WARNINGS = 50;
+const VERDICT_TEXT_MAX = 300; // a test name or rule in a verdict record: a record is capped at 8 KB, and a summary does not need more
 const UND_ALARM_MIN = 3; // at least this many undetermined verdicts, and at least this share of the triaged failures,
 const UND_ALARM_SHARE = 0.5; // before the report says the rules lack what they need for this suite
 
@@ -58,6 +75,10 @@ const FLAGS = {
   '--config': { key: 'config' },
   '--source': { key: 'source' },
   '--base-url': { key: 'baseUrl' },
+  '--ledger-dir': { key: 'ledgerDir' },
+  '--ticket': { key: 'ticket' },
+  '--max-wall-clock-ms': { key: 'maxWallClockMs', parse: Number },
+  '--cooldown-minutes': { key: 'cooldownMinutes', parse: Number },
 };
 
 function parseArgs(argv) {
@@ -67,6 +88,10 @@ function parseArgs(argv) {
   if (opts.timeoutMs !== undefined && !(Number.isInteger(opts.timeoutMs) && opts.timeoutMs > 0)) throw usage('--timeout-ms must be a positive whole number of milliseconds');
   // the run id ends up in tracker idempotency keys (an odd one is hashed there, see plan.js runPart) and in comment text
   if (opts.runId !== undefined && !isValidRunId(opts.runId)) throw usage('--run-id must be 1-128 characters with no control characters');
+  if (opts.ticket !== undefined && ticketProblem(opts.ticket)) throw usage(`--ticket ${ticketProblem(opts.ticket)}`);
+  for (const [key, flag] of [['maxWallClockMs', '--max-wall-clock-ms'], ['cooldownMinutes', '--cooldown-minutes']]) {
+    if (opts[key] !== undefined && !okValue(key, opts[key])) throw usage(`${flag} must be ${describeLimit(key)} (0 means no limit)`);
+  }
   return opts;
 }
 
@@ -111,7 +136,21 @@ function clearStale(out, warnings) {
 }
 const needsTriage = (t) => t.status === 'failed' || t.flaky;
 
-async function orchestrate(opts, { env = process.env, fetch = globalThis.fetch, runResults = defaultRunResults, now = Date.now } = {}) {
+// What the ledger remembers of one verdict, for the run summary (scripts/report.js): the fingerprint token, the decision, the plan's step, and (cut to what a summary needs, so a
+// record stays well under its size limit) the test and the rule. When the plan found a tracker item for it (an open report to comment on, a fixed one this regresses, a dismissed one),
+// that item's id, and who found it: `ledger` when this ledger filed it and the tracker's search did not show it, else `tracker`.
+function verdictRecord(v, action) {
+  const found = action && (action.existing || action.regressionOf || action.dismissedAs);
+  return {
+    token: v.token, class: v.class, confidence: v.confidence, action: v.action,
+    ...(action ? { step: action.step } : {}),
+    ...(v.test && typeof v.test.name === 'string' ? { test: v.test.name.slice(0, VERDICT_TEXT_MAX) } : {}),
+    ...(typeof v.rule === 'string' ? { rule: v.rule.slice(0, VERDICT_TEXT_MAX) } : {}),
+    ...(found && found.id !== undefined && found.id !== null ? { item: String(found.id).slice(0, VERDICT_TEXT_MAX), itemFrom: action.existing && action.existing.source === 'ledger' ? 'ledger' : 'tracker' } : {}),
+  };
+}
+
+async function runLoop(opts, { env = process.env, fetch = globalThis.fetch, runResults = defaultRunResults, now = Date.now } = {}, ctx) {
   const out = opts.out || 'qa-results';
   // flag > qa-config.json "triage" block > default
   const cfg = triageConfig({ configPath: opts.config, env });
@@ -128,6 +167,7 @@ async function orchestrate(opts, { env = process.env, fetch = globalThis.fetch, 
   const runId = opts.runId || new Date(now()).toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
   const preflight = opts.preflight || 'unknown';
   const warnings = [];
+  const journal = ctx.ledger ? healJournal({ ledger: ctx.ledger, runId, maxAttempts: cfg.selfHeal.maxAttemptsPerFingerprint, windowDays: cfg.selfHeal.attemptWindowDays, now, warn: ctx.warn }) : undefined;
   const base = [...(opts.framework ? ['--framework', opts.framework] : []), ...(opts.testDir ? ['--test-dir', opts.testDir] : []), ...(opts.configFile ? ['--config-file', opts.configFile] : []),
     ...(opts.cwd ? ['--cwd', opts.cwd] : []), ...(opts.config ? ['--config', opts.config] : []), ...(opts.timeoutMs ? ['--timeout-ms', String(opts.timeoutMs)] : []), '--quiet'];
   const specArgs = (specs) => specs.flatMap((s) => ['--spec', s]);
@@ -137,6 +177,17 @@ async function orchestrate(opts, { env = process.env, fetch = globalThis.fetch, 
   // and the previous triage/plan/flaky/comments (a green or --no-plan run would otherwise leave a failing run's files looking current). Clear exactly
   // those, by name. Nothing else in <out> is touched.
   clearStale(out, warnings);
+  ctx.record('run.start', { ...(opts.framework ? { framework: opts.framework } : {}), ...(opts.ticket ? { ticket: opts.ticket } : {}), ...(opts.source ? { source: opts.source } : {}), pid: process.pid, host: os.hostname(), config: settings });
+  // what the ledger remembers of each test: every result of the main run and of the re-runs, up to a cap (a 50 000-test suite must not write 50 000 lines)
+  let recorded = 0;
+  const recordResults = (phase, tests) => {
+    if (!ctx.ledger) return; // nothing is recorded, so nothing is counted and nothing is said (a project without a ledger sees no new warning)
+    for (const t of tests) {
+      if (recorded >= MAX_RECORDED_RESULTS) { if (recorded === MAX_RECORDED_RESULTS) { recorded += 1; ctx.warn(`the ledger holds only the first ${MAX_RECORDED_RESULTS} test results of this run`); } return; }
+      recorded += 1;
+      ctx.record('test.result', { spec: t.file || '', name: t.name, status: t.status, phase, ...(Number.isFinite(t.durationMs) ? { durationMs: t.durationMs } : {}), ...(t.flaky ? { flaky: true } : {}) });
+    }
+  };
 
   // 1. the main run
   const first = await runResults([...base, ...specArgs(opts.specs), '--out', path.join(out, 'main')], env);
@@ -149,26 +200,45 @@ async function orchestrate(opts, { env = process.env, fetch = globalThis.fetch, 
     return { code: first.code === 2 ? 2 : 3, doc: { ok: false, stage: 'run', error: (first.doc && first.doc.error) || { code: 'NO_REPORT', message: 'the run produced no result' }, ...(first.doc && first.doc.warnings ? { warnings: first.doc.warnings } : {}) } };
   }
   const main = first.doc.data;
+  recordResults('main', main.tests);
   if (first.doc.warnings && first.doc.warnings.length) warnings.push(...first.doc.warnings.map((w) => `main run: ${w}`));
   const targets = main.tests.filter(needsTriage);
   if (!targets.length) {
     return { code: 0, doc: { ok: true, data: { status: 'green', runId, totals: main.totals, ...(warnings.length ? { warnings } : {}) } } };
   }
 
+  // The whole-run wall-clock budget: checked BEFORE each step that costs time or reaches outside (the re-runs, the plan's tracker search, self-heal), never in the
+  // middle of one: a step that has begun finishes (it has its own per-step timeout). Classifying what has been run is local and quick, so it always happens.
+  // A run stopped here ends with complete:false and exit 5, and says which steps it did not run.
+  const skipped = [];
+  let stopped = null;
+  const overBudget = (before) => {
+    if (stopped) return true;
+    const max = ctx.budget.maxWallClockMs;
+    const elapsed = now() - ctx.budget.startedAt;
+    if (!(max > 0 && elapsed > max)) return false;
+    stopped = { exceeded: 'wall-clock', limitMs: max, elapsedMs: elapsed, before };
+    ctx.record('budget', { wallClockMs: elapsed, exceeded: `wall-clock limit of ${max} ms reached before ${before}` });
+    warnings.push(`stopped by the wall-clock budget (${max} ms, ${elapsed} ms used) before ${before}: the steps after it were not run, so this run is not complete and its verdicts rest on fewer runs than planned`);
+    return true;
+  };
+
   // 2. re-run only the failing specs (a failed preflight makes every failure an environment failure: don't bother)
   const rerunResults = []; const rerunNotes = [];
   if (preflight === 'failed') rerunNotes.push('re-runs skipped: preflight reported the environment as not ready');
+  else if (reruns > 0 && overBudget('the re-runs')) skipped.push('re-runs');
   else if (reruns > 0) {
     const files = [...new Set(targets.map((t) => t.file).filter(Boolean))];
     const everyFileKnown = targets.every((t) => t.file);
     const scope = everyFileKnown ? files : opts.specs; // no file for some failure: re-run what the main run ran
     if (!everyFileKnown) rerunNotes.push('some failures carry no file location, so each re-run repeats the whole selection');
     for (let k = 1; k <= reruns; k += 1) {
+      if (k > 1 && overBudget(`re-run ${k}`)) { skipped.push(`re-run ${k} onward`); break; }
       const r = await runResults([...base, ...specArgs(scope), '--out', path.join(out, `rerun-${k}`)], env);
       // exit 3 WITH a report = the runner's exit code contradicts its own report (a crash after a partial report). The main run stops on that; a re-run
       // that is not trusted must not count either: its "pass" would turn a consistent failure into a flaky one.
       if (r.code === 3 && r.doc && r.doc.data) warnings.push(`re-run ${k} cannot be trusted (${(r.doc.warnings && r.doc.warnings[0]) || 'its exit code contradicts its report'}); it is not counted, classifying with ${rerunResults.length + 1} run(s)`);
-      else if (r.doc && r.doc.data) rerunResults.push(r.doc.data);
+      else if (r.doc && r.doc.data) { rerunResults.push(r.doc.data); recordResults(`rerun-${k}`, r.doc.data.tests); }
       else warnings.push(`re-run ${k} produced no usable report (${(r.doc && r.doc.error && r.doc.error.message) || `exit ${r.code}`}); classifying with ${rerunResults.length + 1} run(s)`);
     }
   }
@@ -204,10 +274,11 @@ async function orchestrate(opts, { env = process.env, fetch = globalThis.fetch, 
 
   // 5. plan (read-only)
   let actions = null;
-  if (!opts.noPlan) {
+  if (!opts.noPlan && overBudget('the plan')) skipped.push('plan');
+  else if (!opts.noPlan) {
     const { adapter, trackerWarning } = connectIfNeeded(report, { configPath: opts.config, source: opts.source, baseUrl: opts.baseUrl, timeoutMs: opts.timeoutMs, env, fetch });
     const commentsDir = path.join(out, 'comments');
-    const p = await plan({ report, runId, adapter, trackerWarning, commentsDir });
+    const p = await plan({ report, runId, adapter, trackerWarning, commentsDir, ledger: ctx.ledger, now });
     const commentFiles = writeCommentInputs(p.actions);
     writeJson(path.join(out, 'plan.json'), { ok: true, data: p });
     writeJson(path.join(out, 'flaky.json'), { runId, flaky: p.flaky });
@@ -217,12 +288,27 @@ async function orchestrate(opts, { env = process.env, fetch = globalThis.fetch, 
     actions = p.actions;
   }
 
+  // what was decided about each failure, and what the plan says to do about it
+  const planned = new Map((actions || []).map((a) => [a.key, a]));
+  if (ctx.ledger) {
+    let n = 0;
+    for (const v of report.verdicts) {
+      if (!v.token) continue;
+      if (n >= MAX_RECORDED_VERDICTS) { ctx.warn(`the ledger holds only the first ${MAX_RECORDED_VERDICTS} verdicts of this run`); break; }
+      n += 1;
+      ctx.record('verdict', verdictRecord(v, planned.get(v.key)));
+    }
+  }
+
   // 6. self-heal (only if enabled): rename a stale test-id on a local branch, validated by re-run, reverted on any failure. Never pushes.
   let healResult = null;
-  if (healEnabled && eligible(report).length) {
+  const healWanted = healEnabled && eligible(report).length > 0;
+  if (healWanted && overBudget('self-heal')) { // (a run that is already stopped is over budget here too: overBudget remembers its stop)
+    skipped.push('self-heal');
+  } else if (healWanted) {
     const runCwd = path.resolve(opts.cwd || '.');
     healResult = await heal({
-      report, cwd: runCwd, runId, paths: cfg.selfHeal.paths, maxFiles: cfg.selfHeal.maxFiles, maxLines: cfg.selfHeal.maxLines, branchPrefix: cfg.selfHeal.branchPrefix, mainRun: main,
+      report, cwd: runCwd, runId, paths: cfg.selfHeal.paths, maxFiles: cfg.selfHeal.maxFiles, maxLines: cfg.selfHeal.maxLines, branchPrefix: cfg.selfHeal.branchPrefix, mainRun: main, journal,
       // an empty list means a shared helper was edited: re-run the same selection the main run used, not nothing
       validate: async (specs) => { const r = await runResults([...base, ...specArgs(specs.length ? specs : opts.specs), '--out', path.join(out, 'heal-validate')], env); return r.doc && r.doc.data ? r.doc.data : null; },
     });
@@ -237,7 +323,7 @@ async function orchestrate(opts, { env = process.env, fetch = globalThis.fetch, 
 
   const stepOf = new Map((actions || []).map((a) => [a.key, a.step]));
   return {
-    code: 0,
+    code: stopped ? 5 : 0,
     doc: {
       ok: true,
       data: {
@@ -245,17 +331,108 @@ async function orchestrate(opts, { env = process.env, fetch = globalThis.fetch, 
         summary: report.summary,
         verdicts: report.verdicts.map((v) => ({ test: v.test.name, key: v.key, class: v.class, rule: v.rule, confidence: v.confidence, action: v.action, ...(v.cap ? { cap: v.cap } : {}), ...(v.reason ? { reason: v.reason } : {}), ...(stepOf.has(v.key) ? { step: stepOf.get(v.key) } : {}), ...(v.proposal ? { proposal: v.proposal } : {}), ...(healedKeys.has(v.key) ? { healed: true } : {}) })),
         ...(healResult ? { heal: healResult } : {}),
+        ...(stopped ? { budget: { stopped: true, ...stopped, skipped } } : {}),
         files, ...(warnings.length ? { warnings } : {}),
       },
     },
   };
 }
 
+// One run of the loop, remembered when the project asked for that (see scripts/ledger/lib/enable.js): the same loop as always, with a record of it.
+// Bookkeeping must never change what a run does: a ledger that cannot be written to is a warning in the result, not a failed run. A run that is killed
+// leaves no `run.end`, which is how the ledger knows it did not finish.
+async function orchestrate(opts, deps = {}) {
+  const env = deps.env || process.env;
+  const now = deps.now || Date.now;
+  const startedAt = now();
+  const runId = opts.runId || new Date(now()).toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
+  const led = enabledLedger({ configPath: opts.config, env, ledgerDir: opts.ledgerDir, now });
+  // The project's limits, which a flag may tighten and never lift (0 is "no limit": any limit is tighter than none, a longer cooldown is tighter than a shorter).
+  // A malformed `budget` block is a usage error, before anything runs.
+  const bcfg = budgetConfig({ configPath: opts.config, env });
+  const limits = { maxWallClockMs: tighter(bcfg.maxWallClockMs, opts.maxWallClockMs), cooldownMinutes: longer(bcfg.cooldownMinutes, opts.cooldownMinutes) };
+  const warnings = [];
+  let writeFailed = false;
+  const ctx = {
+    ledger: led && led.ledger,
+    began: false, // run.start is in the ledger: only then is there a run for run.end to end
+    budget: { maxWallClockMs: limits.maxWallClockMs, startedAt },
+    warn: (m) => { warnings.push(m); },
+    record: (type, fields) => {
+      if (!ctx.ledger) return;
+      try { ctx.ledger.record(runId, type, fields); if (type === 'run.start') ctx.began = true; } catch (e) {
+        if (!writeFailed) { writeFailed = true; warnings.push(`ledger: could not record (${e.message}); this run is missing from the ledger from here on`); }
+      }
+    },
+  };
+
+  // Refusals come first and leave nothing behind: not a run.start, not a lock, not a line in the ledger.
+  if (ctx.ledger && opts.ticket && limits.cooldownMinutes > 0) {
+    let last = null;
+    try { last = lastRunEnd(ctx.ledger, { ticket: opts.ticket, now: now() }); } catch (e) { warnings.push(`ledger: could not check the cooldown (${e.message})`); }
+    const agoMs = last ? now() - Date.parse(last.endedAt) : NaN;
+    // an end in the future is a clock that was wrong: it must not hold a ticket for days
+    if (last && agoMs >= 0 && agoMs < limits.cooldownMinutes * 60000) {
+      const ago = Math.floor(agoMs / 60000);
+      return { code: 4, doc: { ok: false, stage: 'cooldown', error: { code: 'COOLDOWN', message: `ticket ${opts.ticket} was last run by ${last.runId}, which ended ${ago} minute(s) ago; the cooldown is ${limits.cooldownMinutes} minute(s), so this run was not started`, details: { ticket: opts.ticket, lastRunId: last.runId, endedAt: last.endedAt, cooldownMinutes: limits.cooldownMinutes } } } };
+    }
+  }
+  if (!ctx.ledger && limits.cooldownMinutes > 0) warnings.push('a cooldown is set but there is no run ledger (add a `ledger` block to qa-config.json, or pass --ledger-dir), so it was not applied');
+  let locks = null;
+  if (ctx.ledger) {
+    const envUrl = configEnvUrl({ configPath: opts.config, env });
+    if (envUrl && !normalizeEnvUrl(envUrl)) warnings.push('environments.testEnvironmentBaseUrl is not an http(s) URL, so this run takes no environment lock');
+    const scopes = scopesFor({ envUrl, ticket: opts.ticket });
+    if (scopes.length) {
+      // Bookkeeping never BLOCKS a run: a ledger that cannot take a lock (not writable, a credential-looking run id) is a warning, and the run goes ahead unprotected.
+      try { locks = acquireAll(ctx.ledger, scopes, { runId, ttlMs: runLockTtlMs({ reruns: opts.reruns !== undefined ? opts.reruns : MAX_RERUNS, timeoutMs: opts.timeoutMs, maxWallClockMs: limits.maxWallClockMs }) }); } catch (e) { warnings.push(`ledger: could not take the run locks (${e.message}); this run is not protected from a concurrent one`); }
+      if (locks && !locks.ok) {
+        const h = locks.holder || {};
+        return { code: 4, doc: { ok: false, stage: 'lock', error: { code: 'LOCKED', message: `locked by run ${h.runId || '(unknown)'} since ${h.startedAt || '(unknown)'} (${locks.scope}); this run was not started`, details: { scope: locks.scope, runId: h.runId || null, pid: h.pid || null, startedAt: h.startedAt || null } } } };
+      }
+      if (locks && locks.stole.length) warnings.push(`took over a stale run lock (${locks.stole.join(', ')}): its owner was gone or it had expired`);
+    }
+  }
+  // Interrupted, the run stops its test runner FIRST (a runner left going would keep hitting the environment after the lock that protects it was given up),
+  // then lets the locks go. It never exits the process itself, so self-heal's own handler (which restores the repository) still runs on the same signal.
+  const disarm = locks && locks.ok ? guardSignals({ release: locks.release, stopWork: () => killActive('SIGKILL') }) : null;
+  try {
+    if (ctx.ledger) {
+      // a heal that began and never said how it ended: the run died on its branch, which may still exist
+      let stale = [];
+      try { stale = staleHeals(ctx.ledger); } catch (e) { warnings.push(`ledger: could not look for unfinished heals (${e.message})`); }
+      for (const h of stale) warnings.push(`ledger: run ${h.runId} began a self-heal on ${h.branch} (from ${String(h.baseSha).slice(0, 8)}) and never recorded how it ended; that branch may still exist (git branch --list 'qa/heal-*')`);
+    }
+    let result;
+    try { result = await runLoop({ ...opts, runId }, deps, ctx); } catch (e) {
+      // an invocation mistake exits 2 and an unexpected error 3 (what main() does with them); and a run that never began has nothing to end
+      if (ctx.began) ctx.record('run.end', { exit: e && e.isUsage ? 2 : 3, complete: false });
+      throw e;
+    }
+    const { doc } = result;
+    // everything the run warned about (the loop's own warnings and the ledger's), so that a summary of it (scripts/report.js) needs nothing but the ledger;
+    // the cap is for a run that warns about everything
+    const allWarnings = [...((doc.ok && doc.data ? doc.data.warnings : doc.warnings) || []), ...warnings];
+    for (const m of allWarnings.slice(0, MAX_RECORDED_WARNINGS)) ctx.record('warning', { message: String(m) });
+    if (allWarnings.length > MAX_RECORDED_WARNINGS) ctx.record('warning', { message: `${allWarnings.length - MAX_RECORDED_WARNINGS} more warning(s) are in the run's output but not in the ledger` });
+    ctx.record('budget', { wallClockMs: now() - startedAt }); // what this run spent, as far as the scripts can see (turns and cost are the launcher's to report)
+    ctx.record('run.end', { exit: result.code, complete: result.code === 0, ...(doc.ok && doc.data && doc.data.totals ? { counts: doc.data.totals } : {}) });
+    if (warnings.length) {
+      if (doc.ok && doc.data) doc.data.warnings = [...(doc.data.warnings || []), ...warnings];
+      else doc.warnings = [...(doc.warnings || []), ...warnings];
+    }
+    return result;
+  } finally {
+    if (disarm) disarm();
+    if (locks && locks.ok) locks.release();
+  }
+}
+
 async function main({ argv = process.argv.slice(2), env = process.env, stdout = process.stdout, stderr = process.stderr, ...deps } = {}) {
   const emit = (obj) => stdout.write(`${JSON.stringify(obj, null, 2)}\n`);
   try {
     if (!argv.length || argv[0] === '-h' || argv[0] === '--help') {
-      stderr.write('Usage: orchestrate.js --framework F [--spec S]... [--test-dir D] [--config-file C] [--cwd D] [--reruns 2] [--preflight ok|failed|unknown] [--snapshot page.html] [--out DIR] [--run-id ID] [--threshold 0.8] [--trusted-formats tap|none] [--timeout-ms N] [--no-plan] [--heal | --no-heal] [--config P] [--source T] [--base-url U]\n');
+      stderr.write('Usage: orchestrate.js --framework F [--spec S]... [--test-dir D] [--config-file C] [--cwd D] [--reruns 2] [--preflight ok|failed|unknown] [--snapshot page.html] [--out DIR] [--run-id ID] [--threshold 0.8] [--trusted-formats tap|none] [--timeout-ms N] [--no-plan] [--heal | --no-heal] [--ledger-dir D] [--ticket ID] [--max-wall-clock-ms N] [--cooldown-minutes N] [--config P] [--source T] [--base-url U]\n');
       return argv.length ? 0 : 2;
     }
     const opts = parseArgs(argv);
@@ -271,4 +448,4 @@ async function main({ argv = process.argv.slice(2), env = process.env, stdout = 
 
 if (require.main === module) main().then((code) => { process.exitCode = code; });
 
-module.exports = { main, orchestrate, healWarning, MAX_RERUNS, FLAGS };
+module.exports = { main, orchestrate, healWarning, verdictRecord, MAX_RERUNS, FLAGS };

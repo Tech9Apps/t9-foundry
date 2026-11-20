@@ -12,6 +12,9 @@
 //             --config <path>      qa-config.json (default: $CLAUDE_PROJECT_DIR/qa-config.json, ./, ../, ../../)
 //             --base-url <url>     override the API base URL (mock servers; also $QA_TRACKER_BASE_URL)
 //             --timeout-ms <n>     per-request timeout (default 15000)
+//             --ledger-dir <dir>   remember create-test / create-bug / comment in the run ledger (also on when qa-config.json has a `ledger` block):
+//                                  a write already done is not repeated, one in progress is not doubled (IN_PROGRESS), one a dead run left half-done is resumed
+//             --run-id <id>        names the run in the ledger's records
 //
 // Output is always one JSON document on stdout:
 //   { "ok": true,  "data": { ... } }
@@ -22,10 +25,12 @@
 const fs = require('fs');
 const { OPERATIONS } = require('./lib/contract');
 const { TrackerError } = require('./lib/errors');
-const { run } = require('./adapters');
 const { connect, CONNECT_FLAGS } = require('./lib/connect');
 const { usage, parseFlags, jsonPrinter, writeJson } = require('../lib/cli');
 const { toTicketContext } = require('./lib/context');
+const { runOnce, LEDGERED } = require('./lib/once');
+const { enabledLedger } = require('../ledger/lib/enable');
+const { isValidRunId } = require('../lib/ids');
 
 const FLAGS = {
   ...CONNECT_FLAGS,
@@ -33,10 +38,12 @@ const FLAGS = {
   '--input-file': { key: 'inputFile' },
   '--stdin': { key: 'stdin', set: true },
   '--context-file': { key: 'contextFile' },
+  '--ledger-dir': { key: 'ledgerDir' },
+  '--run-id': { key: 'runId', parse: (v, flag) => { if (!isValidRunId(v)) throw usage(`${flag} must be 1-128 characters with no control characters`); return v; } },
 };
 
 // the first argument is the operation; everything after it is flags
-const parseArgs = ([op, ...rest]) => parseFlags(rest, FLAGS, { init: { op } });
+const parseArgs = ([op, ...rest]) => parseFlags(rest, FLAGS, { init: { op }, strictValues: true });
 
 async function readStdin(stdin) {
   const chunks = [];
@@ -48,7 +55,7 @@ async function main({ argv = process.argv.slice(2), env = process.env, stdin = p
   const out = jsonPrinter(stdout);
   try {
     if (!argv.length || argv[0] === '-h' || argv[0] === '--help') {
-      stderr.write(`Usage: cli.js <${OPERATIONS.join('|')}> [--source T] [--config P] [--input J | --input-file P | --stdin] [--base-url U] [--timeout-ms N] [--context-file P]\n`);
+      stderr.write(`Usage: cli.js <${OPERATIONS.join('|')}> [--source T] [--config P] [--input J | --input-file P | --stdin] [--base-url U] [--timeout-ms N] [--context-file P] [--ledger-dir D] [--run-id ID]\n`);
       return argv.length ? 0 : 2;
     }
     const opts = parseArgs(argv);
@@ -66,10 +73,13 @@ async function main({ argv = process.argv.slice(2), env = process.env, stdin = p
       try { input = JSON.parse(raw); } catch (e) { throw usage(`input is not valid JSON (${e.message})`); }
     }
 
+    // before any request: a bad ledger setting is an invocation mistake, and nothing should be written to a tracker under a mistaken one
+    const led = LEDGERED.has(opts.op) ? enabledLedger({ configPath: opts.config, env, ledgerDir: opts.ledgerDir }) : null;
+    const ledgerWarnings = [];
     const adapter = connect({ configPath: opts.config, source: opts.source, baseUrl: opts.baseUrl, timeoutMs: opts.timeoutMs, env, fetch });
-    const data = await run(adapter, opts.op, input);
+    const data = await runOnce(adapter, opts.op, input, { ledger: led && led.ledger, runId: opts.runId, warn: (m) => ledgerWarnings.push(m) });
     if (opts.contextFile) writeJson(opts.contextFile, toTicketContext(data));
-    out({ ok: true, data });
+    out({ ok: true, data, ...(ledgerWarnings.length ? { warnings: ledgerWarnings } : {}) });
     return 0;
   } catch (err) {
     if (err && err.isUsage) {

@@ -44,8 +44,10 @@ function writeJson(file, doc) {
 // `init` seeds the result (defaults, or a leading <op>); `positionals` collects bare words in `_` instead of refusing them. A flag
 // that is not in the table is refused, and so is a flag with nothing after it. A value is whatever follows its flag, even if it
 // starts with "-": the scripts have always taken it so, and a flag that must refuse that says so in its own `parse`.
+// `strictValues` is for a script whose permission rule matches on a flag APPEARING in the command line (post-tests.js is allowed only with --dry-run): there a
+// value that starts with "--" is refused, so `--run-id --dry-run` cannot hand the word --dry-run to another flag as its value and run for real.
 // The table is also what the drift checks read to learn which flags a script defines, so a flag exists only if it is in here.
-function parseFlags(argv, flags, { init = {}, positionals = false } = {}) {
+function parseFlags(argv, flags, { init = {}, positionals = false, strictValues = false } = {}) {
   const opts = { ...init };
   if (positionals) opts._ = [];
   for (let n = 0; n < argv.length; n += 1) {
@@ -63,6 +65,7 @@ function parseFlags(argv, flags, { init = {}, positionals = false } = {}) {
     }
     if (n + 1 >= argv.length) throw usage(`${flag} needs a value`);
     n += 1;
+    if (strictValues && String(argv[n]).startsWith('--')) throw usage(`${flag} needs a value, but the next argument is ${JSON.stringify(String(argv[n]).slice(0, 40))}, which looks like an option`);
     const value = spec.parse ? spec.parse(argv[n], flag) : argv[n];
     if (spec.list) opts[spec.key] = [...(opts[spec.key] || []), value];
     else opts[spec.key] = value;

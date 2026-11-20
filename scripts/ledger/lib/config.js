@@ -1,0 +1,48 @@
+'use strict';
+
+// The `ledger` block of qa-config.json (schema: qa-config.schema.json). Every key is optional; a command-line flag beats the config, and the
+// config beats the default. Checked here with the schema's bounds so a bad value fails naming the key, like the triage block.
+const path = require('path');
+const { findConfig } = require('../../tracker/lib/connect');
+const { usage, readJson } = require('../../lib/cli');
+
+const DEFAULTS = { dir: '.qa-ledger', retentionDays: 90, keyRetentionDays: 400 };
+const LIMITS = { retentionDays: [1, 3650] };
+const KNOWN = ['dir', 'retentionDays'];
+
+const isInt = (v, lo, hi) => Number.isInteger(v) && v >= lo && v <= hi;
+
+function validate(block, where) {
+  const b = block === undefined ? {} : block;
+  if (b === null || typeof b !== 'object' || Array.isArray(b)) throw usage(`${where}: "ledger" must be an object`);
+  for (const k of Object.keys(b)) if (!KNOWN.includes(k)) throw usage(`${where}: unknown key "ledger.${k}" (known: ${KNOWN.join(', ')})`);
+  if (b.dir !== undefined && !(typeof b.dir === 'string' && b.dir.length && !/[\u0000-\u001f\u007f]/u.test(b.dir))) throw usage(`${where}: "ledger.dir" must be a folder path`);
+  if (b.retentionDays !== undefined && !isInt(b.retentionDays, ...LIMITS.retentionDays)) throw usage(`${where}: "ledger.retentionDays" must be a whole number from ${LIMITS.retentionDays[0]} to ${LIMITS.retentionDays[1]}`);
+  return b;
+}
+
+// { file, present, dir, retentionDays, keyRetentionDays, explicit }. `strict` makes an unreadable config an error (the ledger CLI); without it, it is "no block". No config file at all is fine: everything is the default. `dir` is made absolute
+// against the folder of the config file that holds it (and the working directory when there is none): config discovery looks in the working directory
+// and the two above it, so a dir relative to where the command happened to run would put one project's ledger in different places.
+function ledgerConfig({ configPath, env = process.env, strict = false } = {}) {
+  const file = findConfig(configPath, env);
+  let raw;
+  if (file) {
+    let doc;
+    // A config that cannot be read or parsed is the other loaders' to report (they do, in their own way: the tracker commands as a CONFIG error, the planner as a
+    // degraded plan); here it is simply "no ledger block", so adding the ledger changed nothing about how a broken config fails. The ledger's own CLI is `strict`.
+    try { doc = readJson(file, { fail: usage }); } catch (e) { if (strict) throw e; doc = undefined; }
+    raw = doc !== null && typeof doc === 'object' && !Array.isArray(doc) ? doc.ledger : undefined; // a config that is not an object is the other loaders' to refuse, not a reason to stop here
+  }
+  const v = validate(raw, file || 'qa-config.json');
+  return {
+    file: file || null,
+    present: raw !== undefined, // a `ledger` block, even an empty one, is how a project says it wants runs recorded
+    dir: path.resolve(file ? path.dirname(path.resolve(file)) : process.cwd(), v.dir === undefined ? DEFAULTS.dir : v.dir),
+    retentionDays: v.retentionDays === undefined ? DEFAULTS.retentionDays : v.retentionDays,
+    keyRetentionDays: DEFAULTS.keyRetentionDays,
+    explicit: { dir: v.dir !== undefined, retentionDays: v.retentionDays !== undefined },
+  };
+}
+
+module.exports = { ledgerConfig, validate, DEFAULTS, LIMITS, KNOWN };

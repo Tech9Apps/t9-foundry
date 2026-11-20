@@ -6,7 +6,7 @@
   "required": ["code", "message", "retriable"],
   "additionalProperties": false,
   "properties": {
-    "code": { "type": "string", "enum": ["NOT_FOUND", "UNAUTHENTICATED", "FORBIDDEN", "VALIDATION", "CONFIG", "RATE_LIMITED", "TIMEOUT", "NETWORK", "UPSTREAM_ERROR"] },
+    "code": { "type": "string", "enum": ["NOT_FOUND", "UNAUTHENTICATED", "FORBIDDEN", "VALIDATION", "CONFIG", "RATE_LIMITED", "TIMEOUT", "NETWORK", "UPSTREAM_ERROR", "IN_PROGRESS"] },
     "message": { "type": "string" },
     "status": { "type": ["integer", "null"] },
     "retriable": { "type": "boolean" },

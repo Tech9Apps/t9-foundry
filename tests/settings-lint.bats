@@ -138,7 +138,14 @@ missing_ask() { # <settings file> -> prints every required fragment that no "ask
     local opt
     for opt in $found; do case " $* " in *" $opt "*) ;; *) echo "$script: unreviewed option $opt"; return 1 ;; esac; done
   }
-  check scripts/tracker/cli.js --base-url --config --context-file --input --input-file --source --stdin --timeout-ms
-  check scripts/tracker/post-tests.js --base-url --cases --config --dry-run --keys-file --only --parent --source --timeout-ms
+  # --ledger-dir and --run-id (Phase 3, slice 3) are reviewed as harmless FOR THE INVOCATIONS THAT ARE ALLOWED: --ledger-dir names the folder of the run
+  # ledger and --run-id labels a run in it, and the ledger is only ever OPENED for create-test / create-bug / comment (never for fetch or search, which are what the
+  # allow rules above cover) and, in post-tests.js, only after the --dry-run return. The allow rule for post-tests is `* --dry-run*`, which matches on the WORD
+  # appearing, so both scripts now refuse a value that starts with "--" (`--run-id --dry-run` used to hand --dry-run to --run-id and run for real: a hole that was
+  # already there for --keys-file and the rest, found in review). With that, an allowed invocation cannot write to a ledger, whatever it is given; the writes that
+  # can are not allowed without a prompt. tests/tracker/once.test.js ("an option can never be the VALUE of another option", "an ALLOWED invocation ... writes nothing")
+  # holds both.
+  check scripts/tracker/cli.js --base-url --config --context-file --input --input-file --ledger-dir --run-id --source --stdin --timeout-ms
+  check scripts/tracker/post-tests.js --base-url --cases --config --dry-run --keys-file --ledger-dir --only --parent --run-id --source --timeout-ms
   check scripts/results/normalize.js --format --framework --out
 }
