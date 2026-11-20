@@ -12,6 +12,7 @@ const { spawn } = require('node:child_process');
 const { main, orchestrate } = require('../../scripts/triage/orchestrate');
 const { cleanEnv } = require('../helpers/node-env');
 const { openLedger } = require('../../scripts/ledger/lib/ledger');
+const { main: reportMain } = require('../../scripts/report');
 
 const made = [];
 const tmp = () => { const d = fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), 'qa-orch-led-')); made.push(d); return d; };
@@ -287,5 +288,90 @@ describe('the loop, end to end: a bug filed in one run is commented on in the ne
     assert.ok(two.doc.data.warnings.some((w) => /which this ledger filed/.test(w)), JSON.stringify(two.doc.data.warnings));
     assert.equal(mock.createdItems().length, 1, 'one bug on the tracker, not two');
     assert.deepEqual(openLedger({ dir }).readRun('run-2').events.filter((e) => e.type === 'verdict').map((e) => e.step), ['comment-existing'], 'and the verdict event says what the plan did');
+  });
+});
+
+describe('the run record carries what a summary needs (scripts/report.js reads nothing else)', () => {
+  test('a verdict names its test and rule; a plan that found a report names it, and who found it', async () => {
+    const r = await go({}, { runResults: answerAll(result(...FAILING)) });
+    const v = r.events().find((e) => e.type === 'verdict');
+    assert.equal(v.test, 'DEMO-101/TC-005: x');
+    assert.match(v.rule, /\S/);
+    assert.equal(v.item, undefined, 'no plan, so no tracker item');
+    assert.equal(v.itemFrom, undefined);
+  });
+
+  test('a long test name is cut to what a summary needs, so a record stays well under its size limit', async () => {
+    const long = `DEMO-101/TC-005: ${'x'.repeat(2000)}`;
+    const r = await go({}, { runResults: answerAll(result(T(long, 'failed', { ...withFile(5), error: ASSERT }))) });
+    const v = r.events().find((e) => e.type === 'verdict');
+    assert.equal(v.test.length, 300);
+    assert.equal(v.truncated, undefined);
+  });
+
+  test('every warning of the run is recorded just before the budget and run.end: the loop\'s own and the wrapper\'s', async () => {
+    const config = cfgFile({ environments: { testEnvironmentBaseUrl: 'staging.example.com' } }); // the wrapper warns that no environment lock can be taken
+    const r = await go({ config, snapshot: path.join(tmp(), 'missing.html') }, { runResults: answerAll(result(...FAILING)) });
+    const types = r.events().map((e) => e.type);
+    const warnings = r.events().filter((e) => e.type === 'warning').map((e) => e.message);
+    assert.ok(warnings.some((m) => /snapshot not readable/.test(m)), 'the loop\'s: ' + JSON.stringify(warnings));
+    assert.ok(warnings.some((m) => /is not an http\(s\) URL/.test(m)), 'the wrapper\'s: ' + JSON.stringify(warnings));
+    assert.deepEqual(types.slice(-2), ['budget', 'run.end']);
+    assert.ok(types.lastIndexOf('warning') < types.indexOf('budget'));
+    assert.deepEqual(warnings.slice().sort(), [...r.doc.data.warnings].sort().filter((m) => warnings.includes(m)), 'what was recorded is what the run printed');
+  });
+
+  test('a run that warns about everything records the first 50 and says how many more there were', async () => {
+    const doc = { ...result(T('a', 'passed', { file: 'a.test.js' })), warnings: Array.from({ length: 60 }, (_, i) => `noise ${i}`) };
+    const r = await go({}, { runResults: answerAll(doc) });
+    const warnings = r.events().filter((e) => e.type === 'warning').map((e) => e.message);
+    assert.equal(warnings.length, 51);
+    assert.equal(warnings[0], 'main run: noise 0');
+    assert.equal(warnings[49], 'main run: noise 49');
+    assert.equal(warnings[50], "10 more warning(s) are in the run's output but not in the ledger");
+    assert.equal(r.doc.data.warnings.length, 60, 'the run\'s own output still has all of them');
+  });
+
+  test('a run with nothing to warn about records no warning', async () => {
+    const r = await go({}, { runResults: answerAll(result(T('a', 'passed', { file: 'a.test.js' }))) });
+    assert.equal(r.events().filter((e) => e.type === 'warning').length, 0);
+  });
+});
+
+describe('the summary of the loop (scripts/report.js), end to end', () => {
+  test('run 1: the bug that was filed, found even though the filing was not attributed to the run; run 2: the comment that waits, found by the ledger and not by the search', async () => {
+    const { MOCKS } = require('../tracker/workspace');
+    const { createAdapter } = require('../../scripts/tracker/adapters');
+    const { runOnce } = require('../../scripts/tracker/lib/once');
+    const mock = MOCKS.github();
+    mock.state.searchLag = true;
+    const root = tmp();
+    const dir = path.join(root, 'ledger');
+    const config = path.join(root, 'qa-config.json');
+    fs.writeFileSync(config, JSON.stringify({ ticketSource: { type: 'github', github: mock.settings }, ledger: { dir } }));
+    const env = { [mock.tokenEnv]: mock.token };
+    const loop = (runId) => orchestrate({ specs: [], reruns: 2, out: tmp(), config, framework: 'node', runId, baseUrl: mock.baseUrl, preflight: 'ok', ticket: 'DEMO-101' }, { env, fetch: mock.fetch, runResults: answerAll(result(...FAILING)) });
+    const summary = async (runId) => { const o = { t: '', write(x) { o.t += x; } }; const code = await reportMain({ argv: ['--run-id', runId, '--dir', dir], env: {}, stdout: o, stderr: { write() {} } }); return { code, text: o.t }; };
+
+    const one = await loop('run-1');
+    const planned = JSON.parse(fs.readFileSync(one.doc.data.files.plan, 'utf8')).data.actions[0];
+    const before = await summary('run-1');
+    assert.equal(before.code, 0);
+    assert.match(before.text, /\| waiting for a person: a new bug is to be filed \|/);
+    assert.match(before.text, /\| Ticket \| DEMO-101 \|/);
+
+    // /file-bug does not know the run id: the filing is recorded under "unattributed", and the summary still finds it by its key
+    const adapter = createAdapter('github', { settings: mock.settings, env, fetch: mock.fetch, baseUrl: mock.baseUrl, timeoutMs: 500, retryDelayMs: 0 });
+    const bug = await runOnce(adapter, 'create-bug', { title: 'Second code accepted', body: `Steps.\n\n${planned.marker}`, idempotencyKey: planned.idempotencyKey }, { ledger: openLedger({ dir }) });
+    const after = await summary('run-1');
+    assert.match(after.text, new RegExp(`\\| filed #${bug.id} \\|`));
+    assert.doesNotMatch(after.text, /waiting for a person/);
+    assert.match(after.text, /- Nothing: every step ran and nothing is waiting\./);
+
+    await loop('run-2');
+    const two = await summary('run-2');
+    assert.match(two.text, new RegExp(`\\| waiting for a person: a comment on #${bug.id} \\(ledger\\) \\|`));
+    assert.match(two.text, /which this ledger filed/, 'the warning that explains why it is a ledger hit');
+    assert.match(two.text, /### Warnings/);
   });
 });

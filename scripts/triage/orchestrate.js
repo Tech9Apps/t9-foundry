@@ -50,6 +50,8 @@ const { scopesFor, configEnvUrl, normalizeEnvUrl, ticketProblem, runLockTtlMs, a
 
 const MAX_RECORDED_RESULTS = 5000;
 const MAX_RECORDED_VERDICTS = 2000;
+const MAX_RECORDED_WARNINGS = 50;
+const VERDICT_TEXT_MAX = 300; // a test name or rule in a verdict record: a record is capped at 8 KB, and a summary does not need more
 const UND_ALARM_MIN = 3; // at least this many undetermined verdicts, and at least this share of the triaged failures,
 const UND_ALARM_SHARE = 0.5; // before the report says the rules lack what they need for this suite
 
@@ -273,14 +275,23 @@ async function runLoop(opts, { env = process.env, fetch = globalThis.fetch, runR
   }
 
   // what was decided about each failure, and what the plan says to do about it
-  const plannedStep = new Map((actions || []).map((a) => [a.key, a.step]));
+  const planned = new Map((actions || []).map((a) => [a.key, a]));
   if (ctx.ledger) {
     let n = 0;
     for (const v of report.verdicts) {
       if (!v.token) continue;
       if (n >= MAX_RECORDED_VERDICTS) { ctx.warn(`the ledger holds only the first ${MAX_RECORDED_VERDICTS} verdicts of this run`); break; }
       n += 1;
-      ctx.record('verdict', { token: v.token, class: v.class, confidence: v.confidence, action: v.action, ...(plannedStep.has(v.key) ? { step: plannedStep.get(v.key) } : {}) });
+      const a = planned.get(v.key);
+      // the tracker item the plan found for this failure (an open report to comment on, a fixed one this regresses, a dismissed one), and who found it: what a summary shows
+      const found = a && (a.existing || a.regressionOf || a.dismissedAs);
+      ctx.record('verdict', {
+        token: v.token, class: v.class, confidence: v.confidence, action: v.action,
+        ...(a ? { step: a.step } : {}),
+        ...(v.test && typeof v.test.name === 'string' ? { test: v.test.name.slice(0, VERDICT_TEXT_MAX) } : {}),
+        ...(typeof v.rule === 'string' ? { rule: v.rule.slice(0, VERDICT_TEXT_MAX) } : {}),
+        ...(found && found.id !== undefined && found.id !== null ? { item: String(found.id).slice(0, VERDICT_TEXT_MAX), itemFrom: a.existing && a.existing.source === 'ledger' ? 'ledger' : 'tracker' } : {}),
+      });
     }
   }
 
@@ -394,6 +405,11 @@ async function orchestrate(opts, deps = {}) {
       throw e;
     }
     const { doc } = result;
+    // everything the run warned about (the loop's own warnings and the ledger's), so that a summary of it (scripts/report.js) needs nothing but the ledger;
+    // the cap is for a run that warns about everything
+    const allWarnings = [...((doc.ok && doc.data ? doc.data.warnings : doc.warnings) || []), ...warnings];
+    for (const m of allWarnings.slice(0, MAX_RECORDED_WARNINGS)) ctx.record('warning', { message: String(m) });
+    if (allWarnings.length > MAX_RECORDED_WARNINGS) ctx.record('warning', { message: `${allWarnings.length - MAX_RECORDED_WARNINGS} more warning(s) are in the run's output but not in the ledger` });
     ctx.record('budget', { wallClockMs: now() - startedAt }); // what this run spent, as far as the scripts can see (turns and cost are the launcher's to report)
     ctx.record('run.end', { exit: result.code, complete: result.code === 0, ...(doc.ok && doc.data && doc.data.totals ? { counts: doc.data.totals } : {}) });
     if (warnings.length) {

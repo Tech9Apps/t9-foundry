@@ -59,10 +59,11 @@ describe('records', () => {
   test('every type in the table can be written and read back', () => {
     const l = open();
     const sample = {
-      'run.start': START, 'test.result': { spec: 's', name: 'n', status: 'failed', phase: 'rerun-1', durationMs: 5 }, verdict: { token: 'qafp0123456789ab', class: 'flaky', confidence: 0.9, action: 'act', step: 'report-flaky' },
+      'run.start': START, 'test.result': { spec: 's', name: 'n', status: 'failed', phase: 'rerun-1', durationMs: 5 }, verdict: { token: 'qafp0123456789ab', class: 'flaky', confidence: 0.9, action: 'act', step: 'comment-existing', test: 'a flaky one', rule: 'FLK-1', item: '42', itemFrom: 'ledger' },
       'action.claimed': { key: 'k', step: 'file-bug', target: 't' }, 'action.done': { key: 'k', id: '7', url: 'https://x', deduplicated: false }, 'action.failed': { key: 'k', code: 'HTTP_500', message: 'm' },
       'heal.begin': { branch: 'qa/heal-1', baseSha: 'abc' }, 'heal.end': { branch: 'qa/heal-1', outcome: 'kept' }, budget: { wallClockMs: 10, exceeded: 'wall clock' }, 'run.end': { exit: 1, complete: false, counts: { failed: 2 } },
       'lock.stolen': { scope: 'env:x', reason: 'it expired', previousRunId: 'old', previousPid: 9 },
+      warning: { message: 'the tracker search could not see everything' },
     };
     assert.deepEqual(Object.keys(sample).sort(), Object.keys(TYPES).sort(), 'the sample covers every type');
     for (const [type, fields] of Object.entries(sample)) l.record('r', type, fields);

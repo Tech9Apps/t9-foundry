@@ -45,13 +45,15 @@ const NOFOLLOW = fs.constants.O_NOFOLLOW || 0; // not on Windows; there it is si
 const TYPES = {
   'run.start': { framework: 'string?', source: 'string?', ticket: 'string?', pid: 'number', host: 'string', config: 'object?' },
   'test.result': { spec: 'string', name: 'string', status: 'string', phase: 'string', durationMs: 'number?', flaky: 'boolean?' },
-  verdict: { token: 'string', class: 'string', confidence: 'number', action: 'string', step: 'string?' },
+  // test, rule, item and itemFrom are what a run summary needs to say which test, why, and which tracker item (found by the tracker, or by this ledger) the plan found
+  verdict: { token: 'string', class: 'string', confidence: 'number', action: 'string', step: 'string?', test: 'string?', rule: 'string?', item: 'string?', itemFrom: 'string?' },
   'action.claimed': { key: 'string', step: 'string', target: 'string?' },
   'action.done': { key: 'string', id: 'string?', url: 'string?', deduplicated: 'boolean?' },
   'action.failed': { key: 'string', code: 'string', message: 'string?' },
   'heal.begin': { branch: 'string', baseSha: 'string', tokens: 'array?' },
   'heal.end': { branch: 'string', outcome: ['kept', 'reverted', 'interrupted'] },
   budget: { wallClockMs: 'number?', turns: 'number?', costUsd: 'number?', exceeded: 'string?' },
+  warning: { message: 'string' },
   'run.end': { exit: 'number', complete: 'boolean', counts: 'object?' },
   'lock.stolen': { scope: 'string', reason: 'string', previousRunId: 'string?', previousPid: 'number?' },
 };

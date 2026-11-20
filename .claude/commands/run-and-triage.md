@@ -35,7 +35,9 @@ node scripts/triage/orchestrate.js --framework <testFramework.type> --preflight 
 ```
 
 Add `--test-dir <testFramework.testDir>` and `--config-file <testFramework.configPath>` when those are set, and one
-`--spec <file>` per file in `$ARGUMENTS`. Generate `<run-id>` **once** for this run (a UTC timestamp such as
+`--spec <file>` per file in `$ARGUMENTS`. If the user told you which ticket this run is for, add `--ticket <ticket-id>`
+(only an id that matches `^[A-Za-z0-9][A-Za-z0-9._/-]{0,63}$`; otherwise ask them again): the project's cooldown and the lock on
+that ticket are per ticket, so without it neither applies. Never invent a ticket or pass one the user did not give. Generate `<run-id>` **once** for this run (a UTC timestamp such as
 `20261008T181500Z`) and reuse it if you have to run anything again: it is what makes retries safe. (Running `orchestrate.js` again, with the same id or not,
 clears the earlier run's snapshots and evidence in `qa-results/`, so step 3 below has to be done again for the new run.) Re-runs default to 2
 (`--reruns`, 0–5); more re-runs cost more and give better signal. A project sets its own defaults once in `qa-config.json`
@@ -142,6 +144,13 @@ Tell the user, in this order:
 3. **What you did**: bugs filed or commented on (ids/urls), and what was only reported.
 4. **What you could not check**: tracker search failures, missing snapshots, anything below the threshold. Never
    present a proposal as a decision.
+5. **The record of the run**, only when the project keeps a run ledger (`qa-config.json` has a `ledger` block): run
+   `node scripts/report.js --run-id <run-id>` **last**, after anything was filed or commented on, and include its output as it is.
+   It is rendered from the run's record, not written by you: do not edit, shorten or reword it, and if it disagrees with what you
+   have just said, say so rather than choosing. If it exits 1 because the run is not in the ledger, the project keeps none: say nothing about it.
+   Whether a copy goes to Slack is the project's setup: you never set `QA_SLACK_WEBHOOK`, never pass a webhook, and never pass
+   `--comment-out` unless the user asks for a ticket comment file (it is only an input file: posting it follows the `comment-existing`
+   rule, so show it and post it only on their yes).
 
 Checkpoint convention: include each line verbatim in your final message, in order:
 1. After the main run and triage: `**✅ Run executed and failures triaged**`

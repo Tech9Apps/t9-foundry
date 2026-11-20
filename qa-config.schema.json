@@ -226,6 +226,19 @@
         "cooldownMinutes": { "type": "integer", "minimum": 0, "maximum": 10080, "default": 0, "description": "A run for a ticket (--ticket) is refused (exit 4) if that ticket's last run ended less than this long ago. Needs the run ledger." }
       }
     },
+    "report": {
+      "type": "object",
+      "description": "Where a run summary may be sent (docs/phase-3-design.md, \"Reporting\"). Optional.",
+      "additionalProperties": false,
+      "properties": {
+        "slackHosts": {
+          "type": "array",
+          "maxItems": 10,
+          "items": { "type": "string", "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$" },
+          "description": "Host names a Slack webhook (the QA_SLACK_WEBHOOK environment variable) may point at, besides hooks.slack.com: an enterprise or proxy host. Exact names in lower case, no scheme, port or path. A webhook on any other host is not used, and the summary says so."
+        }
+      }
+    },
     "dataManagement": {
       "type": "object",
       "properties": {

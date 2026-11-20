@@ -31,7 +31,7 @@ const { MAX_RERUNS } = require(path.join(ROOT, 'scripts/triage/orchestrate.js'))
 const scriptFlags = require('./script-flags');
 const SCRIPTS = {};
 cmd.split('\n').forEach((line, i) => {
-  const m = line.match(/node (scripts\/(?:triage|tracker|results)\/[\w-]+\.js)(.*)$/);
+  const m = line.match(/node (scripts\/(?:(?:triage|tracker|results)\/)?[\w-]+\.js)(.*)$/); // (scripts/report.js sits at the top: the run summary the command ends with)
   if (!m) return;
   const [, file, rest] = m;
   if (!exists(file)) { bad(`${CMD}:${i + 1}: ${file} does not exist`); return; }

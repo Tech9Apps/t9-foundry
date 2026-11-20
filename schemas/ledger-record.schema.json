@@ -32,6 +32,9 @@
       "$ref": "#/definitions/budget"
     },
     {
+      "$ref": "#/definitions/warning"
+    },
+    {
       "$ref": "#/definitions/run_end"
     },
     {
@@ -190,6 +193,18 @@
           "type": "string"
         },
         "step": {
+          "type": "string"
+        },
+        "test": {
+          "type": "string"
+        },
+        "rule": {
+          "type": "string"
+        },
+        "item": {
+          "type": "string"
+        },
+        "itemFrom": {
           "type": "string"
         }
       }
@@ -450,6 +465,41 @@
           "type": "number"
         },
         "exceeded": {
+          "type": "string"
+        }
+      }
+    },
+    "warning": {
+      "description": "Something the run's own output warned about (a search that could not see everything, a skipped step, a stale heal branch, a limit reached). Written just before the budget and run.end records, so a summary of a run needs nothing but its events.",
+      "type": "object",
+      "required": [
+        "v",
+        "ts",
+        "runId",
+        "type",
+        "message"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "ts": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$"
+        },
+        "runId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "const": "warning"
+        },
+        "truncated": {
+          "type": "boolean",
+          "description": "true when the record was shrunk to fit the 8 KB line limit"
+        },
+        "message": {
           "type": "string"
         }
       }
