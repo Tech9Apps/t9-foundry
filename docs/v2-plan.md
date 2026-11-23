@@ -95,7 +95,7 @@ Fix what is wrong today and make unattended runs *safe to attempt*.
 
 ## Phase 3 — State, idempotency, observability *(medium)*
 
-> **Status — design written, not built.** The plan, with the decisions taken (JSONL ledger; mocks only) and the open questions, is in
+> **Status — built, in review** (draft PR #13, five slices: ledger core, events, idempotent writes, budgets and locks, reporting). The plan, with the decisions taken (JSONL ledger; mocks only) and the open questions, is in
 > [phase-3-design.md](./phase-3-design.md). The text below is the original outline; where the two differ the design doc wins (for
 > example `report.js` rather than `report.sh`, and turn/cost budgets are *recorded* here but *enforced* by Phase 4's launcher).
 

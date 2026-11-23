@@ -18,16 +18,16 @@ describe('triage config: values', () => {
     const c = triageConfig({ configPath: write({ project: { name: 'x' } }) });
     assert.equal(c.reruns, 2);
     assert.equal(c.confidenceThreshold, 0.8);
-    assert.deepEqual(c.selfHeal, { enabled: false, paths: null, maxFiles: 5, maxLines: 20, branchPrefix: 'qa/heal-' });
+    assert.deepEqual(c.selfHeal, { enabled: false, paths: null, maxFiles: 5, maxLines: 20, branchPrefix: 'qa/heal-', maxAttemptsPerFingerprint: 1, attemptWindowDays: 7 });
     assert.deepEqual(c.trustedFormats, ['tap']);
     assert.deepEqual(c.explicit, { reruns: false, confidenceThreshold: false, trustedFormats: false });
     assert.deepEqual([DEFAULTS.reruns, DEFAULTS.confidenceThreshold, MAX_RERUNS], [2, 0.8, 5]);
   });
 
   test('set values win, and are reported as explicit', () => {
-    const c = triageConfig({ configPath: write({ triage: { reruns: 4, confidenceThreshold: 0.9, selfHeal: { enabled: true, maxFiles: 2, maxLines: 7, branchPrefix: 'qa/fix-', paths: ['e2e'] } } }) });
+    const c = triageConfig({ configPath: write({ triage: { reruns: 4, confidenceThreshold: 0.9, selfHeal: { enabled: true, maxFiles: 2, maxLines: 7, branchPrefix: 'qa/fix-', paths: ['e2e'], maxAttemptsPerFingerprint: 3, attemptWindowDays: 30 } } }) });
     assert.deepEqual([c.reruns, c.confidenceThreshold], [4, 0.9]);
-    assert.deepEqual(c.selfHeal, { enabled: true, paths: ['e2e'], maxFiles: 2, maxLines: 7, branchPrefix: 'qa/fix-' });
+    assert.deepEqual(c.selfHeal, { enabled: true, paths: ['e2e'], maxFiles: 2, maxLines: 7, branchPrefix: 'qa/fix-', maxAttemptsPerFingerprint: 3, attemptWindowDays: 30 });
     assert.deepEqual(c.explicit, { reruns: true, confidenceThreshold: true, trustedFormats: false });
   });
 
@@ -72,6 +72,11 @@ describe('triage config: validation names the key', () => {
     fails({ selfHeal: { maxLines: 201 } }, /selfHeal\.maxLines" must be a whole number from 1 to 200/);
     fails({ selfHeal: { paths: 'tests' } }, /selfHeal\.paths" must be a list/);
     fails({ selfHeal: { paths: [''] } }, /selfHeal\.paths/);
+    fails({ selfHeal: { maxAttemptsPerFingerprint: 0 } }, /selfHeal\.maxAttemptsPerFingerprint" must be a whole number from 1 to 20/);
+    fails({ selfHeal: { maxAttemptsPerFingerprint: 21 } }, /selfHeal\.maxAttemptsPerFingerprint/);
+    fails({ selfHeal: { maxAttemptsPerFingerprint: 1.5 } }, /selfHeal\.maxAttemptsPerFingerprint/);
+    fails({ selfHeal: { attemptWindowDays: 0 } }, /selfHeal\.attemptWindowDays" must be a whole number from 1 to 365/);
+    fails({ selfHeal: { attemptWindowDays: 366 } }, /selfHeal\.attemptWindowDays/);
   });
   test('heal branches must live under qa/ (so they can never be a default branch)', () => {
     for (const bad of ['main', 'heal-', 'feature/x', '', 'qa/has space', '/qa/x', 'qa/../main']) fails({ selfHeal: { branchPrefix: bad } }, /branchPrefix" must start with "qa\//);
@@ -135,13 +140,13 @@ describe('the schema and the loader agree', () => {
     assert.equal(t.reruns.default, DEFAULTS.reruns);
     assert.equal(t.reruns.maximum, MAX_RERUNS);
     assert.equal(t.confidenceThreshold.default, DEFAULTS.confidenceThreshold);
-    for (const k of ['enabled', 'maxFiles', 'maxLines', 'branchPrefix']) assert.equal(t.selfHeal.properties[k].default, DEFAULTS.selfHeal[k], k);
+    for (const k of ['enabled', 'maxFiles', 'maxLines', 'branchPrefix', 'maxAttemptsPerFingerprint', 'attemptWindowDays']) assert.equal(t.selfHeal.properties[k].default, DEFAULTS.selfHeal[k], k);
   });
 
   test('the bounds the loader, the command-line flags and the schema enforce are one set of numbers', () => {
     const t = require('../../qa-config.schema.json').properties.triage.properties;
-    assert.deepEqual(LIMITS, { reruns: [0, MAX_RERUNS], maxFiles: [1, 20], maxLines: [1, 200] });
-    for (const [key, node] of [['reruns', t.reruns], ['maxFiles', t.selfHeal.properties.maxFiles], ['maxLines', t.selfHeal.properties.maxLines]]) {
+    assert.deepEqual(LIMITS, { reruns: [0, MAX_RERUNS], maxFiles: [1, 20], maxLines: [1, 200], maxAttemptsPerFingerprint: [1, 20], attemptWindowDays: [1, 365] });
+    for (const [key, node] of [['reruns', t.reruns], ['maxFiles', t.selfHeal.properties.maxFiles], ['maxLines', t.selfHeal.properties.maxLines], ['maxAttemptsPerFingerprint', t.selfHeal.properties.maxAttemptsPerFingerprint], ['attemptWindowDays', t.selfHeal.properties.attemptWindowDays]]) {
       assert.deepEqual([node.minimum, node.maximum], LIMITS[key], key);
     }
     assert.equal(t.confidenceThreshold.exclusiveMinimum, 0);

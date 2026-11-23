@@ -13,13 +13,13 @@ const DEFAULTS = {
   confidenceThreshold: 0.8,
   // Runner formats whose classification has been verified on REAL failure output: only these may let a product-bug or test-bug verdict act.
   trustedFormats: ['tap'],
-  selfHeal: { enabled: false, paths: null, maxFiles: 5, maxLines: 20, branchPrefix: 'qa/heal-' },
+  selfHeal: { enabled: false, paths: null, maxFiles: 5, maxLines: 20, branchPrefix: 'qa/heal-', maxAttemptsPerFingerprint: 1, attemptWindowDays: 7 },
 };
 const MAX_RERUNS = 5;
 
 // [min, max] for each whole-number setting. The config loader, the command-line flags (heal.js, orchestrate.js) and
 // qa-config.schema.json all enforce these, and a test holds the schema to this table.
-const LIMITS = { reruns: [0, MAX_RERUNS], maxFiles: [1, 20], maxLines: [1, 200] };
+const LIMITS = { reruns: [0, MAX_RERUNS], maxFiles: [1, 20], maxLines: [1, 200], maxAttemptsPerFingerprint: [1, 20], attemptWindowDays: [1, 365] };
 const PREFLIGHT_STATES = ['ok', 'failed', 'unknown'];
 
 const isInt = (v, lo, hi) => Number.isInteger(v) && v >= lo && v <= hi;
@@ -36,7 +36,7 @@ function validate(triage, where) {
   if (t === null || typeof t !== 'object' || Array.isArray(t)) throw usage(`${where}: "triage" must be an object`);
   const sh = t.selfHeal === undefined ? {} : t.selfHeal;
   if (typeof sh !== 'object' || sh === null || Array.isArray(sh)) throw usage(`${where}: "triage.selfHeal" must be an object`);
-  const known = { triage: ['reruns', 'confidenceThreshold', 'trustedFormats', 'selfHeal'], selfHeal: ['enabled', 'paths', 'maxFiles', 'maxLines', 'branchPrefix'] };
+  const known = { triage: ['reruns', 'confidenceThreshold', 'trustedFormats', 'selfHeal'], selfHeal: ['enabled', 'paths', 'maxFiles', 'maxLines', 'branchPrefix', 'maxAttemptsPerFingerprint', 'attemptWindowDays'] };
   for (const k of Object.keys(t)) if (!known.triage.includes(k)) throw usage(`${where}: unknown key "triage.${k}" (known: ${known.triage.join(', ')})`);
   for (const k of Object.keys(sh)) if (!known.selfHeal.includes(k)) throw usage(`${where}: unknown key "triage.selfHeal.${k}" (known: ${known.selfHeal.join(', ')})`);
   if (t.reruns !== undefined && !isInt(t.reruns, ...LIMITS.reruns)) throw usage(`${where}: "triage.reruns" must be a whole number from ${LIMITS.reruns[0]} to ${LIMITS.reruns[1]}`);
@@ -46,6 +46,9 @@ function validate(triage, where) {
   if (sh.paths !== undefined && !(Array.isArray(sh.paths) && sh.paths.every((p) => typeof p === 'string' && p.length))) throw usage(`${where}: "triage.selfHeal.paths" must be a list of directory names`);
   if (sh.maxFiles !== undefined && !isInt(sh.maxFiles, ...LIMITS.maxFiles)) throw usage(`${where}: "triage.selfHeal.maxFiles" must be a whole number from ${LIMITS.maxFiles[0]} to ${LIMITS.maxFiles[1]}`);
   if (sh.maxLines !== undefined && !isInt(sh.maxLines, ...LIMITS.maxLines)) throw usage(`${where}: "triage.selfHeal.maxLines" must be a whole number from ${LIMITS.maxLines[0]} to ${LIMITS.maxLines[1]}`);
+  for (const k of ['maxAttemptsPerFingerprint', 'attemptWindowDays']) {
+    if (sh[k] !== undefined && !isInt(sh[k], ...LIMITS[k])) throw usage(`${where}: "triage.selfHeal.${k}" must be a whole number from ${LIMITS[k][0]} to ${LIMITS[k][1]}`);
+  }
   if (sh.branchPrefix !== undefined && !(typeof sh.branchPrefix === 'string' && /^qa\/[A-Za-z0-9._-]*$/.test(sh.branchPrefix))) throw usage(`${where}: "triage.selfHeal.branchPrefix" must start with "qa/" and use only letters, digits, . _ -`);
   return { reruns: t.reruns, confidenceThreshold: t.confidenceThreshold, trustedFormats: t.trustedFormats, selfHeal: { ...sh } };
 }
@@ -74,6 +77,8 @@ function triageConfig({ configPath, env = process.env } = {}) {
       maxFiles: v.selfHeal.maxFiles === undefined ? DEFAULTS.selfHeal.maxFiles : v.selfHeal.maxFiles,
       maxLines: v.selfHeal.maxLines === undefined ? DEFAULTS.selfHeal.maxLines : v.selfHeal.maxLines,
       branchPrefix: v.selfHeal.branchPrefix === undefined ? DEFAULTS.selfHeal.branchPrefix : v.selfHeal.branchPrefix,
+      maxAttemptsPerFingerprint: v.selfHeal.maxAttemptsPerFingerprint === undefined ? DEFAULTS.selfHeal.maxAttemptsPerFingerprint : v.selfHeal.maxAttemptsPerFingerprint,
+      attemptWindowDays: v.selfHeal.attemptWindowDays === undefined ? DEFAULTS.selfHeal.attemptWindowDays : v.selfHeal.attemptWindowDays,
     },
     // which values were set explicitly (a flag may only override what is documented as overridable)
     explicit: { reruns: v.reruns !== undefined, confidenceThreshold: v.confidenceThreshold !== undefined, trustedFormats: v.trustedFormats !== undefined },

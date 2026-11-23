@@ -199,8 +199,43 @@
             "paths": { "type": "array", "items": { "type": "string", "minLength": 1 }, "description": "Directories, relative to the repository, where test code may be edited. Defaults to testFramework.testDir." },
             "maxFiles": { "type": "integer", "minimum": 1, "maximum": 20, "default": 5, "description": "A heal that would touch more files than this is refused, not applied." },
             "maxLines": { "type": "integer", "minimum": 1, "maximum": 200, "default": 20, "description": "A heal that would change more lines than this is refused, not applied." },
-            "branchPrefix": { "type": "string", "pattern": "^qa/[A-Za-z0-9._-]*$", "default": "qa/heal-", "description": "Heal branches always live under qa/, so they are obviously machine-made and can never be a default branch." }
+            "branchPrefix": { "type": "string", "pattern": "^qa/[A-Za-z0-9._-]*$", "default": "qa/heal-", "description": "Heal branches always live under qa/, so they are obviously machine-made and can never be a default branch." },
+            "maxAttemptsPerFingerprint": { "type": "integer", "minimum": 1, "maximum": 20, "default": 1, "description": "How many times a heal may begin for the same failure within attemptWindowDays, across runs. Needs the run ledger (the `ledger` block): without it nothing remembers earlier runs and this is not enforced. A heal that began and never finished (the run died) counts as an attempt." },
+            "attemptWindowDays": { "type": "integer", "minimum": 1, "maximum": 365, "default": 7, "description": "The window maxAttemptsPerFingerprint counts over." }
           }
+        }
+      }
+    },
+    "ledger": {
+      "type": "object",
+      "description": "The run ledger (scripts/ledger/, docs/phase-3-design.md): what each run did, kept as plain files so a crash, a retry or a second run can see it. Every key is optional.",
+      "additionalProperties": false,
+      "properties": {
+        "dir": { "type": "string", "minLength": 1, "default": ".qa-ledger", "description": "Where the ledger lives, relative to the folder of this config file (so the same project has the same ledger from any directory). Gitignored by default: it holds per-run detail that churns, and a committed audit log invites edits that look legitimate in a diff." },
+        "retentionDays": { "type": "integer", "minimum": 1, "maximum": 3650, "default": 90, "description": "Run files older than this are removed by `ledger prune`. Keep it at least as long as triage.selfHeal.attemptWindowDays: a pruned run takes its heal attempts out of the cap. Idempotency keys are kept 400 days regardless (a key must outlive the longest retry window)." }
+      }
+    },
+    "budget": {
+      "type": "object",
+      "description": "Limits on a run, and how soon the same ticket may be run again (docs/phase-3-design.md, \"Budgets\"). Every key is optional and 0 means no limit. Only what the scripts can see is enforced by them: wall-clock time and the cooldown. Turns and cost are for whatever launches the model: `node scripts/ledger/cli.js budget-check` hands them over. A command-line flag may tighten a limit, never lift it.",
+      "additionalProperties": false,
+      "properties": {
+        "maxWallClockMs": { "type": "integer", "minimum": 0, "maximum": 604800000, "default": 0, "description": "A run stops starting new steps (the re-runs, the tracker search, self-heal) once it has been going this long, and ends with exit 5 and complete: false. A step that has begun finishes. Works without a ledger." },
+        "maxTurns": { "type": "integer", "minimum": 0, "maximum": 10000, "default": 0, "description": "For the launcher (claude -p --max-turns): the scripts cannot count a model's turns. Returned by `ledger budget-check`." },
+        "maxCostUsd": { "type": "number", "minimum": 0, "maximum": 100000, "default": 0, "description": "For the launcher: the scripts cannot see what a model session costs. Returned by `ledger budget-check`." },
+        "cooldownMinutes": { "type": "integer", "minimum": 0, "maximum": 10080, "default": 0, "description": "A run for a ticket (--ticket) is refused (exit 4) if that ticket's last run ended less than this long ago. Needs the run ledger." }
+      }
+    },
+    "report": {
+      "type": "object",
+      "description": "Where a run summary may be sent (docs/phase-3-design.md, \"Reporting\"). Optional.",
+      "additionalProperties": false,
+      "properties": {
+        "slackHosts": {
+          "type": "array",
+          "maxItems": 10,
+          "items": { "type": "string", "pattern": "^(?![0-9.]+$)[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$" },
+          "description": "Host names a Slack webhook (the QA_SLACK_WEBHOOK environment variable) may point at, besides hooks.slack.com: an enterprise or proxy host. Exact names in lower case, no scheme, port or path. A webhook on any other host is not used, and the summary says so."
         }
       }
     },

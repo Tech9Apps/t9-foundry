@@ -13,7 +13,7 @@ setup() {
   mkdir -p "$TEST_TMP/.claude/memory" "$TEST_TMP/scripts" "$TEST_TMP/schemas"
   cp "$REPO_ROOT/.claude/memory/failure-triage-rules.md" "$REPO_ROOT/.claude/memory/ai-usage-rules.md" "$TEST_TMP/.claude/memory/"
   cp -R "$REPO_ROOT/.claude/commands" "$REPO_ROOT/.claude/agents" "$REPO_ROOT/.claude/skills" "$TEST_TMP/.claude/"
-  cp -R "$REPO_ROOT/scripts/lib" "$REPO_ROOT/scripts/triage" "$REPO_ROOT/scripts/results" "$REPO_ROOT/scripts/tracker" "$REPO_ROOT/scripts/preflight.sh" "$TEST_TMP/scripts/"
+  cp -R "$REPO_ROOT/scripts/lib" "$REPO_ROOT/scripts/triage" "$REPO_ROOT/scripts/ledger" "$REPO_ROOT/scripts/results" "$REPO_ROOT/scripts/tracker" "$REPO_ROOT/scripts/preflight.sh" "$REPO_ROOT/scripts/report.js" "$TEST_TMP/scripts/"
   cp "$REPO_ROOT/qa-config.schema.json" "$TEST_TMP/"   # the prose names config keys; the checks verify them against the schema
 }
 teardown() {
@@ -80,6 +80,12 @@ node_tests() { cd "$REPO_ROOT" && env -u NODE_TEST_CONTEXT node --test --test-re
   [[ "$output" =~ "# fail 0" ]]
 }
 
+@test "the planner uses the run ledger to fill a gap in a lagging tracker search, and leaves what the tracker shows to the tracker" {
+  run node_tests plan-ledger.test.js
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "# fail 0" ]]
+}
+
 @test "the planner passes its tests on all five tracker mocks (dedupe, regressions, read-only, degraded modes)" {
   run node_tests plan.test.js
   [ "$status" -eq 0 ]
@@ -88,6 +94,24 @@ node_tests() { cd "$REPO_ROOT" && env -u NODE_TEST_CONTEXT node --test --test-re
 
 @test "the orchestrator passes its tests (re-run scoping, preflight, missing reports, evidence, outputs)" {
   run node_tests orchestrate.test.js
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "# fail 0" ]]
+}
+
+@test "the orchestrator's locks, per-ticket cooldown and wall-clock budget: refusals leave nothing behind, a stop says what it skipped" {
+  run node_tests orchestrate-budget.test.js
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "# fail 0" ]]
+}
+
+@test "REAL signals: a SIGTERM stops the runner and gives the locks back, self-heal still restores the repository, a killed run's locks are taken over" {
+  run node_tests orchestrate-signals.test.js
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "# fail 0" ]]
+}
+
+@test "the orchestrator's run is remembered in the run ledger when asked, and never changes the run (events, opt-in, a real SIGKILL, write failures)" {
+  run node_tests orchestrate-ledger.test.js
   [ "$status" -eq 0 ]
   [[ "$output" =~ "# fail 0" ]]
 }

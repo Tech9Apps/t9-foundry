@@ -3,11 +3,29 @@
   "$id": "tracker-comment-result.schema.json",
   "title": "Result of comment",
   "type": "object",
-  "required": ["id"],
+  "required": [
+    "id"
+  ],
   "additionalProperties": false,
   "properties": {
-    "id": { "type": "string", "minLength": 1 },
-    "url": { "type": "string" },
-    "deduplicated": { "type": "boolean", "description": "true when a comment carrying the same idempotencyKey already existed and was returned instead of posting another" }
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "url": {
+      "type": "string"
+    },
+    "deduplicated": {
+      "type": "boolean",
+      "description": "true when a comment carrying the same idempotencyKey already existed and was returned instead of posting another"
+    },
+    "fromLedger": {
+      "type": "boolean",
+      "description": "answered from the run ledger: the tracker was not asked"
+    },
+    "resumed": {
+      "type": "boolean",
+      "description": "a run that died had claimed this write; it was taken over"
+    }
   }
 }

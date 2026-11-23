@@ -87,6 +87,24 @@ node_tests() { # <file> -> runs it, echoes the TAP summary lines
   [[ "$output" =~ "# fail 0" ]]
 }
 
+@test "a tracker write happens once, through the run ledger, on all five trackers (re-runs, in-flight claims, resume, create-bug, comment, forget)" {
+  run node_tests once.test.js
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "# fail 0" ]]
+}
+
+@test "post-tests posts one ticket's cases one run at a time (refusal, release on every exit, a real SIGTERM mid-batch)" {
+  run node_tests post-tests-locks.test.js
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "# fail 0" ]]
+}
+
+@test "a REAL SIGKILL mid-batch, then a resume, leaves ten test cases each exactly once (the Phase 3 exit criterion)" {
+  run node_tests post-tests-kill.test.js
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "# fail 0" ]]
+}
+
 @test "the bulk test-case poster (post-tests.js) passes its tests on all five trackers" {
   run node_tests post-tests.test.js
   [ "$status" -eq 0 ]
