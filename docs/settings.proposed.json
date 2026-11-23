@@ -43,7 +43,6 @@
       "Bash(gh issue list *)",
       "Bash(gh repo view *)",
       "Bash(gh auth status)",
-      "Bash(gh api *)",
       "Bash(npx playwright --version)",
       "Bash(npx playwright test --list*)",
       "Bash(npx cypress --version)",
