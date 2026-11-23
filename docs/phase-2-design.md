@@ -332,5 +332,7 @@ found no blocker: nothing loses uncommitted work, pushes, or acts without a yes.
 - **The user's working tree is on the heal branch for the whole validation** (up to the 30-minute run timeout), and two heals in one repository are not guarded against each other.
   A `git worktree` would isolate it.
 - A Ctrl-C landing between two of the heal's own git calls left `qa/heal-*` behind in 2 of about 40 attempts; the result still said `restored: true` for the files.
-- **`Bash(gh api *)` in `.claude/settings.json` predates this PR**, and lets the agent call write endpoints (refs, commits, PRs) without a prompt, which bypasses the push gate this PR describes.
-  Removing it is a decision for the owner of that file.
+- **`Bash(gh api *)` was in `.claude/settings.json` before this PR**, and let the agent call write endpoints (refs, commits, PRs) without a prompt, which bypassed the push gate this PR describes.
+  **Removed** (2026-11-23, at the owner's instruction), from the active settings and from `docs/settings.proposed.json`, with a lint test that keeps it out. It could not be narrowed instead: whether `gh api` reads
+  or writes depends on flags (`-X`, `-f`, `-F`, `--input`) that a glob cannot exclude, and even `gh api repos/o/r/contents/x -X PUT -f content=…` creates a commit. Reading a remote file with `gh api` (the
+  `analyze-codebase` skill does, for a GitHub source with no local clone) still works; it now asks first.

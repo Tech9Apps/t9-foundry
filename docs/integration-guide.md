@@ -135,7 +135,7 @@ Run `/connect-repo`, select GitHub, and provide `owner/repo`. Claude will verify
 
 **Codebase analysis modes:**
 - **Local clone (recommended):** Set `localPath` to the local repo path for fast, direct file access
-- **API only:** Claude uses `gh api` to fetch file contents remotely
+- **API only:** Claude uses `gh api` to fetch file contents remotely (each call asks for your approval: `gh api` can write as well as read, so it is not on the allowlist)
 
 ---
 

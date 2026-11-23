@@ -130,6 +130,24 @@ missing_ask() { # <settings file> -> prints every required fragment that no "ask
 
 # A new option on one of these scripts could be another way to redirect a credential or write a file. This fails until someone has looked at it and
 # either added an ask rule above or listed it as harmless here.
+# `gh api` cannot be allowed safely by a glob: whether it reads or writes depends on flags (-X, -f, -F, --input) a pattern cannot exclude, and
+# `gh api repos/o/r/contents/x -X PUT -f content=...` creates a commit. An allow rule for it lets the agent publish refs, commits or PRs through
+# the API without a prompt, which bypasses the push gate. Reading a remote file with it is still possible: it asks first.
+@test "no allow rule approves gh api (it can write, and a pattern cannot tell a read from a write), in the active or the proposed settings" {
+  for f in "$SETTINGS" "$REPO_ROOT/docs/settings.proposed.json"; do
+    run jq -r '(.permissions.allow // [])[] | select(test("gh +api"))' "$f"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ] || { echo "$f allows: $output"; false; }
+  done
+}
+
+@test "lint: a settings file that allows gh api is caught" {
+  local f="$BATS_TEST_TMPDIR/s.json"
+  jq '.permissions.allow += ["Bash(gh api *)"]' "$SETTINGS" > "$f"
+  run jq -r '(.permissions.allow // [])[] | select(test("gh +api"))' "$f"
+  [ -n "$output" ]
+}
+
 @test "the allowed scripts take only options that have been reviewed" {
   check() { # <script> <known options...>
     local script="$1"; shift
