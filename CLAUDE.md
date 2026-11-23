@@ -152,6 +152,35 @@ QA_AUTONOMOUS=1 bash scripts/preflight.sh
 
 ---
 
+## Working on this repo with Claude: delegation and models
+
+Usage is rationed, and the two big costs are a long main session (every turn re-reads its whole context) and subagent reviews (about 220-280k tokens each). So the main thread orchestrates, and each job goes to the cheapest tier that can do it. This is for Claude sessions building this repo; the product's own runtime routing is in `docs/model-routing-design.md`.
+
+| Tier | Use it for |
+|---|---|
+| **No model** | Anything a script does: tests, lint, mutation checks, link checks, PR/CI status, git. Run as background Bash; never spend a model on a wait. |
+| **Haiku** (`effort: low`) | Read-only fan-out and mechanical checks: "find every use of X", summarize a diff, check a doc's claims against the code, a mechanical edit with an exact spec. It returns conclusions, not file dumps. |
+| **Sonnet** (default) | Building slices, tests, docs, PR text, routine reviews with a checklist brief. |
+| **Opus** (`effort: high`) | Independent review of R2/R3 code (below), big-blast-radius design calls, debugging after two failed Sonnet attempts. The author is Sonnet, so a different model gives a more independent look where a miss is costly. |
+| **Fable** | Only when the user asks. |
+
+**Review depth follows risk.** Every brief names a few promises to break and the accepted limits, forbids editing, and says "stop when covered".
+
+| Risk | Examples | Review |
+|---|---|---|
+| R0 | docs, prose | no subagent: lints and a self-read of the diff |
+| R1 | routine code with tests | one Sonnet reviewer, changed files only |
+| R2 | security, concurrency or signals, outbound writes, untrusted text reaching a person | one Opus reviewer plus a mutation pass; fix; a second round only if it found a blocker |
+| R3 | permission settings, hooks, the kill switch | R2, then a diff-only second pass after the fixes, then a human gate |
+
+**Keep the main thread lean.** Trim output (`head`, `cut`, `grep -c`); delegate any read across more than about 5 files; do not load a large skill for one fact. State lives in PR text, design docs and memory, so at a task boundary (or around 40% context) update those and start a fresh session.
+
+**Check usage before spending.** Before a subagent expected to cost over 100k tokens, read the plan limits (`get_usage`). Above about 80% weekly, do only no-model and essential work and say when the window resets.
+
+**Escalate on a failed check, not on doubt.** Move up one tier, once, only when something you can run fails (a test, a schema, a missing file, a claim that does not hold), never because a model says it is unsure. A tier choice never widens what a subagent may do: reviewers read, they do not edit.
+
+---
+
 ## Architecture
 
 The harness has no runtime of its own — it is a set of instructions and scripts that Claude Code executes as behavior. All runtime behavior flows through `qa-config.json` (gitignored; validated against `qa-config.schema.json`).
