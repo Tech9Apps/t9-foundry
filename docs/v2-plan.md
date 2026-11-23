@@ -95,6 +95,10 @@ Fix what is wrong today and make unattended runs *safe to attempt*.
 
 ## Phase 3 — State, idempotency, observability *(medium)*
 
+> **Status — design written, not built.** The plan, with the decisions taken (JSONL ledger; mocks only) and the open questions, is in
+> [phase-3-design.md](./phase-3-design.md). The text below is the original outline; where the two differ the design doc wins (for
+> example `report.js` rather than `report.sh`, and turn/cost budgets are *recorded* here but *enforced* by Phase 4's launcher).
+
 - **Run ledger** (`.qa-ledger/`, JSONL or SQLite — see Decisions): runs, per-test results, flake rates, bug fingerprints, idempotency keys, autonomous-action audit log. Replaces ad-hoc `.ticket-context` receipts (kept as a compatibility read path).
 - `post-tests` and `file-bug` become idempotent via ledger keys (supersedes the v1 "check the keys file" prose); crash-safe resume.
 - **Reporting**: `scripts/report.sh` → markdown run summary (ticket comment + GitHub step summary) and optional Slack webhook (`QA_SLACK_WEBHOOK`); failure-only channel option.
@@ -133,6 +137,11 @@ Fix what is wrong today and make unattended runs *safe to attempt*.
 ## Delivery
 
 - **Trunk, not a long-lived v2 branch.** One PR per phase; everything new is off by default, so `main` stays releasable and Nayan's inline-mode work keeps landing without a merge war. Tag `v2.0.0` when the acceptance scenario is green.
+- **Design doc first, for every phase.** Each phase starts with `docs/phase-N-design.md` (the plan, the decisions taken, the open
+  questions, how it will be verified), merged to `main` *before* the phase's code. The code PR links it, and the doc gains a
+  "What the build changed" section rather than being rewritten, so the repo shows both what was intended and what shipped. Phases 0–2
+  predate this rule (their record is the status notes above, [phase-2-design.md](./phase-2-design.md) and
+  [tracker-adapters.md](./tracker-adapters.md)); Phases 3, 4 and 5 follow it.
 - **Suggested ownership** (adjust with Nayan): Phase 0 — Jason (fixes his own PR #5 regression); Phase 1 tracker adapters/mocks — Nayan (he built the agent/command pipeline and Jira flow); Phase 1 evals/results normalization and Phase 2 — Jason; Phases 3–4 paired.
 - **Docs:** `docs/autonomy.md` (tier model, kill switch, runbook), update `docs/prod-safety.md` for enforce mode, README "Autonomous mode" section, `CLAUDE.md` Architecture.
 - **Migration:** `/init` and `/reconfigure` learn the `autonomy` and `productionProtection.mode` fields; schema stays backward compatible.
